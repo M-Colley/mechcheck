@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "mechcheck for Overleaf",
+  "version": "0.1.0",
+  "description": "Mechanical checks for LaTeX theses and papers, inside Overleaf. Nothing leaves your machine except the reference lookups you switch on.",
+
+  "permissions": ["storage"],
+
+  "//host_permissions": [
+    "The overleaf entries let the content script load. The three APIs are fetched",
+    "from the service worker, which is the only place a Manifest V3 extension may",
+    "make cross-origin requests -- and the reason reference verification works here",
+    "but not in a sandboxed web page."
+  ],
+  "host_permissions": [
+    "https://www.overleaf.com/*",
+    "https://*.overleaf.com/*",
+    "https://api.crossref.org/*",
+    "https://api.openalex.org/*",
+    "https://dblp.org/*"
+  ],
+
+  "background": { "service_worker": "background.js" },
+
+  "content_scripts": [
+    {
+      "matches": ["https://www.overleaf.com/project/*", "https://*.overleaf.com/project/*"],
+      "js": ["engine.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "mechcheck",
+    "default_icon": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" }
+  },
+
+  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" }
+}

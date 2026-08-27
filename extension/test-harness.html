@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>mechcheck extension harness</title>
+<style>
+  body { font: 14px/1.6 system-ui, sans-serif; margin: 0; padding: 24px; background: #eef1f6; color: #171a21; }
+  h1 { font-size: 16px; margin: 0 0 4px; }
+  p { margin: 0 0 16px; color: #4a5162; max-width: 60ch; }
+  pre { background: #fff; border: 1px solid #d8dde6; border-radius: 6px; padding: 12px; font-size: 12px; overflow: auto; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #0e1116; color: #e5e8ef; } p { color: #a3abbd; }
+    pre { background: #151922; border-color: #2a303c; }
+  }
+</style>
+</head>
+<body>
+<h1>mechcheck extension harness</h1>
+<p>Stands in for Overleaf: it fakes the <code>chrome.*</code> APIs, serves a small
+   project from a mocked <code>fetch</code>, and then drives the real content
+   script. Open this file in a browser to exercise the panel without installing
+   anything or touching a live project.</p>
+<pre id="log">running…</pre>
+
+<script>
+/* ---- a chrome API stand-in, just enough for the content script ---- */
+const memory = { sync: {}, local: {} };
+window.chrome = {
+  storage: {
+    sync:  { get: async k => (k in memory.sync ? { [k]: memory.sync[k] } : {}),
+             set: async o => Object.assign(memory.sync, o) },
+    local: { get: async k => (k in memory.local ? { [k]: memory.local[k] } : {}),
+             set: async o => Object.assign(memory.local, o) },
+  },
+  runtime: {
+    // Pretend the service worker answered; the engine only needs a JSON body.
+    sendMessage: async msg => ({ ok: true, data: null }),
+    onMessage: { addListener: () => {} },
+  },
+  tabs: { query: async () => [], sendMessage: async () => {} },
+};
+
+/* ---- a project, served the way Overleaf serves one ---- */
+const PROJECT = {
+  "main.tex": String.raw`\documentclass[sigconf,review]{acmart}
+\begin{document}
+\title{A Study of Automated Vehicles}
+\author{Mark Colley}
+\begin{abstract}
+We ran a study with participants and found significant effects.
+\end{abstract}
+\section{Introduction}
+The Automated Driving System (ADS) is new. Participants (N=24) took part.
+The effect was significant, p < .05, F = 4.7. This is is a problem.
+The Automated Driving System (ADS) appears again here.
+\begin{figure}
+  \includegraphics[width=\linewidth]{plot.pdf}
+  \caption{Results of the study}
+  \label{fig:res}
+\end{figure}
+See Figure~\ref{fig:res}. The red line shows the baseline. TODO fix this.
+\bibliographystyle{plain}
+\bibliography{refs}
+\end{document}`,
+  "refs.bib": String.raw`@article{etal, author = {Smith, John et al.}, title = {Bad Authors},
+  journal = {J}, year = {2021}, pages = {45-58}}`,
+};
+
+/* Build a real zip in the browser, so readZip is exercised for real rather
+   than bypassed: stored (uncompressed) entries, which the reader supports. */
+function crc32(bytes) {
+  let c, table = [];
+  for (let n = 0; n < 256; n++) {
+    c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  let crc = 0xFFFFFFFF;
+  for (const b of bytes) crc = table[(crc ^ b) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+function makeZip(entries) {
+  const enc = new TextEncoder();
+  const chunks = [], central = [];
+  let offset = 0;
+  for (const [name, text] of Object.entries(entries)) {
+    const nameBytes = enc.encode(name), data = enc.encode(text);
+    const sum = crc32(data);
+    const local = new DataView(new ArrayBuffer(30));
+    local.setUint32(0, 0x04034b50, true); local.setUint16(4, 20, true);
+    local.setUint16(8, 0, true);                       // stored
+    local.setUint32(14, sum, true);
+    local.setUint32(18, data.length, true); local.setUint32(22, data.length, true);
+    local.setUint16(26, nameBytes.length, true);
+    chunks.push(new Uint8Array(local.buffer), nameBytes, data);
+    const cd = new DataView(new ArrayBuffer(46));
+    cd.setUint32(0, 0x02014b50, true); cd.setUint16(4, 20, true); cd.setUint16(6, 20, true);
+    cd.setUint16(10, 0, true);
+    cd.setUint32(16, sum, true);
+    cd.setUint32(20, data.length, true); cd.setUint32(24, data.length, true);
+    cd.setUint16(28, nameBytes.length, true);
+    cd.setUint32(42, offset, true);
+    central.push(new Uint8Array(cd.buffer), nameBytes);
+    offset += 30 + nameBytes.length + data.length;
+  }
+  const centralSize = central.reduce((n, c) => n + c.length, 0);
+  const eocd = new DataView(new ArrayBuffer(22));
+  eocd.setUint32(0, 0x06054b50, true);
+  eocd.setUint16(8, Object.keys(entries).length, true);
+  eocd.setUint16(10, Object.keys(entries).length, true);
+  eocd.setUint32(12, centralSize, true); eocd.setUint32(16, offset, true);
+  const all = [...chunks, ...central, new Uint8Array(eocd.buffer)];
+  const total = all.reduce((n, c) => n + c.length, 0);
+  const out = new Uint8Array(total);
+  let pos = 0;
+  for (const c of all) { out.set(c, pos); pos += c.length; }
+  return out;
+}
+
+const ZIP = makeZip(PROJECT);
+window.fetch = async (url) => {
+  const path = String(url);
+  if (path.includes("/download/zip"))
+    return new Response(ZIP, { status: 200, headers: { "Content-Type": "application/zip" } });
+  return new Response("", { status: 404 });   // no compiled output in the harness
+};
+</script>
+
+<script src="engine.js"></script>
+<script src="content.js"></script>
+
+<script>
+(async () => {
+  const log = [];
+  const say = (name, ok, detail = "") => log.push(`${ok ? "ok   " : "FAIL "} ${name}${detail ? "  — " + detail : ""}`);
+  const C = window.__mechcheckContent;
+  try {
+    say("content script exposed its internals", !!C);
+    say("engine is loaded", !!globalThis.mechcheck && globalThis.mechcheck.RULES.length === 117,
+        globalThis.mechcheck ? globalThis.mechcheck.RULES.length + " rules" : "missing");
+
+    // The harness page is not /project/<id>, so the panel must not auto-mount.
+    say("does not mount outside a project page", !document.getElementById("mechcheck-host"));
+
+    C.ensureUI();
+    const host = document.getElementById("mechcheck-host");
+    say("panel mounts on demand", !!host && !!host.shadowRoot);
+
+    const files = await C.fetchProjectZip("0123456789abcdef01234567");
+    say("reads the project zip Overleaf serves", files.size === 2, [...files.keys()].join(", "));
+
+    const result = await globalThis.mechcheck.runChecks(files, {
+      profile: "paper-anonymous", stage: "submission", venue: "autoui", verify: false });
+    C.render(result, { profile: "paper-anonymous", verify: false });
+
+    const shadow = host.shadowRoot;
+    const rendered = shadow.querySelectorAll(".finding").length;
+    say("findings render in the shadow root", rendered > 5, rendered + " rows");
+    say("the launcher badge counts problems", shadow.querySelector(".badge").textContent !== "",
+        shadow.querySelector(".badge").textContent);
+    say("severity stripes are applied", !!shadow.querySelector(".finding.error"));
+
+    const fired = new Set(result.findings.map(f => f.rule));
+    for (const id of ["VEN002", "ANON001", "ACC001", "ABB001", "STY001", "BIB006"])
+      say(`${id} fires through the extension path`, fired.has(id));
+
+    // filtering
+    shadow.querySelectorAll(".pill")[2].click();          // hide info
+    say("filters redraw the list", shadow.querySelectorAll(".finding").length < rendered);
+
+    say("report renders as Markdown", C.reportMarkdown(result).includes("mechcheck —"));
+
+    // error path
+    C.renderError(new Error("Overleaf refused the download (HTTP 403)."));
+    say("failure is explained, not silent", shadow.querySelector(".empty").textContent.includes("403"));
+  } catch (err) {
+    log.push("FAIL  harness threw — " + (err && err.stack || err));
+  }
+  const failed = log.filter(l => l.startsWith("FAIL")).length;
+  log.push("", `${log.filter(l => l.startsWith("ok")).length} passed, ${failed} failed`);
+  document.getElementById("log").textContent = log.join("\n");
+  window.__harnessResult = { failed, log };
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,398 @@
+/* The Overleaf-side interface.
+ *
+ * How it gets your project: it asks Overleaf for the same zip the Download →
+ * Source menu item produces, using the session you are already logged into.
+ * That is deliberately the least clever option available -- no scraping of the
+ * editor's DOM, which would only ever see the file you have open and would
+ * break every time Overleaf ships a new editor.
+ *
+ * Everything renders inside a shadow root, so Overleaf's stylesheet and this
+ * panel cannot reach into each other.
+ */
+
+(() => {
+  "use strict";
+
+  const M = globalThis.mechcheck;
+  if (!M) { console.error("mechcheck: engine did not load"); return; }
+
+  const PROJECT_ID = (location.pathname.match(/\/project\/([0-9a-fA-F]{16,32})/) || [])[1];
+
+  let host = null, root = null, panel = null;
+  let lastResult = null, running = false;
+
+  const DEFAULTS = { profile: "thesis", stage: "submission", venue: "", verify: false, autorun: false };
+
+  async function getSettings() {
+    try {
+      const stored = await chrome.storage.sync.get("settings");
+      return { ...DEFAULTS, ...(stored.settings || {}) };
+    } catch (err) { return { ...DEFAULTS }; }
+  }
+
+  /* ---------- getting the project ---------- */
+
+  async function fetchProjectZip(projectId = PROJECT_ID) {
+    const res = await fetch(`/project/${projectId}/download/zip`, {
+      credentials: "same-origin",
+      headers: { "Accept": "application/zip" },
+    });
+    if (!res.ok) throw new Error(`Overleaf refused the download (HTTP ${res.status}). `
+      + "Reload the page and make sure you are still signed in.");
+    const buffer = await res.arrayBuffer();
+    if (buffer.byteLength < 30) throw new Error("Overleaf returned an empty project.");
+    return M.readZip(buffer);
+  }
+
+  /* The compiled log and PDF unlock the compile, page-count and PDF-metadata
+     checks. Overleaf has moved these paths around between versions, so try the
+     ones we know and give up quietly: the affected rules simply report as
+     skipped, which is honest. */
+  async function fetchOutputs(files) {
+    const candidates = [
+      ["output.log", `/project/${PROJECT_ID}/output/output.log`],
+      ["output.pdf", `/project/${PROJECT_ID}/output/output.pdf`],
+    ];
+    for (const [name, url] of candidates) {
+      try {
+        const res = await fetch(url, { credentials: "same-origin" });
+        if (!res.ok) continue;
+        const buf = new Uint8Array(await res.arrayBuffer());
+        if (buf.byteLength > 100) files.set(name, buf);
+      } catch (err) { /* not available in this Overleaf version */ }
+    }
+    return files;
+  }
+
+  /* ---------- running ---------- */
+
+  const relayFetch = async (url, key) => {
+    try {
+      const reply = await chrome.runtime.sendMessage({ type: "mechcheck:fetch", url, key });
+      return reply && reply.ok ? reply.data : null;
+    } catch (err) {
+      return null;   // extension reloaded mid-run, or the worker was evicted
+    }
+  };
+
+  async function run() {
+    if (running) return;
+    running = true;
+    const settings = await getSettings();
+    setStatus("Asking Overleaf for the project…");
+    try {
+      const files = await fetchProjectZip();
+      setStatus("Reading the compiled output…");
+      await fetchOutputs(files);
+      setStatus(`Checking ${files.size} file${files.size === 1 ? "" : "s"}…`);
+
+      const result = await M.runChecks(files, {
+        ...settings,
+        fetchJson: settings.verify ? relayFetch : undefined,
+        onProgress: (frac, id) => setProgress(frac),
+      });
+      lastResult = result;
+      render(result, settings);
+    } catch (err) {
+      renderError(err);
+    } finally {
+      running = false;
+      setProgress(0);
+    }
+  }
+
+  /* ---------- the panel ---------- */
+
+  const CSS = `
+:host { all: initial; }
+* { box-sizing: border-box; }
+.wrap {
+  position: fixed; right: 16px; bottom: 16px; z-index: 2147483000;
+  font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+  color-scheme: light dark;
+}
+.launcher {
+  display: flex; align-items: center; gap: 8px;
+  background: #3a4ea8; color: #fff; border: none; border-radius: 999px;
+  padding: 10px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,.2), 0 10px 30px -12px rgba(0,0,0,.5);
+}
+.launcher:hover { background: #33469a; }
+.launcher .badge {
+  background: rgba(255,255,255,.22); border-radius: 999px; padding: 1px 7px;
+  font-variant-numeric: tabular-nums; font-size: 12px;
+}
+.launcher .badge.err { background: #b23026; }
+.panel {
+  width: min(440px, calc(100vw - 32px)); max-height: min(680px, calc(100vh - 90px));
+  background: #fff; color: #171a21; border: 1px solid #d8dde6; border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(0,0,0,.12), 0 24px 60px -20px rgba(0,0,0,.4);
+  display: flex; flex-direction: column; overflow: hidden; font-size: 13px;
+}
+@media (prefers-color-scheme: dark) {
+  .panel { background: #151922; color: #e5e8ef; border-color: #2a303c; }
+  .head, .foot { background: #1c212c !important; border-color: #2a303c !important; }
+  .finding { border-color: #21262f !important; }
+  .ctx { background: #0e1116 !important; color: #a3abbd !important; }
+  select, .btn { background: #1c212c !important; color: #e5e8ef !important; border-color: #2a303c !important; }
+  .rule { background: #1c212c !important; }
+}
+.head {
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+  border-bottom: 1px solid #d8dde6; background: #f7f8fa;
+}
+.head .title { font-weight: 600; flex: 1; }
+.head .close { background: none; border: none; font-size: 18px; cursor: pointer; color: inherit; opacity: .6; padding: 0 4px; }
+.head .close:hover { opacity: 1; }
+.controls { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-bottom: 1px solid #d8dde6; }
+select, .btn {
+  font: inherit; font-size: 12px; padding: 4px 8px; border: 1px solid #d8dde6;
+  border-radius: 5px; background: #fff; color: inherit; cursor: pointer;
+}
+.btn.primary { background: #3a4ea8; color: #fff; border-color: #3a4ea8; font-weight: 600; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; cursor: pointer; }
+.summary { display: flex; gap: 6px; padding: 8px 12px; border-bottom: 1px solid #d8dde6; flex-wrap: wrap; }
+.pill {
+  font-size: 12px; padding: 3px 9px; border-radius: 999px; border: 1px solid #d8dde6;
+  background: #fff; cursor: pointer; font-variant-numeric: tabular-nums; color: inherit;
+}
+.pill[aria-pressed="false"] { opacity: .45; }
+.pill.err { border-color: #b23026; color: #b23026; }
+.pill.warn { border-color: #9a6207; color: #9a6207; }
+.stats { font-size: 11px; opacity: .65; padding: 0 12px 8px; }
+.body { overflow-y: auto; flex: 1; }
+.finding { padding: 8px 12px; border-bottom: 1px solid #eef1f6; display: flex; gap: 8px; }
+.stripe { width: 3px; border-radius: 2px; flex: none; background: #9aa2b4; }
+.finding.error .stripe { background: #b23026; }
+.finding.warn .stripe { background: #9a6207; }
+.finding .main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.finding .top { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.rule { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px;
+        background: #eef1f6; border-radius: 3px; padding: 1px 5px; }
+.loc { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; opacity: .6; }
+.msg { line-height: 1.45; }
+.ctx { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px;
+       background: #f7f8fa; border-radius: 4px; padding: 4px 6px; overflow-x: auto; white-space: pre; }
+.fix { font-size: 12px; opacity: .8; }
+.empty { padding: 28px 16px; text-align: center; opacity: .75; line-height: 1.6; }
+.empty b { display: block; font-size: 15px; margin-bottom: 4px; opacity: 1; }
+.note { padding: 8px 12px; font-size: 12px; background: #fff8e6; border-bottom: 1px solid #f0e3bd; color: #6b4d09; }
+.note.bad { background: #fdecea; border-color: #f5c6c2; color: #8c231b; }
+.foot { padding: 6px 12px; font-size: 11px; opacity: .6; border-top: 1px solid #d8dde6; background: #f7f8fa;
+        display: flex; justify-content: space-between; gap: 8px; }
+.progress { height: 2px; background: #eef1f6; }
+.progress i { display: block; height: 100%; background: #3a4ea8; width: 0; transition: width .15s linear; }
+.hidden { display: none !important; }
+`;
+
+  function ensureUI() {
+    if (host) return;
+    host = document.createElement("div");
+    host.id = "mechcheck-host";
+    root = host.attachShadow({ mode: "open" });
+    root.innerHTML = `<style>${CSS}</style>
+<div class="wrap">
+  <div class="panel hidden" part="panel">
+    <div class="head">
+      <span class="title">mechcheck</span>
+      <button class="close" title="Close">×</button>
+    </div>
+    <div class="controls">
+      <select class="profile" title="Profile"></select>
+      <select class="stage" title="Stage"></select>
+      <select class="venue" title="Venue"></select>
+      <label class="toggle"><input type="checkbox" class="verify"> verify refs</label>
+      <button class="btn primary check">Check</button>
+    </div>
+    <div class="progress"><i></i></div>
+    <div class="note hidden"></div>
+    <div class="summary hidden"></div>
+    <div class="stats"></div>
+    <div class="body"></div>
+    <div class="foot"><span class="status">Ready</span><span class="copy btn">Copy report</span></div>
+  </div>
+  <button class="launcher">mechcheck<span class="badge hidden"></span></button>
+</div>`;
+    document.documentElement.appendChild(host);
+
+    const q = sel => root.querySelector(sel);
+    q(".launcher").addEventListener("click", () => {
+      const p = q(".panel");
+      p.classList.toggle("hidden");
+      if (!p.classList.contains("hidden") && !lastResult && !running) run();
+    });
+    q(".close").addEventListener("click", () => q(".panel").classList.add("hidden"));
+    q(".check").addEventListener("click", run);
+    q(".copy").addEventListener("click", copyReport);
+
+    fillSelect(q(".profile"), Object.keys(M.PROFILES).map(k => [k, k]));
+    fillSelect(q(".stage"), Object.keys(M.STAGES).map(k => [k, k]));
+    fillSelect(q(".venue"), [["", "no venue"]].concat(
+      Object.entries(M.VENUES).map(([k, v]) => [k, v.name])));
+
+    for (const sel of [".profile", ".stage", ".venue", ".verify"]) {
+      q(sel).addEventListener("change", async () => {
+        const settings = {
+          profile: q(".profile").value, stage: q(".stage").value,
+          venue: q(".venue").value, verify: q(".verify").checked,
+        };
+        try { await chrome.storage.sync.set({ settings }); } catch (err) { /* ignore */ }
+        if (lastResult) run();
+      });
+    }
+    getSettings().then(s => {
+      q(".profile").value = s.profile; q(".stage").value = s.stage;
+      q(".venue").value = s.venue; q(".verify").checked = !!s.verify;
+      if (s.autorun) run();
+    });
+  }
+
+  function fillSelect(select, pairs) {
+    select.innerHTML = "";
+    for (const [value, label] of pairs) {
+      const opt = document.createElement("option");
+      opt.value = value; opt.textContent = label;
+      select.appendChild(opt);
+    }
+  }
+
+  const setStatus = text => { if (root) root.querySelector(".status").textContent = text; };
+  const setProgress = frac => { if (root) root.querySelector(".progress i").style.width = Math.round(frac * 100) + "%"; };
+
+  function setNote(text, bad) {
+    if (!root) return;
+    const note = root.querySelector(".note");
+    note.classList.toggle("hidden", !text);
+    note.classList.toggle("bad", !!bad);
+    note.textContent = text || "";
+  }
+
+  const filters = { error: true, warn: true, info: true };
+
+  function render(result, settings) {
+    ensureUI();
+    const q = sel => root.querySelector(sel);
+    const counts = { error: 0, warn: 0, info: 0 };
+    for (const f of result.findings) counts[M.SEV_NAME[f.severity]]++;
+
+    const badge = root.querySelector(".badge");
+    const total = counts.error + counts.warn;
+    badge.classList.toggle("hidden", total === 0);
+    badge.classList.toggle("err", counts.error > 0);
+    badge.textContent = String(total);
+
+    const summary = q(".summary");
+    summary.classList.remove("hidden");
+    summary.innerHTML = "";
+    for (const key of ["error", "warn", "info"]) {
+      const b = document.createElement("button");
+      b.className = "pill" + (key === "error" ? " err" : key === "warn" ? " warn" : "");
+      b.setAttribute("aria-pressed", String(filters[key]));
+      b.textContent = `${counts[key]} ${key}`;
+      b.addEventListener("click", () => { filters[key] = !filters[key]; render(result, settings); });
+      summary.appendChild(b);
+    }
+
+    const s = result.stats;
+    q(".stats").textContent = `${s.main} · ${s.words.toLocaleString()} words · `
+      + `${s.references} reference${s.references === 1 ? "" : "s"} · ${s.floats} float${s.floats === 1 ? "" : "s"}`
+      + (s.pages ? ` · ${s.pages} pages` : "")
+      + (s.hasLog ? "" : " · no .log, compile checks skipped");
+
+    if (s.mainGuessed)
+      setNote(`Guessed ${s.main} as the main file — no file had both \\documentclass and \\begin{document}.`, true);
+    else if (settings.verify && s.netBlocked)
+      setNote("Reference lookups could not reach the internet. Everything else ran.", true);
+    else if (!settings.verify)
+      setNote("Reference verification is off. Turn on “verify refs” to check that your citations exist.");
+    else setNote("");
+
+    const body = q(".body");
+    body.innerHTML = "";
+    const shown = result.findings.filter(f => filters[M.SEV_NAME[f.severity]]);
+    if (!result.findings.length) {
+      body.innerHTML = `<div class="empty"><b>Nothing mechanical left to fix.</b>The remaining work is the thinking.</div>`;
+    } else if (!shown.length) {
+      body.innerHTML = `<div class="empty">Nothing matches these filters.</div>`;
+    }
+    for (const f of shown) {
+      const row = document.createElement("div");
+      row.className = "finding " + M.SEV_NAME[f.severity];
+      const stripe = document.createElement("div"); stripe.className = "stripe";
+      const main = document.createElement("div"); main.className = "main";
+      const top = document.createElement("div"); top.className = "top";
+      const rule = document.createElement("span"); rule.className = "rule"; rule.textContent = f.rule;
+      const loc = document.createElement("span"); loc.className = "loc";
+      loc.textContent = f.file ? f.file + (f.line ? ":" + f.line : "") : "";
+      top.append(rule, loc);
+      const msg = document.createElement("div"); msg.className = "msg"; msg.textContent = f.message;
+      main.append(top, msg);
+      if (f.context) {
+        const ctx = document.createElement("div"); ctx.className = "ctx"; ctx.textContent = f.context;
+        main.appendChild(ctx);
+      }
+      if (f.fix) {
+        const fix = document.createElement("div"); fix.className = "fix"; fix.textContent = "Fix: " + f.fix;
+        main.appendChild(fix);
+      }
+      row.append(stripe, main);
+      body.appendChild(row);
+    }
+
+    setStatus(`${counts.error} error${counts.error === 1 ? "" : "s"}, ${counts.warn} warning${counts.warn === 1 ? "" : "s"}`
+      + (result.suppressed.length ? ` · ${result.suppressed.length} silenced` : ""));
+  }
+
+  function renderError(err) {
+    ensureUI();
+    root.querySelector(".panel").classList.remove("hidden");
+    root.querySelector(".body").innerHTML =
+      `<div class="empty"><b>Could not check this project</b>${escapeHtml(err.message || String(err))}</div>`;
+    setStatus("Failed");
+    setNote("");
+  }
+
+  const escapeHtml = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  function reportMarkdown(result) {
+    const counts = { error: 0, warn: 0, info: 0 };
+    for (const f of result.findings) counts[M.SEV_NAME[f.severity]]++;
+    const lines = [`# mechcheck — ${result.stats.main}`, "",
+      `${counts.error} errors, ${counts.warn} warnings, ${counts.info} notes`, ""];
+    for (const f of result.findings) {
+      const icon = { error: "❌", warn: "⚠️", info: "ℹ️" }[M.SEV_NAME[f.severity]];
+      lines.push(`- ${icon} \`${f.rule}\` ${f.file || ""}${f.line ? ":" + f.line : ""} — ${f.message}`);
+    }
+    return lines.join("\n");
+  }
+
+  async function copyReport() {
+    if (!lastResult) return;
+    try {
+      await navigator.clipboard.writeText(reportMarkdown(lastResult));
+      setStatus("Report copied");
+    } catch (err) {
+      setStatus("Could not copy — check clipboard permission");
+    }
+  }
+
+  /* ---------- popup messages ---------- */
+  chrome.runtime.onMessage.addListener((msg, sender, respond) => {
+    if (!msg || msg.type !== "mechcheck:run") return false;
+    ensureUI();
+    root.querySelector(".panel").classList.remove("hidden");
+    run().then(() => respond({ ok: true })).catch(e => respond({ ok: false, error: String(e) }));
+    return true;
+  });
+
+  /* Only mount on an actual project page; the same script also loads on the
+     project list, where there is nothing to check. */
+  if (PROJECT_ID) ensureUI();
+
+  /* A seam for the test harness, which drives the panel with a stubbed
+     chrome API and a mocked fetch. Costs nothing in production and means the
+     rendering path is not shipped untested. */
+  globalThis.__mechcheckContent = { run, render, renderError, ensureUI, reportMarkdown,
+                                    fetchProjectZip, fetchOutputs, PROJECT_ID };
+})();

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>mechcheck</title>
+<style>
+  :root {
+    --paper:#f7f8fa; --surface:#fff; --ink:#171a21; --soft:#4a5162; --faint:#6d7488;
+    --rule:#d8dde6; --accent:#3a4ea8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --paper:#0e1116; --surface:#151922; --ink:#e5e8ef; --soft:#a3abbd;
+            --faint:#7c8497; --rule:#2a303c; --accent:#8fa2ee; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    width: 300px; margin: 0; padding: 14px;
+    background: var(--paper); color: var(--ink);
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif; font-size: 13px;
+  }
+  h1 { font-size: 15px; margin: 0 0 2px; }
+  .sub { color: var(--faint); font-size: 11.5px; margin: 0 0 12px; line-height: 1.45; }
+  .field { display: flex; flex-direction: column; gap: 3px; margin-bottom: 9px; }
+  label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--faint); }
+  select {
+    font: inherit; font-size: 12.5px; padding: 5px 7px; border-radius: 5px;
+    border: 1px solid var(--rule); background: var(--surface); color: var(--ink);
+  }
+  .toggle { display: flex; align-items: center; gap: 7px; padding: 7px 0; font-size: 12.5px; color: var(--soft); }
+  .toggle input { accent-color: var(--accent); margin: 0; }
+  button {
+    width: 100%; font: inherit; font-size: 13px; font-weight: 600; padding: 8px;
+    border-radius: 6px; border: 1px solid var(--accent); background: var(--accent);
+    color: #fff; cursor: pointer; margin-top: 4px;
+  }
+  button:hover { filter: brightness(1.08); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .hint { color: var(--faint); font-size: 11px; margin-top: 10px; line-height: 1.5; }
+  .hint b { color: var(--soft); }
+  a { color: var(--accent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+</style>
+</head>
+<body>
+  <h1>mechcheck</h1>
+  <p class="sub">Open an Overleaf project and press Check. Nothing leaves your machine
+    except the reference lookups, if you switch them on.</p>
+
+  <div class="field">
+    <label for="profile">Profile</label>
+    <select id="profile">
+      <option value="thesis">Thesis</option>
+      <option value="paper">Paper</option>
+      <option value="paper-anonymous">Paper (anonymous review)</option>
+      <option value="camera-ready">Camera-ready</option>
+      <option value="all">Everything</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="stage">Stage</label>
+    <select id="stage">
+      <option value="draft">Draft — nothing blocks</option>
+      <option value="submission">Submission</option>
+      <option value="final">Final — warnings block</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="venue">Venue</label>
+    <select id="venue"><option value="">No venue</option></select>
+  </div>
+
+  <label class="toggle"><input type="checkbox" id="verify">
+    Verify that citations exist (Crossref, OpenAlex, DBLP)</label>
+  <label class="toggle"><input type="checkbox" id="autorun">
+    Check automatically when a project opens</label>
+
+  <button id="check">Check this project</button>
+  <p class="hint" id="hint"></p>
+
+  <script src="engine.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

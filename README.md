@@ -26,16 +26,20 @@ a layered design; use whichever layers suit you.
 
 | | What | Runs | Needs |
 |---|---|---|---|
-| **A** | [`mechcheck.sty`](latex/mechcheck.sty) | every Overleaf compile | nothing — works on the free plan |
-| **B** | [`browser/mechcheck.html`](browser/mechcheck.html) | when you drop a project on it | **a browser, nothing else** |
-| **C** | [mirror + CI](.github/workflows/overleaf-mirror.yml) | every 30 min, automatically | Overleaf premium (git bridge) |
-| **D** | [`mechcheck` CLI](mechcheck/) | locally and in CI | Python 3.10+ |
+| **A** | [Chrome extension](extension/) | a button inside Overleaf | Chrome, 2 minutes |
+| **B** | [`mechcheck.sty`](latex/mechcheck.sty) | every Overleaf compile | nothing — works on the free plan |
+| **C** | [`browser/mechcheck.html`](browser/mechcheck.html) | when you drop a project on it | a browser, nothing else |
+| **D** | [mirror + CI](.github/workflows/overleaf-mirror.yml) | every 30 min, automatically | Overleaf premium (git bridge) |
+| **E** | [`mechcheck` CLI](mechcheck/) | locally and in CI | Python 3.10+ |
 
-**If you want no Python and no GitHub: use A and B.** Layer A checks every
-compile inside Overleaf; layer B is one HTML file you double-click and drop your
-Overleaf `.zip` onto — all 117 rules, including live reference verification.
+**If you want no Python and no GitHub: use A and B.** The extension puts the
+checks in the Overleaf window itself — it reads the project straight from
+Overleaf, and reference verification works there because a Manifest V3 service
+worker is allowed to make cross-origin requests. Layer B then covers every
+compile automatically, on any plan.
 
-Setup: **[docs/browser.md](docs/browser.md)** (browser) ·
+Setup: **[docs/chrome-extension.md](docs/chrome-extension.md)** (extension) ·
+**[docs/browser.md](docs/browser.md)** (standalone page) ·
 **[docs/overleaf-setup.md](docs/overleaf-setup.md)** (Overleaf and CI).
 
 ---
@@ -187,9 +191,11 @@ mechcheck/            the checker
   texsource.py        the LaTeX parser everything else reads through
   bibtex.py           a tolerant .bib reader
   net.py              Crossref / OpenAlex / DBLP, cached and polite
+extension/          the Chrome extension (engine.js is generated)
 browser/
   mechcheck.html      the entire checker in one file, no install
   test-engine.mjs     runs that engine in Node against the Python fixtures
+  build-extension.mjs regenerates the extension's copy of the engine
 latex/
   mechcheck.sty       the in-Overleaf layer
   demo/               a deliberately flawed document CI compiles to prove it works
@@ -210,6 +216,11 @@ against the live Crossref, OpenAlex and DBLP APIs.
 Browser side: 54 checks passing (`node browser/test-engine.mjs`), and the page
 itself was driven in a real browser — zip reading, filtering, export, and both
 colour themes.
+
+Extension: 17 checks passing in a real browser via `extension/test-harness.html`
+— panel rendering, project-zip reading, filtering, export, error path. Not yet
+loaded in Chrome against a live Overleaf session; see the end of
+[docs/chrome-extension.md](docs/chrome-extension.md).
 
 `latex/mechcheck.sty` has **not** been compile-tested yet — there is no TeX
 installation on the machine it was written on. The `latex` job in
