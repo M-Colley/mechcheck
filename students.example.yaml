@@ -1,0 +1,25 @@
+# Students supervised, for scripts/digest.py and the Monday digest workflow.
+#
+# 'repo' must be readable by the STUDENT_REPOS_TOKEN secret. If a repository
+# uses the Overleaf mirror layout, the digest looks in paper/ automatically.
+
+students:
+  - name: A. Student
+    repo: your-org/thesis-astudent
+    topic: 'External communication of automated vehicles'
+    due: 2026-11-30
+    profile: thesis
+    venue: null
+
+  - name: B. Student
+    repo: your-org/thesis-bstudent
+    topic: 'Trust calibration in shared control'
+    due: 2026-10-15
+    profile: thesis
+
+  - name: 'AutoUI submission'
+    repo: your-org/paper-autoui-2027
+    topic: 'Paper: external HMI for shared spaces'
+    due: 2027-03-05
+    profile: paper-anonymous
+    venue: autoui

@@ -1,0 +1,67 @@
+# ACM ASSETS -- venue pack
+#
+# ASSETS is the strictest venue here on accessibility: an inaccessible
+# submission is desk-rejected, so the ACC rules are errors rather than warnings.
+name: ACM ASSETS
+verified: 2026-08-27
+source_url: https://assets26.sigaccess.org/technical_papers.html
+
+document_class: acmart
+bibliography_style: ACM-Reference-Format
+
+class_options:
+  submission:
+    required:
+      - manuscript
+    forbidden:
+      - sigconf
+  final:
+    required:
+      - sigconf
+    forbidden:
+      - review
+
+anonymity:
+  model: double-anonymous
+  note: 'Anonymise the paper, supplementary materials AND video figures. ASSETS explicitly asks you NOT to anonymise citations to your own prior work -- cite them in the third person instead.'
+
+length:
+  unit: words
+  min_words: 7500
+  max_words: 10000
+  excludes: 'references do not count towards the word count'
+  note: 'Full technical papers 7,500-10,000 words; short technical papers 4,000-5,000. Override rules.MET001 in mechcheck.yaml for a short paper.'
+
+accessibility:
+  descriptions_required: true
+  note: 'Submissions that are not accessible are desk-rejected, at review AND final stages.'
+
+requires:
+  ai_disclosure: true
+  data_availability: true
+
+required_commands:
+  - command: ccsdesc
+    why: 'ACM requires CCS concepts'
+  - command: keywords
+    why: 'ACM templates expect keywords'
+
+filename_charset_strict: true
+
+rules:
+  MET001:
+    max_words: 10000
+    min_words: 7500
+  ACC002:
+    min_words: 10
+
+severity:
+  ACC001: error
+  ACC002: error
+  ACC003: error
+  ACC005: warn
+  ACC006: error
+
+uncertain:
+  - 'Short-paper limits (4,000-5,000 words) are not the default here. Override rules.MET001 if you are submitting a short paper.'
+  - 'The exact definition of an accessible PDF at submission is set by the accessibility chairs; this pack checks alt text and PDF tagging, which is necessary but may not be sufficient.'

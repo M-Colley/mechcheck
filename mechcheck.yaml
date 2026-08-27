@@ -1,0 +1,35 @@
+# mechcheck configuration
+#
+# Full rule list:            mechcheck rules
+# What one rule means:       mechcheck explain FIG003
+# Silence one line:          % mechcheck: off FIG003 -- reason
+# Silence a whole file:      % mechcheck: off-file BIO005 -- reason
+#
+# Keep this file inside the small YAML subset mechcheck documents (two-space
+# indent, simple key: value, "- item" lists) so it stays readable by every part
+# of the toolchain.
+
+profile: thesis      # thesis | paper | paper-anonymous | camera-ready | all
+stage: submission       # draft (nothing blocks) | submission | final (warnings become errors)
+venue: null           # chi | assets | autoui | imwut | trf
+language: en
+fail_on: error          # exit non-zero at this severity
+
+# Contact address for the Crossref/OpenAlex "polite pool". Being identifiable
+# gets you better rate limits, and is the courteous thing to do.
+mailto: ''
+
+disable: []
+enable: []
+
+severity: {}
+
+rules:
+  ABB004:
+    # Abbreviations that need no expansion in your field.
+    ignore:
+      - HMI
+      - ADAS
+      - AV
+  STY012:
+    max_words: 45

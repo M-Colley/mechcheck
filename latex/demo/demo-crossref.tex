@@ -1,0 +1,67 @@
+% Same document, loaded with [crossref] so CI also exercises the opt-in
+% path that patches \label and \ref.
+% A deliberately flawed document. Every problem below is planted, and the CI
+% job asserts that mechcheck.sty reports each one. If you fix the document, fix
+% the assertions in .github/workflows/mechcheck.yml too.
+\documentclass{article}
+
+\usepackage{graphicx}
+\usepackage[crossref]{mechcheck}
+
+% acmart provides \Description; plain article does not, so define a stand-in
+% here purely so the demo can exercise the MC001 check outside acmart.
+\providecommand{\Description}[2][]{}
+
+\begin{document}
+
+\title{A demonstration of mechanical checks}
+\maketitle
+
+\section{Introduction}
+\label{sec:intro}
+This document contains planted mistakes. Section~\ref{sec:intro} refers to
+itself, which is fine. The next reference points at a label that does not
+exist: \ref{sec:nowhere}.
+
+% MC002: a float with no caption at all.
+\begin{figure}
+  \centering
+  \rule{3cm}{2cm}
+\end{figure}
+
+% MC003: a caption but no label, so nothing can reference it.
+\begin{figure}
+  \centering
+  \rule{3cm}{2cm}
+  \caption{A figure that cannot be referenced}
+\end{figure}
+
+% MC004: the label comes before the caption, so the number will be wrong.
+\begin{figure}
+  \centering
+  \rule{3cm}{2cm}
+  \label{fig:wrongnumber}
+  \caption{The label above was placed before this caption}
+\end{figure}
+
+% MC001: a figure with a caption and a label, but no \Description.
+\begin{figure}
+  \centering
+  \rule{3cm}{2cm}
+  \caption{A figure with no alt text}
+  \label{fig:nodescription}
+\end{figure}
+
+% A correct float, which must NOT be reported.
+\begin{figure}
+  \centering
+  \rule{3cm}{2cm}
+  \caption{A well-formed figure}
+  \Description{A grey rectangle standing in for a plot, used to show what a
+  complete float looks like: caption first, then label, then a description.}
+  \label{fig:good}
+\end{figure}
+
+Figure~\ref{fig:good} is referenced properly here.
+
+\end{document}

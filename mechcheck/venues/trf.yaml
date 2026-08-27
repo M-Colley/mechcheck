@@ -1,0 +1,58 @@
+# Transportation Research Part F: Traffic Psychology and Behaviour (Elsevier)
+#
+# Not an ACM venue: different class, different reference style, and a set of
+# required statements that are a common reason a submission is sent back before
+# review.
+name: 'Transportation Research Part F (Elsevier)'
+verified: 2026-08-27
+source_url: https://www.sciencedirect.com/journal/transportation-research-part-f-traffic-psychology-and-behaviour/publish/guide-for-authors
+
+document_class: elsarticle
+bibliography_style: elsarticle-harv
+
+anonymity:
+  model: single-anonymous
+  note: 'Verify the review model for your submission type; TRF is not double-anonymous by default.'
+
+length:
+  unit: none
+  note: 'No fixed limit; length is judged editorially.'
+
+accessibility:
+  descriptions_required: false
+
+requires:
+  ai_disclosure: true
+  data_availability: true
+
+required_statements:
+  - name: 'declaration of competing interest'
+    pattern: 'declaration of (competing|conflicting) interest|conflicts? of interest|competing interests?'
+    severity: error
+    fix: 'Add a Declaration of Competing Interest section, even if you declare none.'
+  - name: 'CRediT author contribution statement'
+    pattern: 'CRediT|author(ship)? contribution|conceptuali[sz]ation:|methodology:|writing . original draft'
+    severity: warn
+    fix: 'Add a CRediT author statement listing each author and their roles.'
+  - name: 'data availability statement'
+    pattern: 'data availability|data are available|data will be made available|data cannot be shared'
+    severity: error
+    fix: 'Add a Data Availability statement; Elsevier requires one for every submission.'
+  - name: 'funding statement'
+    pattern: 'funding|funded by|grant|no specific grant|financial support'
+    severity: warn
+    fix: 'State the funding sources, or state that the work received none.'
+  - name: 'highlights'
+    pattern: 'highlights'
+    severity: warn
+    fix: 'Elsevier requires a separate Highlights file of short bullet points. Check the current guide for the exact count and character limit.'
+
+severity:
+  POL005: warn
+  POL006: warn
+  POL007: warn
+
+uncertain:
+  - 'The Highlights format (commonly 3-5 bullets of at most 85 characters each) could not be re-verified: the live guide for authors blocks automated fetching. Check the numbers before submitting.'
+  - 'The exact bst/biblatex style name was not confirmed; elsarticle-harv is the usual APA-like Elsevier style but verify against the template you download.'
+  - 'Structured-abstract and keyword-count requirements were not confirmed.'

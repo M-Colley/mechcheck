@@ -1,0 +1,55 @@
+# ACM AutomotiveUI -- venue pack
+name: ACM AutomotiveUI
+verified: 2026-08-27
+source_url: https://www.auto-ui.org/26/papers/
+
+document_class: acmart
+bibliography_style: ACM-Reference-Format
+
+class_options:
+  submission:
+    required:
+      - manuscript
+    forbidden:
+      - sigconf
+  final:
+    required:
+      - sigconf
+    forbidden:
+      - review
+      - anonymous
+
+anonymity:
+  model: double-anonymous
+  note: 'Remove identifying information from the title/header area and from the document metadata; refer to your previous work in the third person.'
+
+length:
+  unit: pages
+  min_pages: 6
+  max_pages: 13
+  excludes: 'references do not count towards the submission page limit; the camera-ready must be 12 pages or fewer INCLUDING references'
+  note: 'Single-column (manuscript) format. All page elements other than references count.'
+
+accessibility:
+  descriptions_required: true
+
+requires:
+  ai_disclosure: true
+  data_availability: false
+
+required_commands:
+  - command: ccsdesc
+    why: 'ACM requires CCS concepts'
+  - command: keywords
+
+filename_charset_strict: true
+
+rules:
+  MET002:
+    min_pages: 6
+    max_pages: 13
+  MET004:
+    min_references: 20
+
+uncertain:
+  - 'The camera-ready limit (12 pages including references) differs from the submission limit (13 pages excluding references). For the camera-ready check run --stage final and set rules.MET002.max_pages to 12.'

@@ -1,0 +1,27 @@
+\documentclass[sigconf]{acmart}
+\usepackage{graphicx}
+\begin{document}
+\title{A Study of Things}
+\begin{abstract}
+We present the Automated Driving System (ADS) and evaluate it. % a comment with \ref{nothing}
+\end{abstract}
+\section{Introduction}
+Automated Driving Systems (ADS) are interesting, see Figure~\ref{fig:one}.
+The p value was p < .05 and the result was significant.
+\input{chapters/method}
+\begin{figure}
+  \includegraphics[width=\linewidth]{img/one.pdf}
+  \caption{The first figure}
+  \label{fig:one}
+\end{figure}
+\begin{figure}
+  \includegraphics{img/orphan.pdf}
+  \caption{Never referenced anywhere}
+  \label{fig:orphan}
+\end{figure}
+\begin{verbatim}
+\label{fig:notreal} % this must be invisible
+\end{verbatim}
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{refs}
+\end{document}

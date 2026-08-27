@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mechcheck"
+version = "0.1.0"
+description = "Mechanical checks for LaTeX theses and papers: the boring layer, automated."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Mark Colley" }]
+dependencies = []
+
+[project.optional-dependencies]
+# Everything below is optional on purpose: `pip install mechcheck` must work
+# on a bare CI runner with no wheels to build.
+yaml = ["PyYAML>=6"]
+dev = ["pytest>=7", "PyYAML>=6"]
+
+[project.scripts]
+mechcheck = "mechcheck.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["mechcheck*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

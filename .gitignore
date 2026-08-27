@@ -1,0 +1,17 @@
+build/
+out/
+*.aux
+*.log
+*.out
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+__pycache__/
+*.egg-info/
+.pytest_cache/
+mechcheck.sarif
+mechcheck-report.md
+mechcheck-report.txt
+digest.md

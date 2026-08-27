@@ -1,0 +1,43 @@
+# ACM IMWUT / PACM IMWUT -- venue pack
+#
+# Journal-style venue. Several values here are less certain than the conference
+# packs: verify against the current author guidelines before submitting.
+name: ACM IMWUT (PACM IMWUT)
+verified: 2026-08-27
+source_url: https://dl.acm.org/journal/imwut/author-guidelines
+
+document_class: acmart
+bibliography_style: ACM-Reference-Format
+
+class_options:
+  submission:
+    required:
+      - manuscript
+    forbidden:
+      - sigconf
+
+anonymity:
+  model: unknown
+  note: 'Verify the current review model in the author guidelines; enable the anonymity checks with profile paper-anonymous if review is anonymous.'
+
+length:
+  unit: none
+  note: 'IMWUT does not publish a hard page limit the way conferences do. Set rules.MET001/MET002 yourself if your cycle states one.'
+
+accessibility:
+  descriptions_required: true
+
+requires:
+  ai_disclosure: true
+  data_availability: false
+
+required_commands:
+  - command: ccsdesc
+  - command: keywords
+
+filename_charset_strict: true
+
+uncertain:
+  - 'The final typeset format is a large single-column ACM journal format (acmlarge in some guidance, acmsmall in others). Confirm which the current template uses before the camera-ready.'
+  - 'No length limit is encoded because none was confirmed.'
+  - 'The anonymity model was not confirmed; the ANON rules stay off unless you select the paper-anonymous profile.'

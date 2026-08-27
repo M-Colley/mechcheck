@@ -1,0 +1,62 @@
+name: supervision digest
+
+# One issue per week listing every thesis you supervise: is it compiling, is it
+# moving, how long is it, what is it failing on. The point is to replace the
+# "how's it going?" email round with a table you read in five seconds.
+#
+# Setup:
+#   1. Add students.yaml to this repository (see scripts/digest.py for the shape).
+#   2. Add a STUDENT_REPOS_TOKEN secret: a fine-grained PAT with read access to
+#      the student repositories. The default GITHUB_TOKEN cannot read them.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'      # Monday, 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -e .
+
+      - name: Cache reference lookups
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mechcheck
+          key: mechcheck-digest-${{ github.run_id }}
+          restore-keys: mechcheck-digest-
+
+      - name: Build the digest
+        env:
+          GH_TOKEN: ${{ secrets.STUDENT_REPOS_TOKEN }}
+        run: python scripts/digest.py --config students.yaml --out digest.md --offline
+
+      - name: Open (or update) this week's issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          title="Supervision digest — $(date -u +%Y-%m-%d)"
+          existing=$(gh issue list --label supervision-digest --state open \
+            --json number,title --jq ".[] | select(.title==\"$title\") | .number" | head -1)
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --body-file digest.md
+          else
+            gh issue create --title "$title" --body-file digest.md \
+              --label supervision-digest || \
+            gh issue create --title "$title" --body-file digest.md
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest
+          path: digest.md

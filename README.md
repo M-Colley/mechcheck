@@ -1,0 +1,206 @@
+# mechcheck
+
+Mechanical checks for LaTeX theses and papers: the boring layer of review,
+automated, so supervision time goes to the argument instead of the formatting.
+
+117 rules across figures, cross-references, abbreviations, prose mechanics,
+bibliography hygiene, **bibliography verification against Crossref/OpenAlex/DBLP**,
+compile-log analysis, accessibility, anonymity, reporting conventions, and
+per-venue submission requirements for CHI, ASSETS, AutomotiveUI, IMWUT and
+Transportation Research Part F.
+
+```bash
+pip install -e .
+mechcheck check .                       # a thesis
+mechcheck check . --venue chi           # + CHI's submission requirements
+mechcheck check . --venue autoui --profile paper-anonymous --stage final
+```
+
+---
+
+## The three layers
+
+Overleaf's Git integration is premium and its GitHub sync is **manual** — there
+is no webhook, so nothing can fire on a student's edit. That constraint produced
+a three-layer design; use whichever layers you can.
+
+| | What | Runs | Needs |
+|---|---|---|---|
+| **A** | [`mechcheck.sty`](latex/mechcheck.sty) | every Overleaf compile | nothing — works on the free plan |
+| **B** | [mirror + CI](.github/workflows/overleaf-mirror.yml) | every 30 min, automatically | Overleaf premium (git bridge) |
+| **C** | [`mechcheck` CLI](mechcheck/) | locally and in CI | Python 3.10+ |
+
+Full instructions: **[docs/overleaf-setup.md](docs/overleaf-setup.md)**.
+
+---
+
+## What it actually catches
+
+A real example, run against a deliberately flawed paper:
+
+```
+main.tex
+  x error VEN002:1   missing \documentclass option `manuscript` (required for submission)
+  x error VEN002:1   \documentclass option `sigconf` must not be used for submission
+  x error ANON001:4  \author is present but the document is not compiled with `anonymous`
+  x error ANON003:12 identifying link: https://github.com/mcolley
+  ! warn  ANON004:13 funding mentioned: 'funded by'
+  x error ACC001:14  figure has no \Description (alt text)
+  ! warn  ACC004:19  'The red line' identifies data by colour alone
+  x error VEN003:20  \bibliographystyle{plain} but ACM AutomotiveUI requires ACM-Reference-Format
+  i info  POL006:11  'F = 4.7' has no degrees of freedom
+  i info  POL007:11  'p < .05' is reported with no effect size nearby
+```
+
+And against a bibliography drafted with LLM help:
+
+```
+refs.bib
+  x error BIO001:13  `baddoi`: DOI 10.1145/9999999.9999999 does not resolve
+  x error BIO002:17  `mismatch`: the DOI resolves to "A Design Space for External
+                     Communication of Autonomous Vehicles" (similarity 0.11)
+  ! warn  BIO005:23  `hallucinated` could not be found in Crossref, DBLP or OpenAlex.
+                     Closest match: "The calibration of trust in an automated system" (0.43)
+  x error BIB006:30  `etal` has 'et al.' in the author field
+```
+
+The full list is in **[docs/rules.md](docs/rules.md)** — generated from the code,
+so it cannot drift.
+
+---
+
+## Design commitments
+
+These are the properties that decide whether a mandatory checker is a help or a
+tax, so they are worth stating explicitly.
+
+**Only mechanical things.** Every rule is decidable from the characters on the
+page. Nothing here has an opinion about whether the contribution is
+interesting, whether the related work is adequate, or whether the writing is
+good. That boundary is what makes it safe to require: passing means "nothing
+embarrassing is left", not "this is good work".
+
+**A false positive is worse than a miss.** A checker that cries wolf gets
+ignored, and then the real findings go with it. Where a rule cannot be sure, it
+reports INFO, or nothing. `BIO005` (reference not found anywhere) is a warning,
+never an error, because German-language theses, standards and older workshop
+papers are genuinely missing from the indexes.
+
+**Never accuse.** The reference checks state facts — "this DOI does not
+resolve", "the DOI resolves to a different title" — and leave the conclusion to
+a person. There is a real difference between a mistyped DOI and a fabricated
+citation, and a tool cannot tell them apart.
+
+**Nothing blocks a draft.** `--stage draft` reports everything and fails
+nothing. Strictness arrives at `submission`, and at `final` every warning
+becomes an error. Students meet the checker as a helper long before it becomes a
+gate.
+
+**Always an escape hatch, always visible.** Any rule can be silenced on one
+line, with a reason that stays in the diff:
+
+```latex
+\includegraphics{divider}  % mechcheck: off ACC001 -- decorative rule, no content
+```
+
+**Adoptable mid-thesis.** `mechcheck baseline .` freezes today's findings so only
+*new* problems fail. Nobody has to fix 300 warnings before they can benefit.
+
+---
+
+## For supervisors
+
+```bash
+python scripts/digest.py --config students.yaml --out digest.md --offline
+```
+
+One table per week: who is compiling, who is stuck, word count, error count,
+days since the last commit, days to the deadline, and what each thesis is
+failing on most. `.github/workflows/supervisor-digest.yml` posts it as an issue
+every Monday.
+
+The digest deliberately reports mechanical counts only. It is a triage list for
+deciding who needs a message this week — not an assessment.
+
+---
+
+## Venue packs
+
+Submission requirements are **data**, not code
+([`mechcheck/venues/*.yaml`](mechcheck/venues/)), because they change every
+cycle. Adding a venue means adding a file.
+
+```yaml
+document_class: acmart
+bibliography_style: ACM-Reference-Format
+class_options:
+  submission:
+    required: [manuscript]
+    forbidden: [sigconf]
+length:
+  unit: pages
+  min_pages: 6
+  max_pages: 13
+  excludes: 'references do not count towards the submission page limit'
+```
+
+Every pack carries a `verified` date and a `source_url`, and `VEN008` reminds you
+when a pack is more than nine months old. **The packs are a convenience, not an
+authority: the call for papers is the authority.** Each pack also lists what
+could not be verified — see the `uncertain:` block at the bottom of each file.
+
+Shipped: `chi`, `assets`, `autoui`, `imwut`, `trf`.
+
+---
+
+## Everyday use
+
+```bash
+mechcheck check .                          # the default: thesis, submission stage
+mechcheck check . --stage draft            # report everything, fail nothing
+mechcheck check . --venue assets           # + ASSETS accessibility requirements
+mechcheck check . --offline                # skip the network lookups
+mechcheck check . --build-dir build        # also read the compiled PDF and log
+mechcheck explain FIG003                   # what one rule means, and why
+mechcheck rules --category accessibility   # what exists
+mechcheck baseline .                       # adopt mid-project
+mechcheck init . --with-ci --with-sty      # set up a project
+```
+
+Output formats: `text`, `markdown` (job summaries and PR comments), `github`
+(inline annotations), `sarif` (GitHub code scanning), `json` (the digest).
+
+---
+
+## Repository layout
+
+```
+mechcheck/            the checker
+  rules/              one module per rule family, prefix per module
+  venues/             venue packs (data)
+  texsource.py        the LaTeX parser everything else reads through
+  bibtex.py           a tolerant .bib reader
+  net.py              Crossref / OpenAlex / DBLP, cached and polite
+latex/
+  mechcheck.sty       the in-Overleaf layer
+  demo/               a deliberately flawed document CI compiles to prove it works
+.github/workflows/
+  mechcheck.yml       tests + compiles the .sty against a real LaTeX install
+  overleaf-mirror.yml pulls from Overleaf on a schedule
+  supervisor-digest.yml  the Monday table
+scripts/digest.py     the multi-repository digest
+docs/                 setup, rule reference, workflow design
+tests/                194 tests
+```
+
+## Status
+
+Python side: 194 tests passing, and the bibliography verification has been run
+against the live Crossref, OpenAlex and DBLP APIs.
+
+`latex/mechcheck.sty` has **not** been compile-tested yet — there is no TeX
+installation on the machine it was written on. The `latex` job in
+`.github/workflows/mechcheck.yml` exists precisely to close that gap: it installs
+TeX Live, compiles `latex/demo/demo.tex`, and asserts both that the planted
+faults are detected and that the well-formed figure is not. Run it before giving
+the `.sty` to students.

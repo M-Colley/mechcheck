@@ -1,0 +1,166 @@
+"""What the TeX log already told you, surfaced where you will read it.
+
+Overleaf shows warnings behind a collapsed panel that most students never open,
+and a thesis routinely compiles with 300 overfull boxes nobody has looked at.
+Turning the log into ranked, counted findings is most of the value here; the
+rest is knowing which warnings actually matter.
+"""
+
+from __future__ import annotations
+
+import re
+
+from mechcheck.model import Category, Severity, rule
+
+_OVERFULL = re.compile(r"^(Overfull|Underfull)\s+\\([hv])box\s+\((\d+(?:\.\d+)?)pt too (\w+)\)"
+                       r"(?:.*?at lines? (\d+)(?:--(\d+))?)?", re.MULTILINE)
+_UNDEFINED_REF = re.compile(r"LaTeX Warning: Reference `([^']+)' on page \S+ undefined", re.MULTILINE)
+_UNDEFINED_CITE = re.compile(r"(?:LaTeX|Package natbib) Warning: Citation `([^']+)' on page \S+ undefined",
+                             re.MULTILINE)
+_MULTIPLY_DEFINED = re.compile(r"LaTeX Warning: Label `([^']+)' multiply defined", re.MULTILINE)
+_MISSING_CHAR = re.compile(r"Missing character: There is no (\S+) .*?in font ([^!\n]+)", re.MULTILINE)
+_FONT_SUB = re.compile(r"LaTeX Font Warning: Font shape `([^']+)' undefined", re.MULTILINE)
+_ERROR = re.compile(r"^! (.+)$", re.MULTILINE)
+_RERUN = re.compile(r"(Rerun to get|Label\(s\) may have changed)", re.MULTILINE)
+_FILE_LINE = re.compile(r"^(?:\./)?(\S+\.tex):(\d+):", re.MULTILINE)
+
+
+@rule("LOG001", "The document did not compile cleanly", Category.COMPILE, Severity.ERROR,
+      needs_build=True,
+      rationale="An error in the log means the PDF you are looking at is stale or incomplete.",
+      fix="Read the first error; everything after it is usually a consequence.")
+def compile_errors(ctx):
+    if not ctx.log_text:
+        return
+    seen = set()
+    for m in _ERROR.finditer(ctx.log_text):
+        message = m.group(1).strip()
+        if message in seen or message.startswith("=="):
+            continue
+        seen.add(message)
+        file_hint, line_hint = _nearest_source(ctx.log_text, m.start())
+        yield ctx.finding("LOG001", f"LaTeX error: {message}",
+                          file=file_hint, line=line_hint,
+                          fix="Fix this error first; later ones are often knock-on effects.")
+        if len(seen) >= 10:
+            break
+
+
+@rule("LOG002", "Undefined references in the compiled document", Category.COMPILE, Severity.ERROR,
+      needs_build=True,
+      rationale="Each of these prints as '??' in the PDF.",
+      fix="Define the label, or fix the key -- then compile twice.")
+def undefined_references(ctx):
+    if not ctx.log_text:
+        return
+    for key in sorted(set(_UNDEFINED_REF.findall(ctx.log_text))):
+        yield ctx.finding("LOG002", f"reference `{key}` is undefined in the compiled PDF",
+                          file=ctx.project.main, data={"label": key})
+
+
+@rule("LOG003", "Undefined citations in the compiled document", Category.COMPILE, Severity.ERROR,
+      needs_build=True,
+      rationale="Each of these prints as '[?]' and is missing from the reference list.",
+      fix="Add the entry, then run bibtex/biber and compile twice.")
+def undefined_citations(ctx):
+    if not ctx.log_text:
+        return
+    for key in sorted(set(_UNDEFINED_CITE.findall(ctx.log_text))):
+        yield ctx.finding("LOG003", f"citation `{key}` is undefined in the compiled PDF",
+                          file=ctx.project.main, data={"key": key})
+
+
+@rule("LOG004", "Multiply defined labels", Category.COMPILE, Severity.ERROR,
+      needs_build=True,
+      rationale="References to a duplicated label silently point at whichever came last.",
+      fix="Rename one of them.")
+def multiply_defined(ctx):
+    if not ctx.log_text:
+        return
+    for key in sorted(set(_MULTIPLY_DEFINED.findall(ctx.log_text))):
+        yield ctx.finding("LOG004", f"label `{key}` is defined more than once",
+                          file=ctx.project.main, data={"label": key})
+
+
+@rule("LOG005", "Text overflowing the margin", Category.COMPILE, Severity.WARN,
+      needs_build=True,
+      rationale="An overfull hbox is text sticking out past the text block. A few are unavoidable; dozens mean nobody has looked at the printed page.",
+      fix="Rewrite the line, add a hyphenation hint (\\-), or resize the offending table/URL.")
+def overfull_boxes(ctx):
+    if not ctx.log_text:
+        return
+    threshold_pt = float(ctx.opt("LOG005", "min_points", 5.0) or 5.0)
+    max_reported = int(ctx.opt("LOG005", "max_reported", 15) or 15)
+
+    bad = []
+    for m in _OVERFULL.finditer(ctx.log_text):
+        kind, box, size, direction, line_a, _line_b = m.groups()
+        if kind != "Overfull" or box != "h":
+            continue  # underfull boxes are a spacing aesthetic, not an error
+        if float(size) < threshold_pt:
+            continue
+        bad.append((float(size), int(line_a) if line_a else None))
+    if not bad:
+        return
+    bad.sort(reverse=True)
+    for size, line in bad[:max_reported]:
+        yield ctx.finding("LOG005", f"text overflows the margin by {size:.1f}pt",
+                          file=ctx.project.main, line=line,
+                          data={"points": size})
+    if len(bad) > max_reported:
+        yield ctx.finding("LOG005",
+                          f"{len(bad) - max_reported} further overfull boxes over {threshold_pt}pt not listed",
+                          file=ctx.project.main, severity=Severity.INFO)
+
+
+@rule("LOG006", "Characters missing from the font", Category.COMPILE, Severity.ERROR,
+      needs_build=True,
+      rationale="A missing character prints as nothing at all -- a silently empty gap where a letter should be, typically an umlaut or a dash.",
+      fix="Load the right font encoding (fontenc/inputenc), or switch to LuaLaTeX/XeLaTeX for Unicode.")
+def missing_characters(ctx):
+    if not ctx.log_text:
+        return
+    seen = set()
+    for char, font in _MISSING_CHAR.findall(ctx.log_text):
+        key = (char, font.strip())
+        if key in seen:
+            continue
+        seen.add(key)
+        yield ctx.finding("LOG006", f"character {char} is missing from font {font.strip()}",
+                          file=ctx.project.main)
+        if len(seen) >= 8:
+            break
+
+
+@rule("LOG007", "The document needs another compilation pass", Category.COMPILE, Severity.WARN,
+      needs_build=True,
+      rationale="Cross-references and the table of contents are one pass out of date, so the numbers you are reading may be wrong.",
+      fix="Compile again (latexmk does this automatically).")
+def rerun_needed(ctx):
+    if not ctx.log_text or not _RERUN.search(ctx.log_text):
+        return
+    yield ctx.finding("LOG007", "LaTeX asked to be run again; the cross-references are stale",
+                      file=ctx.project.main,
+                      fix="Use latexmk, which reruns until stable.")
+
+
+@rule("LOG008", "Undefined font shape", Category.COMPILE, Severity.INFO,
+      needs_build=True,
+      rationale="LaTeX substituted a different font, so the printed result is not the one you specified.",
+      fix="Load a font package that provides the shape (e.g. bold small caps), or stop asking for it.")
+def font_substitution(ctx):
+    if not ctx.log_text:
+        return
+    for shape in sorted(set(_FONT_SUB.findall(ctx.log_text)))[:5]:
+        yield ctx.finding("LOG008", f"font shape `{shape}` is undefined and was substituted",
+                          file=ctx.project.main)
+
+
+def _nearest_source(log: str, position: int):
+    """Best guess at the source file and line a log message refers to."""
+    window = log[max(0, position - 2000):position + 400]
+    hits = _FILE_LINE.findall(window)
+    if hits:
+        path, line = hits[-1]
+        return path, int(line)
+    return None, None

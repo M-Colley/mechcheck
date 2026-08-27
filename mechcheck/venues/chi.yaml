@@ -1,0 +1,58 @@
+# ACM CHI -- venue pack
+#
+# Every value below was read off the CHI 2026 author pages on the `verified`
+# date. Page limits and required statements change every cycle: re-read the
+# current call before you trust this file, and update `verified` when you do.
+name: ACM CHI
+verified: 2026-08-27
+source_url: https://chi2026.acm.org/chi-publication-formats/
+
+document_class: acmart
+bibliography_style: ACM-Reference-Format
+
+class_options:
+  submission:
+    required:
+      - manuscript
+      - review
+    forbidden:
+      - sigconf
+  final:
+    required:
+      - sigconf
+    forbidden:
+      - review
+      - anonymous
+
+anonymity:
+  model: double-anonymous
+  note: 'CHI review is anonymous; acmart replaces the author block when the anonymous option is set.'
+
+length:
+  unit: none
+  excludes: 'references, figures and tables are not counted as main text'
+  note: 'CHI has no fixed page limit: length must be commensurate with the contribution. Excessively long papers without justification are a listed desk-reject reason.'
+
+accessibility:
+  descriptions_required: true
+  note: 'ACM requires alt text for every figure and validates it in TAPS.'
+
+requires:
+  ai_disclosure: true
+  data_availability: false
+
+required_commands:
+  - command: ccsdesc
+    why: 'ACM requires CCS concepts; TAPS rejects submissions without them'
+  - command: keywords
+    why: 'ACM templates expect keywords'
+
+filename_charset_strict: true
+forbidden_packages_fix: 'TAPS compiles your sources itself and only supports its accepted package list: https://www.acm.org/publications/taps/accepted-latex-packages'
+
+rules:
+  MET004:
+    min_references: 25
+
+uncertain:
+  - 'No numeric page or word limit is encoded, because CHI 2026 states length should be commensurate with contribution rather than giving a number. If your track publishes one, set rules.MET002.max_pages in mechcheck.yaml.'

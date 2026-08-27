@@ -1,0 +1,520 @@
+%% mechcheck.sty -- mechanical checks that run inside the LaTeX compile.
+%%
+%% Why this exists
+%% ---------------
+%% Overleaf's Git and GitHub integrations are premium features, and its GitHub
+%% sync is manual: there is no webhook, so CI cannot fire on every edit.  That
+%% leaves one place where a check runs automatically for every student on every
+%% recompile: inside LaTeX itself.
+%%
+%% This package therefore covers the checks LaTeX can do better than any
+%% external tool, because it sees the document as the typesetter does: which
+%% labels were actually referenced, which floats really lack a caption, whether
+%% a \label was placed before its \caption.  The text-level checks
+%% (abbreviations, prose, bibliography verification) live in the mechcheck CLI,
+%% which runs in CI.
+%%
+%% Design rule, above all others: a bug in this file must never stop a
+%% student's document from compiling.  Every patch is conditional, every check
+%% is guarded, and nothing raises a LaTeX error unless [strict] was requested.
+%%
+%%     \usepackage{mechcheck}            % warnings in the log + mechcheck-report.txt
+%%     \usepackage[report]{mechcheck}    % + a summary page at the end
+%%     \usepackage[strict]{mechcheck}    % failures become real errors (for CI)
+%%     \usepackage[off]{mechcheck}       % disable everything
+%%
+%% Options
+%%   off             do nothing at all
+%%   quiet           no per-finding log warnings (report file only)
+%%   report          typeset a summary page at the end of the document
+%%   strict          raise a LaTeX error if any check failed
+%%   nodescription   do not require \Description in figures (non-ACM documents)
+%%   nofile          do not write mechcheck-report.txt
+%%   crossref        also check labels and references (patches \label and \ref;
+%%                   off by default because patching those commands is the only
+%%                   part of this package that could plausibly disturb a document,
+%%                   and the mechcheck CLI checks cross-references in CI anyway)
+
+\NeedsTeXFormat{LaTeX2e}[2020/10/01]
+\ProvidesPackage{mechcheck}[2026/08/27 v0.1 Mechanical checks inside the document]
+
+\newif\ifmechcheck@enabled \mechcheck@enabledtrue
+\newif\ifmechcheck@quiet   \mechcheck@quietfalse
+\newif\ifmechcheck@report  \mechcheck@reportfalse
+\newif\ifmechcheck@strict  \mechcheck@strictfalse
+\newif\ifmechcheck@descr   \mechcheck@descrtrue
+\newif\ifmechcheck@file    \mechcheck@filetrue
+\newif\ifmechcheck@crossref \mechcheck@crossreffalse
+
+\DeclareOption{off}{\mechcheck@enabledfalse}
+\DeclareOption{quiet}{\mechcheck@quiettrue}
+\DeclareOption{report}{\mechcheck@reporttrue}
+\DeclareOption{strict}{\mechcheck@stricttrue}
+\DeclareOption{nodescription}{\mechcheck@descrfalse}
+\DeclareOption{nofile}{\mechcheck@filefalse}
+\DeclareOption{crossref}{\mechcheck@crossreftrue}
+\DeclareOption*{\PackageWarning{mechcheck}{Unknown option '\CurrentOption'}}
+\ProcessOptions\relax
+
+\ifmechcheck@enabled\else
+  \expandafter\endinput
+\fi
+
+\ExplSyntaxOn
+
+%% ---------------------------------------------------------------------------
+%% state
+%% ---------------------------------------------------------------------------
+
+\bool_new:N \g_mechcheck_quiet_bool
+\bool_new:N \g_mechcheck_descr_bool
+\ifmechcheck@quiet \bool_gset_true:N \g_mechcheck_quiet_bool \fi
+
+\seq_new:N \g_mechcheck_labels_seq       % every \label argument, in order
+\seq_new:N \g_mechcheck_refs_seq         % every key given to a \ref-like command
+\seq_new:N \g_mechcheck_findings_seq     % "rule%severity%where%message"
+\prop_new:N \g_mechcheck_where_prop      % label -> where it was defined
+
+\int_new:N \g_mechcheck_depth_int
+\int_new:N \g_mechcheck_floats_int
+\int_new:N \g_mechcheck_errors_int
+\int_new:N \g_mechcheck_warnings_int
+\int_new:N \g_mechcheck_captions_int      % how often the caption hook fired
+\int_new:N \g_mechcheck_labels_int        % how often the label hook fired
+
+\tl_new:N \g_mechcheck_kind_tl
+\bool_new:N \g_mechcheck_infloat_bool
+\bool_new:N \g_mechcheck_isfigure_bool
+\bool_new:N \g_mechcheck_caption_bool
+\bool_new:N \g_mechcheck_label_bool
+\bool_new:N \g_mechcheck_desc_bool
+\bool_new:N \g_mechcheck_labelfirst_bool
+
+%% Best-effort source location.  \CurrentFile comes from the LaTeX file hooks;
+%% if the format is too old to provide it we still report the line number.
+\cs_new:Npn \mechcheck_where:
+  {
+    \cs_if_exist:NTF \CurrentFile { \CurrentFile } { \jobname }
+    : \int_use:N \inputlineno
+  }
+
+\cs_new_protected:Npn \mechcheck_record:nnn #1#2#3
+  {
+    \seq_gput_right:Nx \g_mechcheck_findings_seq
+      {
+        \tl_to_str:n {#1} \c_percent_str
+        \tl_to_str:n {#2} \c_percent_str
+        \mechcheck_where: \c_percent_str
+        \tl_to_str:n {#3}
+      }
+    \str_if_eq:nnTF {#2} { error }
+      { \int_gincr:N \g_mechcheck_errors_int }
+      { \int_gincr:N \g_mechcheck_warnings_int }
+    \bool_if:NF \g_mechcheck_quiet_bool
+      { \PackageWarningNoLine { mechcheck } { [#1]~#3~(at~\mechcheck_where:) } }
+  }
+
+%% ---------------------------------------------------------------------------
+%% recording labels and references
+%%
+%% By default nothing is redefined: the float checks run entirely off LaTeX's
+%% own cmd/env hooks, which cannot disturb a document. Cross-reference checking
+%% needs the actual argument of every \label and \ref, which does require
+%% wrapping those commands -- so it is opt-in via the [crossref] option, and the
+%% CLI covers the same ground in CI without touching the document at all.
+%% ---------------------------------------------------------------------------
+
+\cs_new_protected:Npn \mechcheck_note_label:n #1
+  {
+    \seq_gput_right:Nn \g_mechcheck_labels_seq {#1}
+    \prop_gput:Nnx \g_mechcheck_where_prop {#1} { \mechcheck_where: }
+  }
+
+\cs_new_protected:Npn \mechcheck_note_refs:n #1
+  { \clist_map_inline:nn {#1} { \seq_gput_right:Nn \g_mechcheck_refs_seq {##1} } }
+
+%% Presence of a label inside a float is all the float checks need, and a hook
+%% gives us that without touching \label itself.
+\AddToHook { cmd/label/before }
+  {
+    \int_gincr:N \g_mechcheck_labels_int
+    \bool_if:NT \g_mechcheck_infloat_bool
+      {
+        \bool_if:NF \g_mechcheck_caption_bool
+          { \bool_gset_true:N \g_mechcheck_labelfirst_bool }
+        \bool_gset_true:N \g_mechcheck_label_bool
+      }
+  }
+
+\ifmechcheck@crossref
+%% Opt-in only. \label and the \ref family are wrapped at \begin{document},
+%% after hyperref, cleveref and the class have finished patching them. The
+%% signatures allow the starred and optional forms those packages add: a
+%% wrapper that swallowed them would break real documents, which is far worse
+%% than missing a check.
+\AtBeginDocument
+  {
+    \cs_if_exist:NT \label
+      {
+        \cs_gset_eq:NN \mechcheck@label \label
+        \RenewDocumentCommand \label { o m }
+          {
+            \mechcheck_note_label:n {##2}
+            \IfNoValueTF {##1} { \mechcheck@label {##2} } { \mechcheck@label [##1] {##2} }
+          }
+      }
+    \cs_if_exist:NT \ref
+      {
+        \cs_gset_eq:NN \mechcheck@ref \ref
+        \RenewDocumentCommand \ref { s o m }
+          {
+            \mechcheck_note_refs:n {##3}
+            \IfBooleanTF {##1}
+              {
+                \IfNoValueTF {##2} { \mechcheck@ref * {##3} }
+                                   { \mechcheck@ref * [##2] {##3} }
+              }
+              {
+                \IfNoValueTF {##2} { \mechcheck@ref {##3} }
+                                   { \mechcheck@ref [##2] {##3} }
+              }
+          }
+      }
+    \cs_if_exist:NT \cref
+      {
+        \cs_gset_eq:NN \mechcheck@cref \cref
+        \RenewDocumentCommand \cref { s m }
+          {
+            \mechcheck_note_refs:n {##2}
+            \IfBooleanTF {##1} { \mechcheck@cref * {##2} } { \mechcheck@cref {##2} }
+          }
+      }
+    \cs_if_exist:NT \Cref
+      {
+        \cs_gset_eq:NN \mechcheck@Cref \Cref
+        \RenewDocumentCommand \Cref { s m }
+          {
+            \mechcheck_note_refs:n {##2}
+            \IfBooleanTF {##1} { \mechcheck@Cref * {##2} } { \mechcheck@Cref {##2} }
+          }
+      }
+    \cs_if_exist:NT \autoref
+      {
+        \cs_gset_eq:NN \mechcheck@autoref \autoref
+        \RenewDocumentCommand \autoref { s m }
+          {
+            \mechcheck_note_refs:n {##2}
+            \IfBooleanTF {##1} { \mechcheck@autoref * {##2} } { \mechcheck@autoref {##2} }
+          }
+      }
+  }
+\fi
+
+%% ---------------------------------------------------------------------------
+%% floats
+%% ---------------------------------------------------------------------------
+
+\cs_new_protected:Npn \mechcheck_float_begin:nn #1#2
+  %% #1 environment name, #2 "figure" or "table"
+  {
+    \int_gincr:N \g_mechcheck_depth_int
+    \int_compare:nNnT { \g_mechcheck_depth_int } = { 1 }
+      {
+        \int_gincr:N \g_mechcheck_floats_int
+        \bool_gset_true:N \g_mechcheck_infloat_bool
+        \bool_gset_false:N \g_mechcheck_caption_bool
+        \bool_gset_false:N \g_mechcheck_label_bool
+        \bool_gset_false:N \g_mechcheck_desc_bool
+        \bool_gset_false:N \g_mechcheck_labelfirst_bool
+        \str_if_eq:nnTF {#2} { figure }
+          { \bool_gset_true:N  \g_mechcheck_isfigure_bool }
+          { \bool_gset_false:N \g_mechcheck_isfigure_bool }
+        \tl_gset:Nn \g_mechcheck_kind_tl {#1}
+      }
+  }
+
+\cs_new_protected:Npn \mechcheck_float_end:
+  {
+    \int_compare:nNnT { \g_mechcheck_depth_int } = { 1 }
+      {
+        \bool_gset_false:N \g_mechcheck_infloat_bool
+        \bool_if:NF \g_mechcheck_caption_bool
+          {
+            \mechcheck_record:nnn { MC002 } { warn }
+              { \g_mechcheck_kind_tl \c_space_tl has~no~caption }
+          }
+        \bool_if:NF \g_mechcheck_label_bool
+          {
+            \mechcheck_record:nnn { MC003 } { warn }
+              { \g_mechcheck_kind_tl \c_space_tl has~no~label }
+          }
+        \bool_if:NT \g_mechcheck_labelfirst_bool
+          {
+            \mechcheck_record:nnn { MC004 } { error }
+              { label~comes~before~caption~in~this~\g_mechcheck_kind_tl \c_space_tl
+                --~the~cross-reference~will~show~the~wrong~number }
+          }
+        \bool_lazy_all:nT
+          {
+            { \g_mechcheck_descr_bool }
+            { \g_mechcheck_isfigure_bool }
+            { ! \g_mechcheck_desc_bool }
+          }
+          {
+            \mechcheck_record:nnn { MC001 } { error }
+              { \g_mechcheck_kind_tl \c_space_tl has~no~Description~
+                (alt~text~is~required~by~ACM) }
+          }
+      }
+    \int_gdecr:N \g_mechcheck_depth_int
+  }
+
+%% \Description exists only in acmart, so the requirement switches itself on
+%% exactly when the class provides the command.
+\ifmechcheck@descr
+  \AtBeginDocument
+    { \cs_if_exist:NT \Description { \bool_gset_true:N \g_mechcheck_descr_bool } }
+\fi
+
+\AddToHook { env/figure/begin  } { \mechcheck_float_begin:nn { figure  } { figure } }
+\AddToHook { env/figure/end    } { \mechcheck_float_end: }
+\AddToHook { env/figure*/begin } { \mechcheck_float_begin:nn { figure* } { figure } }
+\AddToHook { env/figure*/end   } { \mechcheck_float_end: }
+\AddToHook { env/table/begin   } { \mechcheck_float_begin:nn { table   } { table  } }
+\AddToHook { env/table/end     } { \mechcheck_float_end: }
+\AddToHook { env/table*/begin  } { \mechcheck_float_begin:nn { table*  } { table  } }
+\AddToHook { env/table*/end    } { \mechcheck_float_end: }
+
+%% Presence is all we need from these two, so a hook is enough and no argument
+%% grabbing is involved -- which keeps \Description[short]{long} working.
+\AddToHook { cmd/caption/before }
+  {
+    \int_gincr:N \g_mechcheck_captions_int
+    \bool_gset_true:N \g_mechcheck_caption_bool
+  }
+\AddToHook { cmd/Description/before } { \bool_gset_true:N \g_mechcheck_desc_bool }
+
+%% ---------------------------------------------------------------------------
+%% end-of-document analysis
+%% ---------------------------------------------------------------------------
+
+\cs_new_protected:Npn \mechcheck_check_labels:
+  {
+    \seq_map_inline:Nn \g_mechcheck_labels_seq
+      {
+        \seq_if_in:NnF \g_mechcheck_refs_seq {##1}
+          {
+            \prop_get:NnNF \g_mechcheck_where_prop {##1} \l_tmpa_tl
+              { \tl_clear:N \l_tmpa_tl }
+            \mechcheck_record:nnn { MC005 } { warn }
+              { label~'##1'~is~never~referenced~(defined~at~\l_tmpa_tl) }
+          }
+      }
+    \seq_map_inline:Nn \g_mechcheck_refs_seq
+      {
+        \seq_if_in:NnF \g_mechcheck_labels_seq {##1}
+          {
+            \mechcheck_record:nnn { MC006 } { error }
+              { reference~to~undefined~label~'##1' }
+          }
+      }
+  }
+
+%% LaTeX warns about duplicate labels itself, but only on the second compile and
+%% Overleaf keeps that behind a panel. Checking here reports it on run one.
+\cs_new_protected:Npn \mechcheck_check_duplicates:
+  {
+    \seq_clear:N \l_tmpa_seq
+    \seq_map_inline:Nn \g_mechcheck_labels_seq
+      {
+        \seq_if_in:NnTF \l_tmpa_seq {##1}
+          {
+            \mechcheck_record:nnn { MC007 } { error }
+              { label~'##1'~is~defined~more~than~once }
+          }
+          { \seq_put_right:Nn \l_tmpa_seq {##1} }
+      }
+  }
+
+%% ---------------------------------------------------------------------------
+%% instrumentation self-check
+%%
+%% Everything above depends on LaTeX's cmd hooks firing for \caption and
+%% \label. They attach to the great majority of classes, but not to every
+%% conceivable redefinition -- and a silent failure would report every figure in
+%% the document as missing its caption. So before trusting any float finding,
+%% confirm the hooks fired at least once in a document that contains floats.
+%% If they did not, throw the float findings away and say so: an honest "could
+%% not check" beats a page of false alarms.
+%% ---------------------------------------------------------------------------
+
+\bool_new:N \g_mechcheck_trusted_bool
+\bool_gset_true:N \g_mechcheck_trusted_bool
+
+\seq_new:N \g_mechcheck_kept_seq
+
+\cs_new_protected:Npn \mechcheck_verify_instrumentation:
+  {
+    %% Floats exist, but the caption hook never fired once: our instrumentation
+    %% is not attached to this class, and every float finding is suspect.
+    \bool_lazy_and:nnT
+      { \int_compare_p:nNn { \g_mechcheck_floats_int } > { 0 } }
+      { \int_compare_p:nNn { \g_mechcheck_captions_int } = { 0 } }
+      { \bool_gset_false:N \g_mechcheck_trusted_bool }
+  }
+
+%% Rebuild the finding list and the counters, dropping the float checks when the
+%% instrumentation is not trustworthy.
+\cs_new_protected:Npn \mechcheck_filter_findings:
+  {
+    \bool_if:NF \g_mechcheck_trusted_bool
+      {
+        \seq_gclear:N \g_mechcheck_kept_seq
+        \int_gzero:N \g_mechcheck_errors_int
+        \int_gzero:N \g_mechcheck_warnings_int
+        \seq_map_inline:Nn \g_mechcheck_findings_seq
+          {
+            \seq_set_split:Nnn \l_tmpa_seq { \c_percent_str } {##1}
+            \tl_set:Nx \l_tmpb_tl { \seq_item:Nn \l_tmpa_seq { 1 } }
+            \bool_lazy_any:nTF
+              {
+                { \str_if_eq_p:Vn \l_tmpb_tl { MC001 } }
+                { \str_if_eq_p:Vn \l_tmpb_tl { MC002 } }
+                { \str_if_eq_p:Vn \l_tmpb_tl { MC003 } }
+                { \str_if_eq_p:Vn \l_tmpb_tl { MC004 } }
+              }
+              { }
+              {
+                \seq_gput_right:Nn \g_mechcheck_kept_seq {##1}
+                \tl_set:Nx \l_tmpb_tl { \seq_item:Nn \l_tmpa_seq { 2 } }
+                \str_if_eq:VnTF \l_tmpb_tl { error }
+                  { \int_gincr:N \g_mechcheck_errors_int }
+                  { \int_gincr:N \g_mechcheck_warnings_int }
+              }
+          }
+        \seq_gset_eq:NN \g_mechcheck_findings_seq \g_mechcheck_kept_seq
+        \PackageWarningNoLine { mechcheck }
+          {
+            Could~not~instrument~\string\caption\space in~this~document~class,~
+            so~the~figure~and~table~checks~were~skipped.\MessageBreak
+            The~mechcheck~CLI~checks~them~instead:~mechcheck~check~.
+          }
+      }
+  }
+
+\iow_new:N \g_mechcheck_iow
+
+\cs_new_protected:Npn \mechcheck_write_report:
+  {
+    \iow_open:Nn \g_mechcheck_iow { mechcheck-report.txt }
+    \iow_now:Nx \g_mechcheck_iow
+      { mechcheck~--~compile-time~checks~for~\jobname }
+    \iow_now:Nn \g_mechcheck_iow { }
+    \seq_map_inline:Nn \g_mechcheck_findings_seq { \mechcheck_write_line:n {##1} }
+    \iow_now:Nn \g_mechcheck_iow { }
+    \iow_now:Nx \g_mechcheck_iow
+      {
+        \int_use:N \g_mechcheck_errors_int \c_space_tl error(s),~
+        \int_use:N \g_mechcheck_warnings_int \c_space_tl warning(s),~
+        \int_use:N \g_mechcheck_floats_int \c_space_tl float(s)~checked.
+      }
+    \iow_now:Nn \g_mechcheck_iow
+      { The~remaining~checks~--~abbreviations,~prose,~bibliography~--~run~in~CI. }
+    \iow_close:N \g_mechcheck_iow
+  }
+
+\cs_new_protected:Npn \mechcheck_write_line:n #1
+  {
+    \seq_set_split:Nnn \l_tmpa_seq { \c_percent_str } {#1}
+    \iow_now:Nx \g_mechcheck_iow
+      {
+        \seq_item:Nn \l_tmpa_seq { 2 } \c_space_tl
+        \seq_item:Nn \l_tmpa_seq { 1 } \c_space_tl
+        \seq_item:Nn \l_tmpa_seq { 3 } \c_space_tl --- \c_space_tl
+        \seq_item:Nn \l_tmpa_seq { 4 }
+      }
+  }
+
+%% The optional summary page. Deliberately plain: no sectioning command, so it
+%% cannot disturb the table of contents or the class's page style.
+\cs_new_protected:Npn \mechcheck_typeset_report:
+  {
+    \clearpage
+    \begingroup
+      \parindent \c_zero_dim
+      \raggedright
+      { \bfseries mechcheck~report } \par
+      \vspace { 0.5em }
+      \int_use:N \g_mechcheck_errors_int \c_space_tl error(s),~
+      \int_use:N \g_mechcheck_warnings_int \c_space_tl warning(s)~across~
+      \int_use:N \g_mechcheck_floats_int \c_space_tl float(s). \par
+      \vspace { 0.5em }
+      \seq_if_empty:NTF \g_mechcheck_findings_seq
+        { Nothing~mechanical~left~to~fix~at~compile~time. \par }
+        {
+          \begingroup
+            \small
+            \seq_map_inline:Nn \g_mechcheck_findings_seq
+              { \mechcheck_typeset_line:n {##1} }
+          \endgroup
+        }
+      \vspace { 0.5em }
+      { \itshape Remove~the~[report]~option~before~you~submit. } \par
+    \endgroup
+  }
+
+\cs_new_protected:Npn \mechcheck_typeset_line:n #1
+  {
+    \seq_set_split:Nnn \l_tmpa_seq { \c_percent_str } {#1}
+    \par \noindent
+    { \ttfamily \seq_item:Nn \l_tmpa_seq { 1 } } \c_space_tl
+    \seq_item:Nn \l_tmpa_seq { 4 } \c_space_tl
+    ( \seq_item:Nn \l_tmpa_seq { 3 } )
+  }
+
+\AtEndDocument
+  {
+    \ifmechcheck@crossref
+      \mechcheck_check_labels:
+      \mechcheck_check_duplicates:
+    \fi
+    \mechcheck_verify_instrumentation:
+    \mechcheck_filter_findings:
+    \ifmechcheck@file \mechcheck_write_report: \fi
+    \ifmechcheck@report \mechcheck_typeset_report: \fi
+    \int_compare:nNnT { \g_mechcheck_errors_int + \g_mechcheck_warnings_int } > { 0 }
+      {
+        \PackageWarningNoLine { mechcheck }
+          {
+            \int_use:N \g_mechcheck_errors_int \c_space_tl error(s)~and~
+            \int_use:N \g_mechcheck_warnings_int \c_space_tl warning(s)~found.
+            \ifmechcheck@file
+              \MessageBreak See~mechcheck-report.txt~in~the~output~files.
+            \fi
+          }
+      }
+    \ifmechcheck@strict
+      \int_compare:nNnT { \g_mechcheck_errors_int } > { 0 }
+        {
+          \PackageError { mechcheck }
+            { \int_use:N \g_mechcheck_errors_int \c_space_tl mechanical~check(s)~failed }
+            { See~mechcheck-report.txt,~or~load~the~package~with~[report]. }
+        }
+    \fi
+  }
+
+%% ---------------------------------------------------------------------------
+%% escape hatches
+%% ---------------------------------------------------------------------------
+
+%% Inside a figure that genuinely needs no alt text (a decorative rule, a
+%% divider), say so explicitly rather than switching the check off globally.
+\NewDocumentCommand \mechcheckNoDescription { }
+  { \bool_gset_true:N \g_mechcheck_desc_bool }
+
+%% Turn the \Description requirement off for the rest of the document.
+\NewDocumentCommand \mechcheckDescriptionsOff { }
+  { \bool_gset_false:N \g_mechcheck_descr_bool }
+
+\ExplSyntaxOff
+\endinput

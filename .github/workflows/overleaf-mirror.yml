@@ -1,0 +1,99 @@
+name: mirror from Overleaf
+
+# Why this exists
+# ---------------
+# Overleaf's GitHub synchronisation is MANUAL: someone must open the project and
+# press "Push Overleaf changes to GitHub". There is no webhook, so nothing on
+# GitHub can react to a student's edit on its own.
+#
+# This workflow closes that gap from the other side: it pulls from Overleaf's
+# git bridge on a schedule and commits any change into this repository, which
+# then triggers the mechcheck workflow like any other push. Students keep
+# working in Overleaf and never touch git; the checks still run.
+#
+# Requirements
+#   * Overleaf git integration is a PREMIUM feature (paid, group or institutional
+#     licence). Without it, use the mechcheck.sty layer instead, which runs
+#     inside every compile on any plan.
+#   * Secrets: OVERLEAF_PROJECT_ID  -- the id in the project URL
+#              OVERLEAF_GIT_TOKEN   -- Account Settings > Git integration tokens
+#
+# Overleaf's documentation notes that automated polling of the git bridge can
+# trigger rate limiting. Every 30 minutes during working hours is deliberate:
+# often enough that feedback arrives while the student is still writing, rarely
+# enough to stay a good citizen. Do not lower it without reason.
+
+on:
+  schedule:
+    - cron: '*/30 6-20 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: 'Overleaf project id (defaults to the OVERLEAF_PROJECT_ID secret)'
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: overleaf-mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pull the current state from Overleaf
+        env:
+          PROJECT_ID: ${{ github.event.inputs.project_id || secrets.OVERLEAF_PROJECT_ID }}
+          TOKEN: ${{ secrets.OVERLEAF_GIT_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PROJECT_ID:-}" ] || [ -z "${TOKEN:-}" ]; then
+            echo "::error::Set the OVERLEAF_PROJECT_ID and OVERLEAF_GIT_TOKEN secrets first."
+            exit 1
+          fi
+          # The token is the password; the username is ignored by the bridge.
+          git clone --depth 1 \
+            "https://git:${TOKEN}@git.overleaf.com/${PROJECT_ID}" overleaf-snapshot
+          rm -rf overleaf-snapshot/.git
+
+      - name: Copy the snapshot into the tracked directory
+        run: |
+          set -euo pipefail
+          mkdir -p paper
+          # Mirror exactly: files deleted in Overleaf must disappear here too.
+          rsync -a --delete \
+            --exclude '.git' --exclude '.github' \
+            --exclude 'mechcheck.yaml' --exclude '.mechcheck-baseline.json' \
+            overleaf-snapshot/ paper/
+          rm -rf overleaf-snapshot
+
+      - name: Commit, if Overleaf actually changed
+        id: commit
+        run: |
+          set -euo pipefail
+          git config user.name  "overleaf-mirror[bot]"
+          git config user.email "overleaf-mirror@users.noreply.github.com"
+          git add -A paper
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No change in Overleaf since the last mirror."
+          else
+            git commit -m "Mirror Overleaf project $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report what happened
+        run: |
+          if [ "${{ steps.commit.outputs.changed }}" = "true" ]; then
+            echo "### Mirrored a new version from Overleaf" >> "$GITHUB_STEP_SUMMARY"
+            echo "The mechcheck workflow will now run on it." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### No change in Overleaf" >> "$GITHUB_STEP_SUMMARY"
+          fi
