@@ -18,19 +18,25 @@ mechcheck check . --venue autoui --profile paper-anonymous --stage final
 
 ---
 
-## The three layers
+## Four ways to run it
 
 Overleaf's Git integration is premium and its GitHub sync is **manual** — there
 is no webhook, so nothing can fire on a student's edit. That constraint produced
-a three-layer design; use whichever layers you can.
+a layered design; use whichever layers suit you.
 
 | | What | Runs | Needs |
 |---|---|---|---|
 | **A** | [`mechcheck.sty`](latex/mechcheck.sty) | every Overleaf compile | nothing — works on the free plan |
-| **B** | [mirror + CI](.github/workflows/overleaf-mirror.yml) | every 30 min, automatically | Overleaf premium (git bridge) |
-| **C** | [`mechcheck` CLI](mechcheck/) | locally and in CI | Python 3.10+ |
+| **B** | [`browser/mechcheck.html`](browser/mechcheck.html) | when you drop a project on it | **a browser, nothing else** |
+| **C** | [mirror + CI](.github/workflows/overleaf-mirror.yml) | every 30 min, automatically | Overleaf premium (git bridge) |
+| **D** | [`mechcheck` CLI](mechcheck/) | locally and in CI | Python 3.10+ |
 
-Full instructions: **[docs/overleaf-setup.md](docs/overleaf-setup.md)**.
+**If you want no Python and no GitHub: use A and B.** Layer A checks every
+compile inside Overleaf; layer B is one HTML file you double-click and drop your
+Overleaf `.zip` onto — all 117 rules, including live reference verification.
+
+Setup: **[docs/browser.md](docs/browser.md)** (browser) ·
+**[docs/overleaf-setup.md](docs/overleaf-setup.md)** (Overleaf and CI).
 
 ---
 
@@ -181,6 +187,9 @@ mechcheck/            the checker
   texsource.py        the LaTeX parser everything else reads through
   bibtex.py           a tolerant .bib reader
   net.py              Crossref / OpenAlex / DBLP, cached and polite
+browser/
+  mechcheck.html      the entire checker in one file, no install
+  test-engine.mjs     runs that engine in Node against the Python fixtures
 latex/
   mechcheck.sty       the in-Overleaf layer
   demo/               a deliberately flawed document CI compiles to prove it works
@@ -195,8 +204,12 @@ tests/                194 tests
 
 ## Status
 
-Python side: 194 tests passing, and the bibliography verification has been run
+Python side: 207 tests passing, and the bibliography verification has been run
 against the live Crossref, OpenAlex and DBLP APIs.
+
+Browser side: 54 checks passing (`node browser/test-engine.mjs`), and the page
+itself was driven in a real browser — zip reading, filtering, export, and both
+colour themes.
 
 `latex/mechcheck.sty` has **not** been compile-tested yet — there is no TeX
 installation on the machine it was written on. The `latex` job in

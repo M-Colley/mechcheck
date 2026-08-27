@@ -1,0 +1,3256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mechcheck</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --paper:#f7f8fa; --surface:#ffffff; --surface-2:#eef1f6; --surface-3:#e4e9f1;
+  --ink:#171a21; --ink-soft:#4a5162; --ink-faint:#6d7488;
+  --rule:#d8dde6; --rule-soft:#e7eaf0;
+  --accent:#3a4ea8; --accent-dim:#3a4ea814; --accent-mid:#3a4ea833;
+  --ok:#1d7a4c; --warn:#9a6207; --err:#b23026;
+  --ok-dim:#1d7a4c1a; --warn-dim:#9a62071a; --err-dim:#b230261a;
+  --shadow:0 1px 2px rgba(23,26,33,.05), 0 8px 24px -16px rgba(23,26,33,.25);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper:#0e1116; --surface:#151922; --surface-2:#1c212c; --surface-3:#252c39;
+    --ink:#e5e8ef; --ink-soft:#a3abbd; --ink-faint:#7c8497;
+    --rule:#2a303c; --rule-soft:#21262f;
+    --accent:#8fa2ee; --accent-dim:#8fa2ee1a; --accent-mid:#8fa2ee40;
+    --ok:#4bbd82; --warn:#d9a33c; --err:#e8776b;
+    --ok-dim:#4bbd821f; --warn-dim:#d9a33c1f; --err-dim:#e8776b1f;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+  }
+}
+:root[data-theme="dark"] {
+  --paper:#0e1116; --surface:#151922; --surface-2:#1c212c; --surface-3:#252c39;
+  --ink:#e5e8ef; --ink-soft:#a3abbd; --ink-faint:#7c8497;
+  --rule:#2a303c; --rule-soft:#21262f;
+  --accent:#8fa2ee; --accent-dim:#8fa2ee1a; --accent-mid:#8fa2ee40;
+  --ok:#4bbd82; --warn:#d9a33c; --err:#e8776b;
+  --ok-dim:#4bbd821f; --warn-dim:#d9a33c1f; --err-dim:#e8776b1f;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;
+  font-size:15px; line-height:1.55; -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3 { font-family:Spectral,Georgia,serif; margin:0; text-wrap:balance; }
+.mono { font-family:"IBM Plex Mono",ui-monospace,monospace; }
+
+.shell { max-width:78rem; margin:0 auto; padding:clamp(1.25rem,3vw,2.25rem) clamp(.9rem,3vw,2rem) 4rem;
+         display:flex; flex-direction:column; gap:1.5rem; }
+
+/* ---------- header ---------- */
+header { display:flex; flex-wrap:wrap; gap:1rem 1.5rem; align-items:flex-end; justify-content:space-between; }
+.brand { display:flex; flex-direction:column; gap:.25rem; }
+.brand h1 { font-size:1.9rem; font-weight:700; letter-spacing:-.02em; line-height:1; }
+.brand .sub { color:var(--ink-soft); font-size:.9rem; max-width:44ch; }
+.eyebrow { font-family:"IBM Plex Mono",monospace; font-size:.68rem; letter-spacing:.14em;
+           text-transform:uppercase; color:var(--ink-faint); }
+
+.controls { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; }
+.field { display:flex; flex-direction:column; gap:.2rem; }
+.field label { font-family:"IBM Plex Mono",monospace; font-size:.62rem; letter-spacing:.1em;
+               text-transform:uppercase; color:var(--ink-faint); padding-left:.15rem; }
+select, input[type=search] {
+  font-family:inherit; font-size:.85rem; color:var(--ink); background:var(--surface);
+  border:1px solid var(--rule); border-radius:4px; padding:.4rem .55rem; min-width:8.5rem;
+}
+select:focus-visible, input:focus-visible, button:focus-visible, .drop:focus-visible {
+  outline:2px solid var(--accent); outline-offset:1px;
+}
+button {
+  font-family:inherit; font-size:.85rem; color:var(--ink); background:var(--surface);
+  border:1px solid var(--rule); border-radius:4px; padding:.45rem .75rem; cursor:pointer;
+}
+button:hover:not(:disabled) { background:var(--surface-2); }
+button:disabled { opacity:.45; cursor:not-allowed; }
+button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:500; }
+:root[data-theme="dark"] button.primary, :root:not([data-theme="light"]) button.primary { color:#0e1116; }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) button.primary { color:#fff; } }
+button.primary:hover:not(:disabled) { filter:brightness(1.08); }
+
+.toggle { display:inline-flex; align-items:center; gap:.4rem; font-size:.85rem; color:var(--ink-soft);
+          border:1px solid var(--rule); border-radius:4px; padding:.4rem .6rem; background:var(--surface); cursor:pointer; }
+.toggle input { accent-color:var(--accent); margin:0; }
+
+/* ---------- drop zone ---------- */
+.drop {
+  border:1.5px dashed var(--rule); border-radius:8px; background:var(--surface);
+  padding:2.5rem 1.5rem; text-align:center; cursor:pointer;
+  display:flex; flex-direction:column; align-items:center; gap:.7rem;
+  transition:border-color .15s ease, background .15s ease;
+}
+.drop.slim { padding:.85rem 1.1rem; flex-direction:row; justify-content:space-between; text-align:left; gap:1rem; }
+.drop.over { border-color:var(--accent); background:var(--accent-dim); }
+.drop h2 { font-size:1.15rem; font-weight:600; }
+.drop p { margin:0; color:var(--ink-soft); font-size:.88rem; max-width:52ch; }
+.drop .hint { font-size:.8rem; color:var(--ink-faint); }
+.drop .loaded { display:flex; align-items:center; gap:.6rem; font-size:.88rem; }
+
+/* ---------- summary ---------- */
+.summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(8.5rem,1fr)); gap:.75rem; }
+.stat {
+  background:var(--surface); border:1px solid var(--rule); border-radius:6px;
+  padding:.75rem .9rem; display:flex; flex-direction:column; gap:.15rem; box-shadow:var(--shadow);
+  position:relative; overflow:hidden;
+}
+.stat .n { font-family:"IBM Plex Mono",monospace; font-size:1.5rem; font-variant-numeric:tabular-nums; line-height:1.1; }
+.stat .l { font-size:.74rem; color:var(--ink-faint); font-family:"IBM Plex Mono",monospace;
+           letter-spacing:.08em; text-transform:uppercase; }
+.stat.err  { background:var(--err-dim);  border-color:var(--err);  }
+.stat.warn { background:var(--warn-dim); border-color:var(--warn); }
+.stat.err .n { color:var(--err); } .stat.warn .n { color:var(--warn); }
+.stat.pass { background:var(--ok-dim); border-color:var(--ok); }
+.stat.pass .n { color:var(--ok); font-family:Spectral,serif; font-size:1.25rem; }
+
+/* ---------- filters ---------- */
+.filters { display:flex; flex-wrap:wrap; gap:.45rem; align-items:center; }
+.pill {
+  font-family:"IBM Plex Mono",monospace; font-size:.75rem; padding:.32rem .6rem;
+  border:1px solid var(--rule); border-radius:99px; background:var(--surface);
+  color:var(--ink-soft); cursor:pointer; user-select:none;
+}
+.pill[aria-pressed="true"] { background:var(--accent-dim); border-color:var(--accent-mid); color:var(--ink); }
+.pill .c { color:var(--ink-faint); }
+.grow { flex:1 1 8rem; }
+
+/* ---------- findings ---------- */
+.results { display:flex; flex-direction:column; gap:1.25rem; }
+.filegroup { display:flex; flex-direction:column; gap:0; }
+.filegroup > h3 {
+  font-family:"IBM Plex Mono",monospace; font-size:.8rem; font-weight:500; color:var(--ink-soft);
+  padding:.5rem 0 .45rem; border-bottom:1px solid var(--rule); display:flex; gap:.5rem; align-items:baseline;
+}
+.filegroup > h3 .count { color:var(--ink-faint); font-size:.72rem; }
+.finding {
+  display:grid; grid-template-columns:3px 1fr; gap:0;
+  border-bottom:1px solid var(--rule-soft); background:var(--surface);
+}
+.finding .stripe { background:var(--ink-faint); }
+.finding.sev-error .stripe { background:var(--err); }
+.finding.sev-warn  .stripe { background:var(--warn); }
+.finding.sev-info  .stripe { background:var(--ink-faint); }
+.finding .body { padding:.6rem .8rem; display:flex; flex-direction:column; gap:.3rem; min-width:0; }
+.finding .top { display:flex; flex-wrap:wrap; gap:.5rem; align-items:baseline; }
+.finding .rule {
+  font-family:"IBM Plex Mono",monospace; font-size:.74rem; padding:.1rem .35rem; border-radius:3px;
+  background:var(--surface-2); color:var(--ink-soft); border:1px solid var(--rule-soft);
+}
+.finding.sev-error .rule { color:var(--err); border-color:var(--err-dim); background:var(--err-dim); }
+.finding.sev-warn  .rule { color:var(--warn); border-color:var(--warn-dim); background:var(--warn-dim); }
+.finding .loc { font-family:"IBM Plex Mono",monospace; font-size:.74rem; color:var(--ink-faint); }
+.finding .msg { flex:1 1 20rem; min-width:0; }
+.finding .ctx {
+  font-family:"IBM Plex Mono",monospace; font-size:.76rem; color:var(--ink-soft);
+  background:var(--surface-2); border-radius:3px; padding:.3rem .45rem;
+  overflow-x:auto; white-space:pre; max-width:100%;
+}
+.finding .fix { font-size:.82rem; color:var(--ink-soft); }
+.finding .fix b { color:var(--ink); font-weight:500; }
+
+.empty { text-align:center; padding:2.5rem 1rem; color:var(--ink-soft); display:flex; flex-direction:column; gap:.5rem; }
+.empty .big { font-family:Spectral,serif; font-size:1.3rem; color:var(--ink); }
+
+.notice {
+  border-left:3px solid var(--accent); background:var(--accent-dim);
+  padding:.7rem .9rem; border-radius:0 4px 4px 0; font-size:.86rem; color:var(--ink-soft);
+}
+.notice.warnish { border-left-color:var(--warn); background:var(--warn-dim); }
+.notice b { color:var(--ink); }
+
+.progress { height:3px; background:var(--surface-2); border-radius:99px; overflow:hidden; }
+.progress i { display:block; height:100%; background:var(--accent); width:0%; transition:width .2s ease; }
+
+details.raw { border:1px solid var(--rule); border-radius:6px; background:var(--surface); }
+details.raw summary { cursor:pointer; padding:.6rem .85rem; font-size:.86rem; color:var(--ink-soft); }
+details.raw pre { margin:0; padding:0 .85rem .85rem; font-size:.76rem; overflow-x:auto;
+                  font-family:"IBM Plex Mono",monospace; color:var(--ink-soft); }
+
+footer { color:var(--ink-faint); font-size:.8rem; display:flex; flex-direction:column; gap:.35rem;
+         border-top:1px solid var(--rule); padding-top:1rem; }
+footer a { color:var(--accent); }
+.visually-hidden { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+@media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <header>
+    <div class="brand">
+      <span class="eyebrow">Mechanical checks · runs entirely in this browser</span>
+      <h1>mechcheck</h1>
+      <span class="sub">Drop an Overleaf project in. Nothing is uploaded anywhere — the checks run on this page.</span>
+    </div>
+    <div class="controls">
+      <div class="field">
+        <label for="profile">Profile</label>
+        <select id="profile">
+          <option value="thesis">Thesis</option>
+          <option value="paper">Paper</option>
+          <option value="paper-anonymous">Paper (anonymous review)</option>
+          <option value="camera-ready">Camera-ready</option>
+          <option value="all">Everything</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="stage">Stage</label>
+        <select id="stage">
+          <option value="draft">Draft — nothing blocks</option>
+          <option value="submission" selected>Submission</option>
+          <option value="final">Final — warnings block</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="venue">Venue</label>
+        <select id="venue"><option value="">None</option></select>
+      </div>
+      <div class="field">
+        <label for="verify">References</label>
+        <label class="toggle" for="verify"><input type="checkbox" id="verify"> Verify online</label>
+      </div>
+    </div>
+  </header>
+
+  <div class="drop" id="drop" tabindex="0" role="button" aria-label="Add your project files">
+    <h2>Drop your Overleaf project here</h2>
+    <p>The <b>.zip</b> from Overleaf’s <span class="mono">Menu → Download → Source</span>, or a folder,
+       or just the <span class="mono">.tex</span> and <span class="mono">.bib</span> files.</p>
+    <p class="hint">Add the <span class="mono">.log</span> and <span class="mono">.pdf</span> too and the
+       compile, page-count and PDF checks switch on as well.</p>
+    <input type="file" id="filepick" class="visually-hidden" multiple>
+    <input type="file" id="dirpick" class="visually-hidden" webkitdirectory directory multiple>
+  </div>
+
+  <div id="online-note"></div>
+  <div id="summary"></div>
+  <div id="filters"></div>
+  <div class="results" id="results"></div>
+
+  <footer>
+    <div>Everything on this page runs locally in your browser. No server, no upload, no account.
+      <span id="net-status"></span></div>
+    <div>Rule reference and the LaTeX-side package live in the project repository.</div>
+  </footer>
+</div>
+
+<script>
+/* ==========================================================================
+   mechcheck — browser edition
+   A direct port of the Python checker, so a project checked here and a project
+   checked in CI get the same answer. Three parts, in order:
+     1. the LaTeX source model      (parsing, masking, offsets)
+     2. the bibliography model      (.bib parsing, title similarity)
+     3. the rules, the venue packs, and the UI
+   ========================================================================== */
+
+/* ===================== 1. LaTeX source model ============================= */
+
+const VERBATIM_ENVS = new Set(["verbatim","verbatim*","Verbatim","Verbatim*","lstlisting","minted",
+  "alltt","semiverbatim","comment","filecontents","filecontents*","pycode","codeblock"]);
+const MATH_ENVS = ["equation","equation*","align","align*","alignat","alignat*","gather","gather*",
+  "multline","multline*","flalign","flalign*","eqnarray","eqnarray*","displaymath","math","split","IEEEeqnarray"];
+const FLOAT_ENVS = ["figure","figure*","table","table*","wrapfigure","sidewaysfigure","sidewaystable",
+  "listing","algorithm","algorithm*"];
+const NON_PROSE_COMMANDS = ["label","ref","cref","Cref","autoref","eqref","pageref","vref","cite","citep",
+  "citet","citeauthor","citeyear","citealp","nocite","includegraphics","input","include","usepackage",
+  "documentclass","bibliography","bibliographystyle","addbibresource","url","href","def","newcommand",
+  "renewcommand","providecommand","DeclareMathOperator","setlength","addtolength","vspace","hspace",
+  "graphicspath","geometry","lstinputlisting","toprule","midrule","bottomrule","cmidrule","hline",
+  "centering","raggedright","noindent","clearpage","newpage","pagebreak","linebreak","ccsdesc","acmDOI",
+  "acmISBN","orcid","affiliation","email","institution","streetaddress","postcode","country","city"];
+
+/** Replace every character with a space, keeping newlines and total length. */
+function maskRun(s) {
+  let out = "";
+  for (const ch of s) out += (ch === "\n") ? "\n" : " ";
+  return out;
+}
+
+/** Mask the comment part of one line without changing its length. */
+function stripComments(line) {
+  let out = "", i = 0;
+  while (i < line.length) {
+    const c = line[i];
+    if (c === "\\" && i + 1 < line.length) { out += line.slice(i, i + 2); i += 2; continue; }
+    if (c === "%") { out += " ".repeat(line.length - i); break; }
+    out += c; i++;
+  }
+  return out;
+}
+
+const VERB_INLINE = /\\(?:verb\*?|lstinline|mintinline)\s*(\{[^}]*\})?(.)/g;
+function maskInlineVerb(line) {
+  let out = line;
+  for (const m of [...line.matchAll(VERB_INLINE)]) {
+    const delim = m[2];
+    if (!delim || /[A-Za-z0-9]/.test(delim) || delim === "{") continue;
+    const close = out.indexOf(delim, m.index + m[0].length);
+    if (close === -1) continue;
+    out = out.slice(0, m.index) + maskRun(out.slice(m.index, close + 1)) + out.slice(close + 1);
+  }
+  return out;
+}
+
+/** Read a balanced group. Returns {inner, end} or null. */
+function readGroup(text, pos, open = "{", close = "}") {
+  if (pos >= text.length || text[pos] !== open) return null;
+  let depth = 0, i = pos;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "\\" && i + 1 < text.length) { i += 2; continue; }
+    if (c === open) depth++;
+    else if (c === close) { depth--; if (depth === 0) return { inner: text.slice(pos + 1, i), end: i + 1 }; }
+    i++;
+  }
+  return null;
+}
+
+function skipSpace(text, pos) {
+  while (pos < text.length && " \t\r\n".includes(text[pos])) pos++;
+  return pos;
+}
+
+function isEscaped(text, pos) {
+  let n = 0, i = pos - 1;
+  while (i >= 0 && text[i] === "\\") { n++; i--; }
+  return n % 2 === 1;
+}
+
+function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+
+/** All \name invocations with up to maxArgs brace arguments. */
+function parseCommands(text, name, maxArgs = 1) {
+  const out = [];
+  const tail = /[A-Za-z]$/.test(name) ? "(?![A-Za-z@])" : "";
+  const re = new RegExp("\\\\" + escapeRe(name) + tail, "g");
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (isEscaped(text, m.index)) continue;
+    let pos = m.index + m[0].length;
+    if (text[pos] === "*") pos++;
+    const opts = [], args = [], spans = [];
+    while (args.length < maxArgs) {
+      const nxt = skipSpace(text, pos);
+      if (text[nxt] === "[") {
+        const g = readGroup(text, nxt, "[", "]");
+        if (!g) break;
+        opts.push(g.inner); pos = g.end; continue;
+      }
+      if (text[nxt] === "{") {
+        const g = readGroup(text, nxt);
+        if (!g) break;
+        args.push(g.inner); spans.push([nxt + 1, nxt + 1 + g.inner.length]); pos = g.end; continue;
+      }
+      break;
+    }
+    out.push({ name, start: m.index, end: pos, args, opts, spans,
+               arg: i => args[i || 0] || "", opt: i => opts[i || 0] || "" });
+  }
+  return out;
+}
+
+/** \begin{name}...\end{name} blocks, respecting nesting. */
+function parseEnvironments(text, name) {
+  const out = [], stack = [], events = [];
+  const bre = new RegExp("\\\\begin\\s*\\{" + escapeRe(name) + "\\}", "g");
+  const ere = new RegExp("\\\\end\\s*\\{" + escapeRe(name) + "\\}", "g");
+  let m;
+  while ((m = bre.exec(text)) !== null) if (!isEscaped(text, m.index)) events.push({ pos: m.index, kind: 0, end: m.index + m[0].length });
+  while ((m = ere.exec(text)) !== null) if (!isEscaped(text, m.index)) events.push({ pos: m.index, kind: 1, end: m.index + m[0].length });
+  events.sort((a, b) => a.pos - b.pos || a.kind - b.kind);
+  for (const ev of events) {
+    if (ev.kind === 0) stack.push(ev);
+    else if (stack.length) {
+      const b = stack.pop();
+      let pos = b.end; const opts = [];
+      while (true) {
+        const nxt = skipSpace(text, pos);
+        if (text[nxt] === "[") { const g = readGroup(text, nxt, "[", "]"); if (!g) break; opts.push(g.inner); pos = g.end; continue; }
+        break;
+      }
+      out.push({ name, start: b.pos, bodyStart: pos, bodyEnd: ev.pos, end: ev.end, opts,
+                 body: () => text.slice(pos, ev.pos) });
+    }
+  }
+  out.sort((a, b) => a.start - b.start);
+  return out;
+}
+
+/** Mask maths and markup, keep readable words. Same length as the input. */
+function buildProse(text) {
+  const buf = text.split("");
+  const blank = (a, b) => { for (let i = Math.max(0, a); i < Math.min(buf.length, b); i++) if (buf[i] !== "\n") buf[i] = " "; };
+  let m;
+  const displayMath = /\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)/g;
+  while ((m = displayMath.exec(text)) !== null) blank(m.index, m.index + m[0].length);
+  const inlineMath = /(?<!\\)\$\$[\s\S]*?(?<!\\)\$\$|(?<!\\)\$[\s\S]*?(?<!\\)\$/g;
+  while ((m = inlineMath.exec(text)) !== null) blank(m.index, m.index + m[0].length);
+  for (const env of MATH_ENVS) for (const e of parseEnvironments(text, env)) blank(e.start, e.end);
+  for (const env of ["tabular","tabular*","tabularx","longtable","tikzpicture","axis"])
+    for (const e of parseEnvironments(text, env)) blank(e.bodyStart, e.bodyEnd);
+  for (const name of NON_PROSE_COMMANDS)
+    for (const c of parseCommands(text, name, 3)) blank(c.start, c.end);
+  const envDelim = /\\(?:begin|end)\s*\{[^}]*\}/g;
+  while ((m = envDelim.exec(text)) !== null) blank(m.index, m.index + m[0].length);
+  const control = /\\([A-Za-z@]+\*?|[\s\S])/g;
+  while ((m = control.exec(text)) !== null) if (!isEscaped(text, m.index)) blank(m.index, m.index + m[0].length);
+  for (let i = 0; i < buf.length; i++) if ("{}&~^_".includes(buf[i])) buf[i] = " ";
+  return buf.join("");
+}
+
+const MAIN_HINTS = ["main.tex","thesis.tex","paper.tex","root.tex","master.tex","document.tex",
+                    "manuscript.tex","dissertation.tex","report.tex"];
+
+/** The flattened, comment-stripped view of a project. */
+class TexProject {
+  constructor(files, mainPath) {
+    this.sources = files;              // Map path -> text
+    this.main = mainPath;
+    this.files = [];
+    this.lines = [];
+    this.lineOffsets = [];
+    this.text = "";
+    this.prose = "";
+    this.missingInputs = [];
+    this._cmdCache = new Map();
+    this._envCache = new Map();
+    this._read(mainPath, new Set(), 0);
+    this._finalise();
+  }
+
+  _resolve(path) {
+    const cand = path.trim().replace(/^"|"$/g, "").replace(/\\/g, "/");
+    const options = [cand];
+    if (!/\.tex$/i.test(cand)) options.push(cand + ".tex");
+    for (const opt of options) {
+      const norm = normalisePath(opt);
+      if (this.sources.has(norm)) return norm;
+      for (const key of this.sources.keys()) if (key.toLowerCase() === norm.toLowerCase()) return key;
+    }
+    return null;
+  }
+
+  _childInputs(code) {
+    const out = [];
+    let m;
+    const re = /\\(input|include|subfile|subfileinclude|includestandalone)\s*\{/g;
+    while ((m = re.exec(code)) !== null) {
+      const g = readGroup(code, m.index + m[0].length - 1);
+      if (g) out.push(g.inner);
+    }
+    const imp = /\\(subimport|import)\*?\s*\{/g;
+    while ((m = imp.exec(code)) !== null) {
+      const g1 = readGroup(code, m.index + m[0].length - 1);
+      if (!g1) continue;
+      const g2 = readGroup(code, skipSpace(code, g1.end));
+      if (g2) out.push(g1.inner.replace(/\/$/, "") + "/" + g2.inner);
+    }
+    return out;
+  }
+
+  _read(relpath, seen, depth) {
+    if (depth > 24 || seen.has(relpath)) return;
+    seen.add(relpath);
+    const raw = this.sources.get(relpath);
+    const file = { path: relpath, lines: [] };
+    this.files.push(file);
+    if (raw === undefined) { file.missing = true; return; }
+    const rawLines = raw.split("\n");
+    let verbatimEnv = null;
+    for (let i = 0; i < rawLines.length; i++) {
+      const rawLine = rawLines[i].replace(/\r$/, "");
+      const lineNo = i + 1;
+      if (verbatimEnv !== null) {
+        let code = maskRun(rawLine);
+        const em = /\\end\s*\{([^}]*)\}/.exec(rawLine);
+        if (em && em[1].trim() === verbatimEnv) { verbatimEnv = null; code = rawLine; }
+        file.lines.push({ file: relpath, lineno: lineNo, raw: rawLine, code, verbatim: true });
+        continue;
+      }
+      const code = stripComments(maskInlineVerb(rawLine));
+      file.lines.push({ file: relpath, lineno: lineNo, raw: rawLine, code, verbatim: false });
+      const bm = /\\begin\s*\{([^}]*)\}/.exec(code);
+      if (bm && VERBATIM_ENVS.has(bm[1].trim())) verbatimEnv = bm[1].trim();
+      for (const child of this._childInputs(code)) {
+        const resolved = this._resolve(child);
+        if (resolved) this._read(resolved, seen, depth + 1);
+        else if (!/[\\#]/.test(child)) this.missingInputs.push({ file: relpath, line: lineNo, target: child });
+      }
+    }
+  }
+
+  _finalise() {
+    const chunks = [];
+    let offset = 0;
+    for (const file of this.files) for (const line of file.lines) {
+      line.offset = offset;
+      this.lines.push(line);
+      this.lineOffsets.push(offset);
+      chunks.push(line.code);
+      offset += line.code.length + 1;
+    }
+    this.text = chunks.join("\n");
+    this.prose = buildProse(this.text);
+  }
+
+  lineAt(offset) {
+    let lo = 0, hi = this.lineOffsets.length - 1, best = 0;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (this.lineOffsets[mid] <= offset) { best = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    return this.lines[best] || { file: this.main, lineno: 1, raw: "", offset: 0 };
+  }
+  locate(offset) {
+    const ln = this.lineAt(offset);
+    return { file: ln.file, line: ln.lineno, col: offset - ln.offset + 1 };
+  }
+  excerpt(offset, width = 96) {
+    const s = (this.lineAt(offset).raw || "").trim();
+    return s.length <= width ? s : s.slice(0, width - 1) + "…";
+  }
+  commands(name, maxArgs = 1) {
+    const key = name + "|" + maxArgs;
+    if (!this._cmdCache.has(key)) this._cmdCache.set(key, parseCommands(this.text, name, maxArgs));
+    return this._cmdCache.get(key);
+  }
+  anyCommands(names, maxArgs = 1) {
+    const out = [];
+    for (const n of names) out.push(...this.commands(n, maxArgs));
+    return out.sort((a, b) => a.start - b.start);
+  }
+  environments(name) {
+    if (!this._envCache.has(name)) this._envCache.set(name, parseEnvironments(this.text, name));
+    return this._envCache.get(name);
+  }
+  floats() {
+    const out = [];
+    for (const env of FLOAT_ENVS) out.push(...this.environments(env));
+    return out.sort((a, b) => a.start - b.start);
+  }
+  documentclass() {
+    const c = this.commands("documentclass", 1)[0];
+    if (!c) return { cls: "", options: [] };
+    return { cls: c.arg(0).trim(), options: c.opt(0).split(",").map(o => o.trim()).filter(Boolean) };
+  }
+  packages() {
+    const out = new Map();
+    for (const c of this.commands("usepackage", 1)) {
+      const opts = c.opt(0).split(",").map(o => o.trim()).filter(Boolean);
+      for (const name of c.arg(0).split(",")) {
+        const n = name.trim();
+        if (n) out.set(n, (out.get(n) || []).concat(opts));
+      }
+    }
+    return out;
+  }
+  isThesisLike() {
+    const { cls } = this.documentclass();
+    return ["book","report","scrbook","scrreprt","memoir","thesis"].includes(cls.toLowerCase())
+        || this.commands("chapter", 1).length > 0;
+  }
+}
+
+function normalisePath(p) {
+  const parts = [];
+  for (const seg of p.replace(/\\/g, "/").split("/")) {
+    if (!seg || seg === ".") continue;
+    if (seg === "..") parts.pop(); else parts.push(seg);
+  }
+  return parts.join("/");
+}
+
+function findMainDocument(sources) {
+  const candidates = [];
+  for (const [path, text] of sources) {
+    if (!/\.tex$/i.test(path)) continue;
+    if (!text.includes("\\documentclass") || !text.includes("\\begin{document}")) continue;
+    const base = path.split("/").pop().toLowerCase();
+    const hint = MAIN_HINTS.indexOf(base);
+    candidates.push([hint === -1 ? MAIN_HINTS.length : hint, (path.match(/\//g) || []).length, -text.length, path]);
+  }
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+  return candidates[0][3];
+}
+/* ===================== 2. Bibliography model ============================= */
+
+const LATEX_ACCENTS = { '\\"a':"ä", '\\"o':"ö", '\\"u':"ü", '\\"A':"Ä", '\\"O':"Ö", '\\"U':"Ü",
+  "\\ss":"ß", "\\'e":"é", "\\`e":"è", "\\^e":"ê", "\\'a":"á", "\\`a":"à", "\\'o":"ó",
+  "\\'u":"ú", "\\'i":"í", "\\~n":"ñ", "\\o":"ø", "\\aa":"å", "\\ae":"æ" };
+
+function cleanLatex(text) {
+  if (!text) return "";
+  let out = text;
+  for (const [tex, ch] of Object.entries(LATEX_ACCENTS)) out = out.split("{" + tex + "}").join(ch).split(tex).join(ch);
+  out = out.replace(/\\[a-zA-Z]+\s*/g, " ").replace(/[{}\\]/g, "").replace(/~/g, " ").replace(/--/g, "-");
+  return out.replace(/\s+/g, " ").trim();
+}
+
+function normaliseTitle(text) {
+  return cleanLatex(text).toLowerCase().replace(/<[^>]+>/g, " ")
+    .replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** Token overlap blended with a sequence ratio: order-tolerant, 0..1. */
+function similarity(a, b) {
+  const na = normaliseTitle(a), nb = normaliseTitle(b);
+  if (!na || !nb) return 0;
+  if (na === nb) return 1;
+  const ta = new Set(na.split(" ")), tb = new Set(nb.split(" "));
+  let inter = 0;
+  for (const t of ta) if (tb.has(t)) inter++;
+  const union = new Set([...ta, ...tb]).size;
+  const jaccard = union ? inter / union : 0;
+  return Math.round((0.5 * jaccard + 0.5 * ratio(na, nb)) * 10000) / 10000;
+}
+
+/** Longest-common-subsequence ratio, the same shape as difflib's. */
+function ratio(a, b) {
+  if (!a.length || !b.length) return 0;
+  if (a.length > 4000) a = a.slice(0, 4000);
+  if (b.length > 4000) b = b.slice(0, 4000);
+  let prev = new Array(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = new Array(b.length + 1).fill(0);
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
+    }
+    prev = cur;
+  }
+  return (2 * prev[b.length]) / (a.length + b.length);
+}
+
+const MONTHS = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+
+function findTopLevel(text, ch, start = 0) {
+  let depth = 0, quote = false, i = start;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "\\") { i += 2; continue; }
+    if (c === '"' && depth === 0) quote = !quote;
+    else if (c === "{") depth++;
+    else if (c === "}") depth--;
+    else if (c === ch && depth === 0 && !quote) return i;
+    i++;
+  }
+  return -1;
+}
+
+function readBibValue(text, pos) {
+  const n = text.length;
+  while (pos < n && " \t\r\n".includes(text[pos])) pos++;
+  const parts = [];
+  while (pos < n) {
+    if (text[pos] === "{") {
+      let depth = 0, i = pos;
+      while (i < n) {
+        if (text[i] === "\\") { i += 2; continue; }
+        if (text[i] === "{") depth++;
+        else if (text[i] === "}") { depth--; if (depth === 0) break; }
+        i++;
+      }
+      parts.push(text.slice(pos + 1, i)); pos = i + 1;
+    } else if (text[pos] === '"') {
+      let i = pos + 1, depth = 0;
+      while (i < n) {
+        if (text[i] === "\\") { i += 2; continue; }
+        if (text[i] === "{") depth++;
+        else if (text[i] === "}") depth--;
+        else if (text[i] === '"' && depth === 0) break;
+        i++;
+      }
+      parts.push(text.slice(pos + 1, i)); pos = i + 1;
+    } else {
+      let i = pos;
+      while (i < n && !",}#\n".includes(text[i])) i++;
+      const token = text.slice(pos, i).trim();
+      if (token) parts.push(token);
+      pos = i;
+    }
+    while (pos < n && " \t\r\n".includes(text[pos])) pos++;
+    if (text[pos] === "#") { pos++; while (pos < n && " \t\r\n".includes(text[pos])) pos++; continue; }
+    break;
+  }
+  return { value: parts.join("").replace(/\s+/g, " ").trim(), end: pos };
+}
+
+class BibEntry {
+  constructor(key, type, fields, fieldLines, line, file, raw) {
+    Object.assign(this, { key, type, fields, fieldLines, line, file, raw });
+  }
+  get(name) { return this.fields[name.toLowerCase()] || ""; }
+  lineOf(name) { return this.fieldLines[name.toLowerCase()] || this.line; }
+  get year() {
+    for (const name of ["year", "date"]) {
+      const m = /(1[6-9]\d{2}|20\d{2})/.exec(this.get(name));
+      if (m) return parseInt(m[1], 10);
+    }
+    return null;
+  }
+  get doi() {
+    let doi = this.get("doi").trim();
+    if (!doi) {
+      const m = /(?:doi\.org\/|dx\.doi\.org\/)(10\.\S+)/.exec(this.get("url"));
+      doi = m ? m[1] : "";
+    }
+    doi = doi.replace(/\\_/g, "_").replace(/[{}]/g, "").trim()
+             .replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "");
+    return doi.replace(/\.$/, "");
+  }
+  get authors() {
+    const raw = this.get("author") || this.get("editor");
+    return raw ? raw.split(/\s+and\s+/i).map(a => a.trim()).filter(Boolean) : [];
+  }
+  authorSurnames() {
+    return this.authors.map(a => {
+      const c = cleanLatex(a);
+      if (c.includes(",")) return c.split(",")[0].trim();
+      const parts = c.split(/\s+/);
+      return parts.length ? parts[parts.length - 1] : "";
+    }).filter(Boolean);
+  }
+  get title() { return cleanLatex(this.get("title")); }
+  get venue() {
+    for (const n of ["booktitle","journal","journaltitle","publisher","howpublished"]) {
+      const v = this.get(n);
+      if (v) return cleanLatex(v);
+    }
+    return "";
+  }
+  isPreprint() {
+    const blob = [this.get("journal"), this.get("booktitle"), this.get("archiveprefix"),
+      this.get("eprint"), this.get("publisher"), this.get("note"), this.get("url"), this.type]
+      .join(" ").toLowerCase();
+    return ["arxiv","preprint","biorxiv","psyarxiv","ssrn","osf.io"].some(k => blob.includes(k));
+  }
+}
+
+function parseBib(text, path = "") {
+  const entries = [];
+  const lineStarts = [0];
+  { let pos = 0; for (const line of text.split("\n")) { pos += line.length + 1; lineStarts.push(pos); } }
+  const lineOf = off => {
+    let lo = 0, hi = lineStarts.length - 1, best = 0;
+    while (lo <= hi) { const mid = (lo + hi) >> 1; if (lineStarts[mid] <= off) { best = mid; lo = mid + 1; } else hi = mid - 1; }
+    return Math.max(1, best + 1);
+  };
+  const re = /@([A-Za-z]+)\s*[{(]/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const type = m[1].toLowerCase();
+    if (["comment","preamble","string"].includes(type)) continue;
+    const opener = text[m.index + m[0].length - 1];
+    const closer = opener === "{" ? "}" : ")";
+    let depth = 0, i = m.index + m[0].length - 1, bodyEnd = -1;
+    while (i < text.length) {
+      if (text[i] === "\\") { i += 2; continue; }
+      if (text[i] === opener) depth++;
+      else if (text[i] === closer) { depth--; if (depth === 0) { bodyEnd = i; break; } }
+      i++;
+    }
+    if (bodyEnd === -1) continue;
+    const bodyStart = m.index + m[0].length;
+    const body = text.slice(bodyStart, bodyEnd);
+    const comma = findTopLevel(body, ",");
+    if (comma === -1) continue;
+    const key = body.slice(0, comma).trim();
+    const rest = body.slice(comma + 1);
+    const fields = {}, fieldLines = {};
+    let pos = 0;
+    while (pos < rest.length) {
+      const eq = findTopLevel(rest, "=", pos);
+      if (eq === -1) break;
+      const name = rest.slice(pos, eq).trim().replace(/^,/, "").trim().toLowerCase();
+      const { value, end } = readBibValue(rest, eq + 1);
+      if (/^[a-z][a-z0-9_:-]*$/.test(name)) {
+        fields[name] = value;
+        fieldLines[name] = lineOf(bodyStart + comma + 1 + pos);
+      }
+      pos = end;
+      const nxt = findTopLevel(rest, ",", pos);
+      pos = nxt === -1 ? rest.length : nxt + 1;
+    }
+    entries.push(new BibEntry(key, type, fields, fieldLines, lineOf(m.index), path,
+                              text.slice(m.index, bodyEnd + 1)));
+  }
+  return entries;
+}
+
+/* ===================== 3. Severity, config, venue packs ================== */
+
+const SEV = { info: 10, warn: 20, error: 30 };
+const SEV_NAME = { 10: "info", 20: "warn", 30: "error" };
+
+const PROFILES = {
+  "thesis":          { disable: ["VEN*", "ANON*"] },
+  "paper":           { disable: ["THE*"] },
+  "paper-anonymous": { disable: ["THE*"], anonymous: true },
+  "camera-ready":    { disable: ["THE*"], stage: "final" },
+  "all":             { disable: [] },
+};
+const STAGES = {
+  draft:      { promote: [], demote: ["*"] },
+  submission: { promote: [], demote: [] },
+  final:      { promote: ["*"], demote: [] },
+};
+
+/* Venue packs. Same data as the YAML packs, and the same honesty about what
+   could not be verified: each carries the date it was checked and a source. */
+const VENUES = {
+  chi: {
+    name: "ACM CHI", verified: "2026-08-27",
+    source_url: "https://chi2026.acm.org/chi-publication-formats/",
+    document_class: "acmart", bibliography_style: "ACM-Reference-Format",
+    class_options: { submission: { required: ["manuscript", "review"], forbidden: ["sigconf"] },
+                     final: { required: ["sigconf"], forbidden: ["review", "anonymous"] } },
+    anonymity: { model: "double-anonymous" },
+    length: { unit: "none", excludes: "references, figures and tables are not counted as main text" },
+    accessibility: { descriptions_required: true },
+    requires: { ai_disclosure: true, data_availability: false },
+    required_commands: [{ command: "ccsdesc", why: "ACM requires CCS concepts; TAPS rejects submissions without them" },
+                        { command: "keywords", why: "ACM templates expect keywords" }],
+    filename_charset_strict: true,
+    rules: { MET004: { min_references: 25 } },
+    uncertain: ["No numeric page or word limit is encoded: CHI states length should be commensurate with contribution."],
+  },
+  assets: {
+    name: "ACM ASSETS", verified: "2026-08-27",
+    source_url: "https://assets26.sigaccess.org/technical_papers.html",
+    document_class: "acmart", bibliography_style: "ACM-Reference-Format",
+    class_options: { submission: { required: ["manuscript"], forbidden: ["sigconf"] },
+                     final: { required: ["sigconf"], forbidden: ["review"] } },
+    anonymity: { model: "double-anonymous" },
+    length: { unit: "words", min_words: 7500, max_words: 10000, excludes: "references do not count" },
+    accessibility: { descriptions_required: true },
+    requires: { ai_disclosure: true, data_availability: true },
+    required_commands: [{ command: "ccsdesc" }, { command: "keywords" }],
+    filename_charset_strict: true,
+    rules: { MET001: { max_words: 10000, min_words: 7500 }, ACC002: { min_words: 10 } },
+    severity: { ACC001: "error", ACC002: "error", ACC003: "error", ACC006: "error" },
+    uncertain: ["Short papers are 4,000-5,000 words; override MET001 for those.",
+                "Inaccessible submissions are desk-rejected — alt text and PDF tagging are necessary but may not be sufficient."],
+  },
+  autoui: {
+    name: "ACM AutomotiveUI", verified: "2026-08-27",
+    source_url: "https://www.auto-ui.org/26/papers/",
+    document_class: "acmart", bibliography_style: "ACM-Reference-Format",
+    class_options: { submission: { required: ["manuscript"], forbidden: ["sigconf"] },
+                     final: { required: ["sigconf"], forbidden: ["review", "anonymous"] } },
+    anonymity: { model: "double-anonymous" },
+    length: { unit: "pages", min_pages: 6, max_pages: 13,
+              excludes: "references excluded at submission; camera-ready is 12 pages INCLUDING references" },
+    accessibility: { descriptions_required: true },
+    requires: { ai_disclosure: true, data_availability: false },
+    required_commands: [{ command: "ccsdesc" }, { command: "keywords" }],
+    filename_charset_strict: true,
+    rules: { MET002: { min_pages: 6, max_pages: 13 }, MET004: { min_references: 20 } },
+    uncertain: ["Camera-ready is 12 pages including references — set MET002.max_pages to 12 for --stage final."],
+  },
+  imwut: {
+    name: "ACM IMWUT (PACM IMWUT)", verified: "2026-08-27",
+    source_url: "https://dl.acm.org/journal/imwut/author-guidelines",
+    document_class: "acmart", bibliography_style: "ACM-Reference-Format",
+    class_options: { submission: { required: ["manuscript"], forbidden: ["sigconf"] } },
+    anonymity: { model: "unknown" },
+    length: { unit: "none" },
+    accessibility: { descriptions_required: true },
+    requires: { ai_disclosure: true },
+    required_commands: [{ command: "ccsdesc" }, { command: "keywords" }],
+    filename_charset_strict: true,
+    uncertain: ["The typeset format is a large single-column ACM journal format (acmlarge in some guidance, acmsmall in others).",
+                "No length limit is encoded because none was confirmed.",
+                "The anonymity model was not confirmed; the ANON rules stay off unless you pick the anonymous profile."],
+  },
+  trf: {
+    name: "Transportation Research Part F (Elsevier)", verified: "2026-08-27",
+    source_url: "https://www.sciencedirect.com/journal/transportation-research-part-f-traffic-psychology-and-behaviour/publish/guide-for-authors",
+    document_class: "elsarticle", bibliography_style: "elsarticle-harv",
+    anonymity: { model: "single-anonymous" },
+    length: { unit: "none" },
+    accessibility: { descriptions_required: false },
+    requires: { ai_disclosure: true, data_availability: true },
+    required_statements: [
+      { name: "declaration of competing interest", severity: "error",
+        pattern: "declaration of (competing|conflicting) interest|conflicts? of interest|competing interests?",
+        fix: "Add a Declaration of Competing Interest section, even if you declare none." },
+      { name: "CRediT author contribution statement", severity: "warn",
+        pattern: "CRediT|author(ship)? contribution|conceptuali[sz]ation:|methodology:|writing . original draft",
+        fix: "Add a CRediT author statement listing each author and their roles." },
+      { name: "data availability statement", severity: "error",
+        pattern: "data availability|data are available|data will be made available|data cannot be shared",
+        fix: "Add a Data Availability statement; Elsevier requires one for every submission." },
+      { name: "funding statement", severity: "warn",
+        pattern: "funding|funded by|grant|no specific grant|financial support",
+        fix: "State the funding sources, or state that the work received none." },
+      { name: "highlights", severity: "warn", pattern: "highlights",
+        fix: "Elsevier requires a separate Highlights file of short bullet points. Check the guide for the exact count and character limit." },
+    ],
+    severity: { POL005: "warn", POL006: "warn", POL007: "warn" },
+    uncertain: ["The Highlights format (commonly 3-5 bullets, at most 85 characters each) could not be re-verified: the live guide blocks automated fetching.",
+                "The exact bst/biblatex style name was not confirmed.",
+                "Structured-abstract and keyword-count requirements were not confirmed."],
+  },
+};
+
+function globMatch(value, pattern) {
+  if (value === pattern) return true;
+  const re = new RegExp("^" + pattern.split("*").map(escapeRe).join(".*") + "$");
+  return re.test(value);
+}
+
+class Config {
+  constructor({ profile = "thesis", stage = "submission", venue = "", language = "en" } = {}) {
+    const prof = PROFILES[profile] || {};
+    this.profile = profile;
+    this.stage = prof.stage || stage;
+    this.venueKey = venue;
+    this.venue = venue ? (VENUES[venue] || {}) : {};
+    this.language = language;
+    this.anonymous = !!prof.anonymous;
+    this.disable = prof.disable || [];
+  }
+  enabled(id) { return !this.disable.some(p => globMatch(id, p)); }
+  severityFor(id) {
+    const rule = RULES_BY_ID[id];
+    let base = rule ? rule.sev : SEV.warn;
+    const vsev = (this.venue.severity || {})[id];
+    if (vsev) base = SEV[vsev] || base;
+    const stage = STAGES[this.stage] || STAGES.submission;
+    if (stage.promote.some(p => globMatch(id, p)) && base >= SEV.warn) return SEV.error;
+    if (stage.demote.some(p => globMatch(id, p)) && base >= SEV.warn) return SEV.info;
+    return base;
+  }
+  option(id, key, fallback) {
+    const v = ((this.venue.rules || {})[id] || {})[key];
+    return v === undefined ? fallback : v;
+  }
+  venueField(...path) {
+    let node = this.venue;
+    for (const k of path) {
+      if (!node || typeof node !== "object" || !(k in node)) return undefined;
+      node = node[k];
+    }
+    return node;
+  }
+}
+/* ===================== 4. The rules ====================================== */
+
+const RULES = [];
+const RULES_BY_ID = {};
+function rule(spec) { RULES.push(spec); RULES_BY_ID[spec.id] = spec; }
+
+const REF_CMDS = ["ref","cref","Cref","crefrange","Crefrange","autoref","vref","pageref","nameref","labelcref","subref","eqref"];
+const CITE_CMDS = ["cite","citep","citet","citeauthor","citeyear","citealp","citealt","citenum","parencite",
+                   "textcite","autocite","footcite","nocite","citeA","shortcite","fullcite"];
+
+/* ---- helpers shared by several rules ---- */
+const wordsIn = s => (s.match(/[A-Za-zÀ-ÿ][\wÀ-ÿ'-]*/g) || []).length;
+function labelOf(env, text) { const l = parseCommands(env.body(), "label", 1); return l.length ? l[0].arg(0).trim() : null; }
+function captionsOf(env) { return parseCommands(env.body(), "caption", 1); }
+function referencedLabels(p) {
+  const out = new Set();
+  for (const c of p.anyCommands(REF_CMDS, 1)) for (const k of c.arg(0).split(",")) { const t = k.trim(); if (t) out.add(t); }
+  return out;
+}
+function closest(key, candidates, cutoff = 0.82) {
+  let best = null, bestScore = 0;
+  for (const c of candidates) {
+    const s = ratio(key.toLowerCase(), String(c).toLowerCase());
+    if (s > bestScore) { bestScore = s; best = c; }
+  }
+  return bestScore >= cutoff ? best : null;
+}
+function mainTextSpan(ctx) {
+  const p = ctx.project;
+  let start = 0;
+  const docs = p.environments("document");
+  if (docs.length) start = docs[0].bodyStart;
+  let end = p.text.length;
+  for (const marker of ["printbibliography","bibliography","printbibheading","begin\\{thebibliography\\}","appendix"]) {
+    const m = new RegExp("\\\\" + marker).exec(p.text.slice(start));
+    if (m) end = Math.min(end, start + m.index);
+  }
+  return [start, end];
+}
+function wordCount(ctx) {
+  if (ctx.cache.words !== undefined) return ctx.cache.words;
+  const p = ctx.project;
+  const [start, end] = mainTextSpan(ctx);
+  const buf = p.prose.slice(start, end).split("");
+  for (const env of p.floats()) {
+    for (let i = Math.max(0, env.start - start); i < Math.min(buf.length, env.end - start); i++) buf[i] = " ";
+  }
+  ctx.cache.words = wordsIn(buf.join(""));
+  return ctx.cache.words;
+}
+function pageCount(ctx) {
+  if (ctx.cache.pages !== undefined) return ctx.cache.pages;
+  let pages = null;
+  if (ctx.pdfBytes) {
+    const text = new TextDecoder("latin1").decode(ctx.pdfBytes.slice(0, 6e6));
+    const counts = [...text.matchAll(/\/Count\s+(\d+)/g)].map(m => parseInt(m[1], 10));
+    if (counts.length) pages = Math.max(...counts);
+    else { const hits = (text.match(/\/Type\s*\/Page[^s]/g) || []).length; if (hits) pages = hits; }
+  }
+  if (pages === null && ctx.log) {
+    const m = /Output written on .*?\((\d+) pages?/.exec(ctx.log);
+    if (m) pages = parseInt(m[1], 10);
+  }
+  ctx.cache.pages = pages;
+  return pages;
+}
+function isAnonymousStage(ctx) {
+  if (ctx.config.anonymous) return true;
+  if (ctx.project.documentclass().options.map(o => o.toLowerCase()).includes("anonymous")) return true;
+  const model = String(ctx.config.venueField("anonymity", "model") || "").toLowerCase();
+  return model.includes("double") || model.includes("anonymous");
+}
+function hasStudy(ctx) { return (ctx.project.prose.match(STUDY_SIGNALS) || []).length >= 3; }
+const STUDY_SIGNALS = /\b(participants?|subjects?|respondents?|interviewees?|we recruited|sample of|between-subjects?|within-subjects?|user study|field study|survey|questionnaire)\b/gi;
+
+/* ---- FIG: figures, tables, captions ---- */
+const LABEL_PREFIX = { figure:["fig","figure"], "figure*":["fig","figure"], wrapfigure:["fig","figure"],
+  sidewaysfigure:["fig","figure"], table:["tab","table"], "table*":["tab","table"], sidewaystable:["tab","table"],
+  listing:["lst","listing","code"], algorithm:["alg","algo","algorithm"], "algorithm*":["alg","algo","algorithm"] };
+
+rule({ id:"FIG001", title:"Float without a caption", cat:"floats", sev:SEV.warn,
+  why:"A figure or table with no caption cannot be read on its own, and the list of figures will be wrong.",
+  fix:"Add \\caption{...} inside the environment.",
+  run(ctx){ for (const env of ctx.project.floats()) {
+    if (env.name.startsWith("algorithm")) continue;
+    if (captionsOf(env).length) continue;
+    ctx.add("FIG001", `\\begin{${env.name}} has no \\caption`, { at: env.start, context: ctx.project.excerpt(env.start) });
+  }}});
+
+rule({ id:"FIG002", title:"Float without a label", cat:"floats", sev:SEV.warn,
+  why:"Without a label the float cannot be referenced, so it will end up orphaned in the text.",
+  fix:"Add \\label{fig:...} directly after the \\caption.",
+  run(ctx){ for (const env of ctx.project.floats()) {
+    if (labelOf(env)) continue;
+    ctx.add("FIG002", `\\begin{${env.name}} has no \\label`, { at: env.start, context: ctx.project.excerpt(env.start) });
+  }}});
+
+rule({ id:"FIG003", title:"Float never referenced in the text", cat:"floats", sev:SEV.warn,
+  why:"Every figure and table must be discussed in the running text; an unreferenced float is either redundant or an oversight.",
+  fix:"Refer to it (\\Cref{...}) where you discuss it, or delete the float.",
+  run(ctx){ const refs = referencedLabels(ctx.project);
+    for (const env of ctx.project.floats()) {
+      const label = labelOf(env);
+      if (!label || refs.has(label)) continue;
+      ctx.add("FIG003", `${env.name} \`${label}\` is never referenced in the text`,
+        { at: env.start, context: ctx.project.excerpt(env.start),
+          fix: `Add a reference such as \\Cref{${label}} where you discuss it.` });
+    }}});
+
+rule({ id:"FIG004", title:"\\label before \\caption", cat:"floats", sev:SEV.error,
+  why:"LaTeX numbers a label from the last counter step, so a label placed before its caption silently points at the wrong number.",
+  fix:"Move \\label{...} to immediately after \\caption{...}.",
+  run(ctx){ for (const env of ctx.project.floats()) {
+    const body = env.body();
+    const caps = parseCommands(body, "caption", 1), labs = parseCommands(body, "label", 1);
+    if (!caps.length || !labs.length || labs[0].start >= caps[0].start) continue;
+    const off = env.bodyStart + labs[0].start;
+    ctx.add("FIG004", `\\label comes before \\caption in this ${env.name}; the reference will show the wrong number`,
+      { at: off, context: ctx.project.excerpt(off) });
+  }}});
+
+rule({ id:"FIG005", title:"Caption punctuation is inconsistent", cat:"floats", sev:SEV.info,
+  why:"Caption punctuation is a house-style decision; being inconsistent about it looks careless.",
+  fix:"End every caption with a period, or none of them.",
+  run(ctx){ const caps = [];
+    for (const env of ctx.project.floats()) for (const c of captionsOf(env)) {
+      const b = c.arg(0).trim(); if (b) caps.push({ env, c, b });
+    }
+    if (caps.length < 3) return;
+    const withPeriod = caps.filter(x => /[.!?]$/.test(x.b.trim())).length;
+    const majority = withPeriod * 2 >= caps.length;
+    for (const { env, c, b } of caps) {
+      if (/[.!?]$/.test(b.trim()) === majority) continue;
+      const off = env.bodyStart + c.start;
+      ctx.add("FIG005", `caption punctuation differs from the other ${caps.length - 1} captions`,
+        { at: off, context: b.slice(0, 80),
+          fix: majority ? "End this caption with a period." : "Remove the trailing period." });
+    }}});
+
+rule({ id:"FIG006", title:"Label prefix does not match the float type", cat:"floats", sev:SEV.info,
+  why:"fig:/tab: prefixes make cross-references readable and make a mismatched \\ref obvious at a glance.",
+  fix:"Rename the label to the conventional prefix for its environment.",
+  run(ctx){ for (const env of ctx.project.floats()) {
+    const label = labelOf(env), prefixes = LABEL_PREFIX[env.name];
+    if (!label || !prefixes || !label.includes(":")) continue;
+    const prefix = label.split(":")[0].trim().toLowerCase();
+    if (prefixes.includes(prefix)) continue;
+    ctx.add("FIG006", `${env.name} is labelled \`${label}\` but the convention here is \`${prefixes[0]}:\``,
+      { at: env.start, fix: `Rename to \`${prefixes[0]}:${label.split(":").slice(1).join(":")}\`.` });
+  }}});
+
+rule({ id:"FIG007", title:"Graphic without a width", cat:"floats", sev:SEV.info,
+  why:"An \\includegraphics with no width or scale renders at the image's native size and silently overflows the text block.",
+  fix:"Add [width=\\linewidth] or [width=0.8\\columnwidth].",
+  run(ctx){ for (const c of ctx.project.commands("includegraphics", 1)) {
+    const opts = c.opts.join(" ").toLowerCase();
+    if (/width|height|scale|totalheight/.test(opts)) continue;
+    ctx.add("FIG007", `\\includegraphics{${c.arg(0)}} has no width or scale`,
+      { at: c.start, context: ctx.project.excerpt(c.start) });
+  }}});
+
+rule({ id:"FIG008", title:"Graphics file not found", cat:"floats", sev:SEV.error,
+  why:"A missing image compiles to a black box on Overleaf and stops the build in CI.",
+  fix:"Check the path, the extension and the capitalisation — Overleaf is case-sensitive, Windows is not.",
+  run(ctx){
+    const roots = [""];
+    for (const c of ctx.project.commands("graphicspath", 1))
+      for (const m of c.arg(0).matchAll(/\{([^{}]+)\}/g)) roots.push(m[1]);
+    const exts = ["", ".pdf", ".png", ".jpg", ".jpeg", ".eps", ".svg"];
+    const known = new Set([...ctx.allFiles.keys()].map(k => k.toLowerCase()));
+    for (const c of ctx.project.commands("includegraphics", 1)) {
+      const name = c.arg(0).trim();
+      if (!name || /[\\#]/.test(name)) continue;
+      let found = false;
+      for (const base of roots) for (const ext of exts) {
+        const cand = normalisePath((base ? base.replace(/\/$/, "") + "/" : "") + name + ext).toLowerCase();
+        if (known.has(cand)) { found = true; break; }
+        for (const k of known) if (k.endsWith("/" + cand) || k === cand) { found = true; break; }
+        if (found) break;
+      }
+      if (found) continue;
+      ctx.add("FIG008", `graphics file \`${name}\` not found`,
+        { at: c.start, context: ctx.project.excerpt(c.start),
+          fix: "Fix the path, or add the missing file to the project you dropped in." });
+    }}});
+
+rule({ id:"FIG009", title:"Two floats share a caption", cat:"floats", sev:SEV.info,
+  why:"Identical captions almost always mean a figure was duplicated and one copy never updated.",
+  fix:"Give each float a caption describing what is specific to it.",
+  run(ctx){ const seen = new Map();
+    for (const env of ctx.project.floats()) for (const c of captionsOf(env)) {
+      const key = c.arg(0).trim().toLowerCase().replace(/\s+/g, " ");
+      if (key.length < 12) continue;
+      const off = env.bodyStart + c.start;
+      if (seen.has(key)) {
+        const first = ctx.project.locate(seen.get(key));
+        ctx.add("FIG009", `caption is identical to the one at ${first.file}:${first.line}`,
+          { at: off, context: c.arg(0).slice(0, 80) });
+      } else seen.set(key, off);
+    }}});
+
+rule({ id:"FIG010", title:"Table caption placed below the table", cat:"floats", sev:SEV.info,
+  why:"Table captions go above the table and figure captions below it; mixing the two is a formatting slip reviewers notice.",
+  fix:"Move \\caption above \\begin{tabular} for tables.",
+  run(ctx){ for (const env of ctx.project.floats()) {
+    if (!env.name.startsWith("table")) continue;
+    const body = env.body();
+    const caps = parseCommands(body, "caption", 1);
+    if (!caps.length) continue;
+    const tab = /\\begin\s*\{(?:tabular|tabularx|longtable|tabu)/.exec(body);
+    if (!tab || caps[0].start < tab.index) continue;
+    const off = env.bodyStart + caps[0].start;
+    ctx.add("FIG010", "table caption is below the table", { at: off, context: caps[0].arg(0).slice(0, 70) });
+  }}});
+
+rule({ id:"FIG011", title:"Hard-coded float number in the text", cat:"floats", sev:SEV.warn,
+  why:"A written-out 'Figure 3' stops matching the moment a float is inserted before it.",
+  fix:"Replace with \\Cref{...} or \\ref{...}.",
+  run(ctx){ const re = /\b(Figure|Fig\.|Table|Section|Sect\.|Chapter|Equation|Algorithm|Listing)\s*~?\s*(\d{1,2})(?![\d.])/gi;
+    let m; while ((m = re.exec(ctx.project.prose)) !== null)
+      ctx.add("FIG011", `hard-coded '${m[0].trim()}' instead of a cross-reference`,
+        { at: m.index, context: ctx.project.excerpt(m.index) });
+  }});
+
+/* ---- REF: labels, references, citations ---- */
+rule({ id:"REF001", title:"Reference to an undefined label", cat:"crossref", sev:SEV.error,
+  why:"An undefined reference prints as '??' in the PDF — the most visible possible sloppiness.",
+  fix:"Fix the typo, or add the missing \\label.",
+  run(ctx){
+    const labels = new Set(ctx.project.commands("label", 1).map(c => c.arg(0).trim()).filter(Boolean));
+    for (const c of ctx.project.anyCommands(REF_CMDS, 1)) for (const raw of c.arg(0).split(",")) {
+      const key = raw.trim();
+      if (!key || labels.has(key) || /[\\#]/.test(key)) continue;
+      const near = closest(key, labels);
+      ctx.add("REF001", `reference to undefined label \`${key}\`` + (near ? `. Did you mean \`${near}\`?` : ""),
+        { at: c.start, context: ctx.project.excerpt(c.start),
+          fix: near ? `Change it to \\ref{${near}}.` : `Define \\label{${key}} or correct the key.` });
+    }}});
+
+rule({ id:"REF002", title:"Label never referenced", cat:"crossref", sev:SEV.info,
+  why:"A label nothing points at is dead weight — and often the sign of a cross-reference that was meant to exist.",
+  fix:"Reference it, or delete the label.",
+  run(ctx){ const refs = referencedLabels(ctx.project), seen = new Set();
+    for (const c of ctx.project.commands("label", 1)) {
+      const key = c.arg(0).trim();
+      if (!key || refs.has(key) || seen.has(key)) continue;
+      if (["fig","figure","tab","table"].includes(key.split(":")[0].toLowerCase())) continue;
+      seen.add(key);
+      ctx.add("REF002", `label \`${key}\` is never referenced`, { at: c.start, context: ctx.project.excerpt(c.start) });
+    }}});
+
+rule({ id:"REF003", title:"Duplicate label", cat:"crossref", sev:SEV.error,
+  why:"LaTeX keeps only the last definition, so every reference silently points at the wrong place.",
+  fix:"Rename one of them.",
+  run(ctx){ const first = new Map();
+    for (const c of ctx.project.commands("label", 1)) {
+      const key = c.arg(0).trim(); if (!key) continue;
+      if (!first.has(key)) { first.set(key, c.start); continue; }
+      const at = ctx.project.locate(first.get(key));
+      ctx.add("REF003", `label \`${key}\` is already defined at ${at.file}:${at.line}`,
+        { at: c.start, context: ctx.project.excerpt(c.start) });
+    }}});
+
+rule({ id:"REF004", title:"Missing non-breaking space before a cross-reference", cat:"crossref", sev:SEV.info,
+  why:"'Figure 7' must not break across a line; LaTeX only prevents that if you write the tie yourself.",
+  fix:"Write Figure~\\ref{...} with a tilde.",
+  run(ctx){ const re = /\b(Figure|Fig\.|Table|Section|Sec\.|Chapter|Chap\.|Equation|Eq\.|Algorithm|Listing|Appendix)([ ]+)\\(ref|cref|Cref|autoref|eqref|vref)\b/g;
+    let m; while ((m = re.exec(ctx.project.text)) !== null)
+      ctx.add("REF004", `use a non-breaking space: \`${m[1]}~\\${m[3]}\``,
+        { at: m.index + m[1].length, context: ctx.project.excerpt(m.index) });
+  }});
+
+rule({ id:"REF005", title:"Citation key not in the bibliography", cat:"crossref", sev:SEV.error,
+  why:"An unresolved citation prints as '[?]' and the entry is missing from the reference list.",
+  fix:"Add the entry to the .bib file, or fix the key.",
+  run(ctx){ if (!ctx.bib.length) return;
+    const keys = new Set(ctx.bib.map(e => e.key));
+    for (const c of ctx.project.anyCommands(CITE_CMDS, 1)) for (const raw of c.arg(0).split(",")) {
+      const key = raw.trim();
+      if (!key || keys.has(key) || key.includes("\\")) continue;
+      const near = closest(key, keys);
+      ctx.add("REF005", `citation key \`${key}\` is not in the bibliography` + (near ? `. Did you mean \`${near}\`?` : ""),
+        { at: c.start, context: ctx.project.excerpt(c.start) });
+    }}});
+
+rule({ id:"REF006", title:"Bibliography entry never cited", cat:"crossref", sev:SEV.info,
+  why:"Uncited entries bloat a .bib and hide the ones that matter; with biblatex they can also leak into the printed list.",
+  fix:"Cite it or remove it — keeping a personal 'to read' .bib separate works well.",
+  run(ctx){ if (!ctx.bib.length) return;
+    for (const c of ctx.project.commands("nocite", 1)) if (c.arg(0).includes("*")) return;
+    const cited = new Set();
+    for (const c of ctx.project.anyCommands(CITE_CMDS, 1)) for (const k of c.arg(0).split(",")) { const t = k.trim(); if (t) cited.add(t); }
+    for (const e of ctx.bib) {
+      if (cited.has(e.key)) continue;
+      ctx.add("REF006", `\`${e.key}\` is in the bibliography but never cited`,
+        { file: e.file, line: e.line, context: e.title.slice(0, 70) });
+    }}});
+
+rule({ id:"REF007", title:"Inconsistent cross-reference commands", cat:"crossref", sev:SEV.info,
+  why:"Mixing \\ref, \\autoref and \\Cref produces 'Figure 1', 'figure 1' and '1' in the same document.",
+  fix:"Pick one (cleveref's \\Cref is the usual choice) and use it everywhere.",
+  run(ctx){ const counts = {}, first = {};
+    for (const n of ["ref","autoref","cref","Cref"]) {
+      const c = ctx.project.commands(n, 1);
+      if (c.length) { counts[n] = c.length; first[n] = c[0].start; }
+    }
+    const names = Object.keys(counts);
+    if (names.length < 2) return;
+    const dominant = names.reduce((a, b) => counts[a] >= counts[b] ? a : b);
+    const minorTotal = names.filter(n => n !== dominant).reduce((s, n) => s + counts[n], 0);
+    if (!minorTotal || minorTotal > counts[dominant]) return;
+    for (const n of names) {
+      if (n === dominant) continue;
+      ctx.add("REF007", `document mostly uses \\${dominant} (${counts[dominant]}×) but \\${n} appears ${counts[n]}×`,
+        { at: first[n], fix: `Convert the ${counts[n]} \\${n} to \\${dominant}.` });
+    }}});
+
+/* ---- ABB: abbreviations ---- */
+const ABB_COMMON = new Set(["AI","API","CPU","GPU","CSV","PDF","HTML","HTTP","HTTPS","URL","USB","RAM","ROM",
+  "OS","PC","ID","IT","UK","USA","US","EU","GDPR","ISO","IEEE","ACM","CHI","DOI","FAQ","GPS","LED","PIN","RGB",
+  "SQL","XML","JSON","YAML","OK","TV","3D","2D","1D","AM","PM","CI","CD","IRB","ANOVA","SD","SE","RQ","LLM",
+  "ML","DL","NLP","TODO","FIXME","XXX","TBD","HACK","NOTE"]);
+const ABB_DEF = /((?:[A-Z][\w-]*|of|the|for|and|in|on|to|a|an)(?:[ -](?:[A-Za-z][\w-]*|of|the|for|and|in|on|to|a|an)){0,7})\s*\(([A-Z][A-Za-z]{1,9}s?)\)/g;
+const ABB_USE = /(?<![\w\\])([A-Z]{2,9})(?:s|es)?(?![\w])/g;
+const NOT_ACRONYM = /^(?:[IVXLCDM]+|[A-Z]|\d+[A-Z]*|[A-Z]{2}\d+)$/;
+
+function abbManaged(ctx) {
+  const pkgs = ctx.project.packages();
+  return ["acronym","glossaries","glossaries-extra","acro","nomencl","abbrevs"].some(p => pkgs.has(p));
+}
+function initialsMatch(initials, acronym) {
+  const a = acronym.toUpperCase(), i = initials.toUpperCase().replace(/[^A-Z]/g, "");
+  if (i === a) return true;
+  let idx = 0;
+  for (const ch of a) { idx = i.indexOf(ch, idx); if (idx === -1) return false; idx++; }
+  return a.length >= 2;
+}
+function abbDefinitions(ctx) {
+  if (ctx.cache.abb) return ctx.cache.abb;
+  const found = new Map();
+  ABB_DEF.lastIndex = 0;
+  let m;
+  while ((m = ABB_DEF.exec(ctx.project.prose)) !== null) {
+    const acronym = m[2].trim();
+    const expansion = m[1].split(/\s+/).filter(Boolean).join(" ");
+    const initials = expansion.split(/[ -]/).filter(Boolean).map(w => w[0]).join("");
+    const plural = /s$/.test(acronym) && acronym.slice(0, -1) === acronym.slice(0, -1).toUpperCase();
+    const core = plural ? acronym.slice(0, -1) : acronym;
+    if (!initialsMatch(initials, core)) continue;
+    const key = core.toUpperCase();
+    if (!found.has(key)) found.set(key, []);
+    found.get(key).push({ at: m.index + m[0].lastIndexOf("("), expansion, start: m.index });
+  }
+  ctx.cache.abb = found;
+  return found;
+}
+
+rule({ id:"ABB001", title:"Abbreviation introduced more than once", cat:"language", sev:SEV.warn,
+  why:"An abbreviation is taught once, at first use. A second 'Automated Driving System (ADS)' fifty pages later tells the reader you lost track of your own document.",
+  fix:"Keep the first definition, delete the later ones.",
+  run(ctx){ if (abbManaged(ctx)) return;
+    for (const [acronym, occ] of abbDefinitions(ctx)) {
+      if (occ.length < 2) continue;
+      const first = ctx.project.locate(occ[0].at);
+      for (const o of occ.slice(1))
+        ctx.add("ABB001", `\`${acronym}\` was already introduced at ${first.file}:${first.line}`,
+          { at: o.at, context: `${o.expansion} (${acronym})`,
+            fix: `Delete this expansion and write just \`${acronym}\`.` });
+    }}});
+
+rule({ id:"ABB002", title:"Abbreviation used before it is introduced", cat:"language", sev:SEV.warn,
+  why:"A reader meeting 'ADS' before its expansion has to guess or search.",
+  fix:"Move the definition to the first use, or expand it there.",
+  run(ctx){ if (abbManaged(ctx)) return;
+    const defs = abbDefinitions(ctx);
+    if (!defs.size) return;
+    const prose = ctx.project.prose;
+    for (const [acronym, occ] of defs) {
+      if (ABB_COMMON.has(acronym)) continue;
+      const defineAt = Math.min(...occ.map(o => o.start));
+      ABB_USE.lastIndex = 0;
+      let m, firstUse = null;
+      while ((m = ABB_USE.exec(prose)) !== null) {
+        if (m[1].toUpperCase() !== acronym) continue;
+        if (m.index >= defineAt) break;
+        firstUse = m.index; break;
+      }
+      if (firstUse === null) continue;
+      const at = ctx.project.locate(defineAt);
+      ctx.add("ABB002", `\`${acronym}\` is used here but only introduced later, at ${at.file}:${at.line}`,
+        { at: firstUse, context: ctx.project.excerpt(firstUse) });
+    }}});
+
+rule({ id:"ABB003", title:"Abbreviation introduced but never used", cat:"language", sev:SEV.info,
+  why:"Introducing an abbreviation you then never use costs the reader effort for nothing.",
+  fix:"Drop the parenthesised abbreviation and keep writing the term in full.",
+  run(ctx){ if (abbManaged(ctx)) return;
+    const uses = new Map();
+    ABB_USE.lastIndex = 0;
+    let m; while ((m = ABB_USE.exec(ctx.project.prose)) !== null) {
+      const k = m[1].toUpperCase(); uses.set(k, (uses.get(k) || 0) + 1);
+    }
+    for (const [acronym, occ] of abbDefinitions(ctx)) {
+      if ((uses.get(acronym) || 0) >= 2) continue;
+      ctx.add("ABB003", `\`${acronym}\` is introduced but then used ${Math.max(0, (uses.get(acronym) || 1) - 1)} time(s)`,
+        { at: occ[0].at, context: `${occ[0].expansion} (${acronym})` });
+    }}});
+
+rule({ id:"ABB004", title:"Abbreviation used without ever being introduced", cat:"language", sev:SEV.info,
+  why:"Field-specific abbreviations that were never expanded are the commonest reason an outside examiner stumbles.",
+  fix:"Expand it at first use, or add it to the ignore list.",
+  run(ctx){ if (abbManaged(ctx)) return;
+    const defs = abbDefinitions(ctx), reported = new Set();
+    const ignore = new Set([...ABB_COMMON, ...(ctx.ignoreAcronyms || [])]);
+    ABB_USE.lastIndex = 0;
+    let m; while ((m = ABB_USE.exec(ctx.project.prose)) !== null) {
+      const token = m[1].toUpperCase();
+      if (defs.has(token) || ignore.has(token) || reported.has(token) || NOT_ACRONYM.test(token)) continue;
+      reported.add(token);
+      ctx.add("ABB004", `\`${token}\` is used but never introduced`,
+        { at: m.index, context: ctx.project.excerpt(m.index),
+          fix: `Write it out at first use: Full Term (${token}).` });
+    }}});
+
+rule({ id:"ABB005", title:"Same abbreviation, different expansions", cat:"language", sev:SEV.warn,
+  why:"Two expansions of one abbreviation means either a typo or two different concepts sharing a name.",
+  fix:"Settle on one expansion, or rename one of the concepts.",
+  run(ctx){ if (abbManaged(ctx)) return;
+    for (const [acronym, occ] of abbDefinitions(ctx)) {
+      const variants = new Map();
+      for (const o of occ) {
+        const key = o.expansion.toLowerCase().replace(/[^a-z ]/g, "").trim();
+        if (!variants.has(key)) variants.set(key, o);
+      }
+      if (variants.size < 2) continue;
+      const list = [...variants.values()];
+      ctx.add("ABB005", `\`${acronym}\` is expanded as both "${list[0].expansion}" and "${list[1].expansion}"`,
+        { at: list[1].at, context: `${list[1].expansion} (${acronym})` });
+    }}});
+
+/* ---- STY: source-level writing mechanics ---- */
+const US_UK = [["behavior","behaviour"],["color","colour"],["modeling","modelling"],["analyze","analyse"],
+  ["organization","organisation"],["visualization","visualisation"],["center","centre"],["labeled","labelled"],
+  ["recognize","recognise"],["customization","customisation"],["defense","defence"],["fulfill","fulfil"],
+  ["judgment","judgement"],["license","licence"]];
+const DOUBLE_OK = new Set(["had","that","long","sehr"]);
+
+rule({ id:"STY001", title:"Unfinished-work marker left in the text", cat:"style", sev:SEV.error,
+  why:"A TODO that reaches a supervisor or a reviewer costs more credibility than the missing content would have.",
+  fix:"Resolve it, or move it to your issue tracker.",
+  run(ctx){ const re = /(?<![\w])(TODO|FIXME|XXX|TBD|HACK|REWRITE|CITATION NEEDED|\?\?\?)(?![\w])/gi;
+    for (const line of ctx.project.lines) {
+      re.lastIndex = 0; let m;
+      while ((m = re.exec(line.raw)) !== null) {
+        const before = line.raw.slice(0, m.index);
+        const inComment = before.includes("%") && !/\\$/.test(before.trimEnd());
+        if (inComment && ctx.config.stage === "draft") continue;
+        ctx.add("STY001", `\`${m[1]}\` left in the source` + (inComment ? " (in a comment)" : ""),
+          { file: line.file, line: line.lineno, col: m.index + 1, context: line.raw.trim().slice(0, 96) });
+      }
+    }}});
+
+rule({ id:"STY002", title:"Forced line break in running text", cat:"style", sev:SEV.warn,
+  why:"A double backslash inside a paragraph breaks the line mid-sentence and leaves the previous line unjustified; it is almost always a leftover from editing.",
+  fix:"Delete it and let LaTeX break the paragraph, or start a new paragraph with a blank line.",
+  run(ctx){ const p = ctx.project, protectedSpans = [];
+    for (const env of ["tabular","tabular*","tabularx","longtable","tabu","array","matrix","pmatrix","bmatrix",
+      "align","align*","gather","gather*","eqnarray","eqnarray*","cases","split","multline","multline*",
+      "flalign","flalign*","IEEEeqnarray","tikzpicture","verse","titlepage","center","flushleft","flushright",
+      "minipage","algorithmic","lstlisting","abstract"])
+      for (const e of p.environments(env)) protectedSpans.push([e.start, e.end]);
+    for (const name of ["author","title","affiliation","address","date","thanks","makecell","shortstack",
+      "parbox","caption","institute","email"])
+      for (const c of p.commands(name, 1)) protectedSpans.push([c.start, c.end]);
+    const re = /\\\\(?![a-zA-Z])/g;
+    let m; while ((m = re.exec(p.text)) !== null) {
+      if (protectedSpans.some(([a, b]) => a <= m.index && m.index <= b)) continue;
+      ctx.add("STY002", "forced line break in running text", { at: m.index, context: p.excerpt(m.index) });
+    }}});
+
+rule({ id:"STY003", title:"Repeated word", cat:"style", sev:SEV.warn,
+  why:"'the the' survives every spell-checker and every read-through, because the eye supplies the correct text.",
+  fix:"Delete the duplicate.",
+  run(ctx){ const re = /(?<![\w])([A-Za-z]{2,})\s+\1(?![\w])/gi;
+    let m; while ((m = re.exec(ctx.project.prose)) !== null) {
+      if (DOUBLE_OK.has(m[1].toLowerCase())) continue;
+      ctx.add("STY003", `repeated word: '${m[0].trim()}'`, { at: m.index, context: ctx.project.excerpt(m.index) });
+    }}});
+
+rule({ id:"STY004", title:"Straight double quotes", cat:"style", sev:SEV.info,
+  why:'A typed straight quote renders as two identical marks; LaTeX needs opening and closing quotes.',
+  fix:"Write ``like this'' (two backticks, two apostrophes), or use the csquotes package.",
+  run(ctx){ if (ctx.project.packages().has("csquotes")) return;
+    for (const line of ctx.project.lines) {
+      if (line.verbatim) continue;
+      const re = /(?<![\\=])"/g; let m;
+      while ((m = re.exec(line.code)) !== null)
+        ctx.add("STY004", "straight quote; LaTeX renders this as two closing marks",
+          { file: line.file, line: line.lineno, col: m.index + 1, context: line.raw.trim().slice(0, 96) });
+    }}});
+
+rule({ id:"STY005", title:"Space before punctuation", cat:"style", sev:SEV.warn,
+  why:"A space before a comma or full stop is a typing slip that survives into print.",
+  fix:"Delete the space.",
+  run(ctx){ for (const line of ctx.project.lines) {
+    if (line.verbatim) continue;
+    const re = /(?<=[\w)\}])[ \t]+([,.;:!?])(?=[ \t]|$)/g; let m;
+    while ((m = re.exec(line.code)) !== null)
+      ctx.add("STY005", `space before '${m[1]}'`,
+        { file: line.file, line: line.lineno, col: m.index + 1, context: line.raw.trim().slice(0, 96) });
+  }}});
+
+rule({ id:"STY006", title:"Citation glued to the preceding word", cat:"style", sev:SEV.info,
+  why:"'shown in[12]' prints without a space; a tie keeps the citation attached but readable.",
+  fix:"Write word~\\cite{key}.",
+  run(ctx){ const re = /[A-Za-z0-9)]\\(cite|citep|citet|autocite|parencite)\b/g;
+    let m; while ((m = re.exec(ctx.project.text)) !== null)
+      ctx.add("STY006", "no space or tie before the citation", { at: m.index, context: ctx.project.excerpt(m.index) });
+  }});
+
+rule({ id:"STY007", title:"Hyphen used for a numeric range", cat:"style", sev:SEV.info,
+  why:"A range takes an en dash in LaTeX; a single hyphen prints too short.",
+  fix:"Write 10--20.",
+  run(ctx){ const re = /(?<![\d-])(\d{1,4})\s?-\s?(\d{1,4})(?![\d-])/g;
+    let m; while ((m = re.exec(ctx.project.prose)) !== null) {
+      const a = +m[1], b = +m[2];
+      if (b <= a) continue;
+      ctx.add("STY007", `'${m[0]}' should use an en dash: ${a}--${b}`, { at: m.index, context: ctx.project.excerpt(m.index) });
+    }}});
+
+rule({ id:"STY008", title:"Mixed British and American spelling", cat:"style", sev:SEV.warn,
+  why:"Reviewers read inconsistent spelling as carelessness; it is also the commonest artefact of text assembled from several sources.",
+  fix:"Pick one variety and apply it throughout.",
+  run(ctx){ const prose = ctx.project.prose.toLowerCase(), us = [], uk = [];
+    for (const [a, b] of US_UK) {
+      for (const m of prose.matchAll(new RegExp(`(?<![\\w])${a}\\w*`, "g"))) us.push([m.index, m[0], b]);
+      for (const m of prose.matchAll(new RegExp(`(?<![\\w])${b}\\w*`, "g"))) uk.push([m.index, m[0], a]);
+    }
+    if (!us.length || !uk.length) return;
+    const minority = us.length <= uk.length ? us : uk;
+    const majorityLabel = minority === us ? "British" : "American";
+    for (const [at, word, alt] of minority.slice(0, 12))
+      ctx.add("STY008", `'${word}' is the minority spelling here; the document is mostly ${majorityLabel}`,
+        { at, context: ctx.project.excerpt(at), fix: `Use '${alt}...' for consistency.` });
+  }});
+
+rule({ id:"STY009", title:"Contraction in formal writing", cat:"style", sev:SEV.info,
+  why:"Contractions are out of register for a thesis or an ACM paper.",
+  fix:"Write the words out: don't becomes do not.",
+  run(ctx){ const re = /(?<![\w])(don't|doesn't|didn't|can't|won't|isn't|aren't|wasn't|weren't|hasn't|haven't|it's|we've|we're|they're|there's|that's|let's|couldn't|shouldn't|wouldn't)(?![\w])/gi;
+    let m; while ((m = re.exec(ctx.project.prose)) !== null)
+      ctx.add("STY009", `contraction '${m[1]}'`, { at: m.index, context: ctx.project.excerpt(m.index) });
+  }});
+
+rule({ id:"STY010", title:"Inconsistent Figure/Fig. abbreviation", cat:"style", sev:SEV.info,
+  why:"'Figure 1' in one paragraph and 'Fig. 1' in the next is the sort of inconsistency that makes a careful reader distrust the numbers too.",
+  fix:"Use one form; ACM style spells out 'Figure'.",
+  run(ctx){ const prose = ctx.project.prose;
+    const long = [...prose.matchAll(/(?<![\w])Figures?(?![\w])/g)].map(m => m.index);
+    const short = [...prose.matchAll(/(?<![\w])Figs?\./g)].map(m => m.index);
+    if (!long.length || !short.length) return;
+    const minority = short.length <= long.length ? short : long;
+    const preferred = minority === short ? "Figure" : "Fig.";
+    for (const at of minority.slice(0, 8))
+      ctx.add("STY010", `mixed 'Figure' (${long.length}) and 'Fig.' (${short.length}) forms`,
+        { at, context: ctx.project.excerpt(at), fix: `Use '${preferred}' consistently.` });
+  }});
+
+rule({ id:"STY011", title:"Abbreviation not followed by a comma", cat:"style", sev:SEV.info,
+  why:"'e.g. the' without a comma reads as a sentence break to LaTeX's spacing rules and prints a wide space.",
+  fix:"Write 'e.g.,' and 'i.e.,'.",
+  run(ctx){ const re = /(?<![\w])(e\.g\.|i\.e\.|cf\.|et al\.)(?![,)\\])\s/g;
+    let m; while ((m = re.exec(ctx.project.prose)) !== null)
+      ctx.add("STY011", `'${m[1]}' is not followed by a comma`, { at: m.index, context: ctx.project.excerpt(m.index) });
+  }});
+
+rule({ id:"STY012", title:"Very long sentence", cat:"style", sev:SEV.info,
+  why:"Sentences beyond roughly 45 words are where a second-language reader loses the thread; the count is objective even though the fix is editorial.",
+  fix:"Split it at the first 'and' or 'which'.",
+  run(ctx){ const limit = ctx.config.option("STY012", "max_words", 45);
+    const re = /[^.!?]{40,}[.!?]/g; let m;
+    while ((m = re.exec(ctx.project.prose)) !== null) {
+      const words = m[0].trim().split(/\s+/).filter(Boolean);
+      if (words.length <= limit) continue;
+      ctx.add("STY012", `sentence of ${words.length} words (limit ${limit})`,
+        { at: m.index, context: words.slice(0, 12).join(" ") + " …" });
+    }}});
+
+rule({ id:"STY013", title:"Paragraph break inside a sentence", cat:"style", sev:SEV.warn,
+  why:"A blank line ends the paragraph; when it lands mid-sentence the output silently splits in two.",
+  fix:"Remove the blank line, or finish the sentence.",
+  run(ctx){ const lines = ctx.project.lines;
+    for (let i = 0; i < lines.length - 1; i++) {
+      const line = lines[i], nxt = lines[i + 1];
+      const code = line.code.trimEnd();
+      if (!code || line.verbatim || nxt.file !== line.file || nxt.code.trim()) continue;
+      if (/[.!?:;}\]%\\,-]$/.test(code)) continue;
+      if (/\\(item|end|begin|section|subsection|subsubsection|chapter|paragraph|caption|label)/.test(code)) continue;
+      if (code.length < 25 || !/[a-z]\s*$/.test(code)) continue;
+      ctx.add("STY013", "paragraph ends mid-sentence (blank line follows)",
+        { file: line.file, line: line.lineno, context: code.slice(-70) });
+    }}});
+
+rule({ id:"STY014", title:"Unescaped percent sign", cat:"style", sev:SEV.info,
+  why:"A literal % comments out the rest of the line; the loss is silent and often only noticed in print.",
+  fix:"Write \\% for a percentage.",
+  run(ctx){ for (const line of ctx.project.lines) {
+    if (line.verbatim) continue;
+    const m = /\d\s*%/.exec(line.raw);
+    if (!m || line.code.trimEnd().length > m.index) continue;
+    ctx.add("STY014", "a number followed by an unescaped % — the rest of the line is a comment",
+      { file: line.file, line: line.lineno, col: m.index + 1, context: line.raw.trim().slice(0, 96) });
+  }}});
+/* ---- BIB: bibliography hygiene, offline ---- */
+const BIB_REQUIRED = {
+  article:["author","title","journal","year"], inproceedings:["author","title","booktitle","year"],
+  incollection:["author","title","booktitle","year"], book:["author","title","publisher","year"],
+  inbook:["author","title","publisher","year"], phdthesis:["author","title","school","year"],
+  mastersthesis:["author","title","school","year"], techreport:["author","title","institution","year"],
+  misc:["author","title","year"], online:["title","url"], www:["title","url"],
+};
+const PROPER_NOUNS = ["Android","iOS","Bayesian","German","English","European","American","Likert","Tesla",
+  "Google","Apple","Microsoft","Amazon","Facebook","Twitter","YouTube","Python","Java","LaTeX","Overleaf",
+  "COVID","GDPR","Internet","Web","Bluetooth","WiFi","Wi-Fi"];
+
+rule({ id:"BIB001", title:"No bibliography file found", cat:"bib", sev:SEV.warn,
+  why:"Without a .bib the citation checks cannot run at all, so a missing file silently disables half the tool.",
+  fix:"Add the .bib file to the project you dropped in.",
+  run(ctx){ if (ctx.bib.length) return;
+    if (!ctx.project.anyCommands(["cite","citep","citet","autocite","parencite"], 1).length) return;
+    ctx.add("BIB001", "the document cites work but no .bib file was found",
+      { file: ctx.project.main, fix: "Include your .bib file when you drop the project in." });
+  }});
+
+rule({ id:"BIB002", title:"Entry missing a required field", cat:"bib", sev:SEV.warn,
+  why:"A reference without a venue or a year cannot be looked up, and the reference list prints a visible gap.",
+  fix:"Fill the field in from the publisher's page, not from memory.",
+  run(ctx){ for (const e of ctx.bib) {
+    const req = BIB_REQUIRED[e.type];
+    if (!req) continue;
+    let missing = req.filter(f => !e.get(f).trim());
+    if (missing.includes("year") && e.get("date")) missing = missing.filter(f => f !== "year");
+    if (missing.includes("journal") && e.get("journaltitle")) missing = missing.filter(f => f !== "journal");
+    if (!missing.length) continue;
+    ctx.add("BIB002", `@${e.type}{${e.key}} is missing: ${missing.join(", ")}`,
+      { file: e.file, line: e.line, context: e.title.slice(0, 70), fix: `Add ${missing.join(", ")} to this entry.` });
+  }}});
+
+rule({ id:"BIB003", title:"Duplicate bibliography entry", cat:"bib", sev:SEV.warn,
+  why:"The same work under two keys cites inconsistently and inflates the reference count.",
+  fix:"Keep one entry and update the citations that used the other key.",
+  run(ctx){ const byDoi = new Map(), byTitle = new Map(), reported = new Set();
+    for (const e of ctx.bib) {
+      if (e.doi) { const k = e.doi.toLowerCase(); if (!byDoi.has(k)) byDoi.set(k, []); byDoi.get(k).push(e); }
+      const t = normaliseTitle(e.title);
+      if (t.length > 15) { if (!byTitle.has(t)) byTitle.set(t, []); byTitle.get(t).push(e); }
+    }
+    for (const group of [...byDoi.values(), ...byTitle.values()]) {
+      if (group.length < 2) continue;
+      const sig = group.map(e => e.key).sort().join("|");
+      if (reported.has(sig)) continue;
+      reported.add(sig);
+      for (const e of group.slice(1))
+        ctx.add("BIB003", `\`${e.key}\` duplicates \`${group[0].key}\` (line ${group[0].line})`,
+          { file: e.file, line: e.line, context: e.title.slice(0, 70) });
+    }}});
+
+rule({ id:"BIB004", title:"Preprint cited where a published version may exist", cat:"bib", sev:SEV.info,
+  why:"Citing the arXiv version of a paper that appeared at CHI three years ago reads as not having followed the literature.",
+  fix:"Check for the published version and cite that.",
+  run(ctx){ const now = new Date().getFullYear();
+    for (const e of ctx.bib) {
+      if (!e.isPreprint()) continue;
+      if (e.year && (now - e.year) < 2) continue;
+      ctx.add("BIB004", `\`${e.key}\` cites a preprint (${e.year || "no year"})`,
+        { file: e.file, line: e.line, context: e.title.slice(0, 70) });
+    }}});
+
+rule({ id:"BIB005", title:"Unprotected proper noun in a title", cat:"bib", sev:SEV.info,
+  why:"BibTeX lower-cases titles for most styles, so 'German' silently prints as 'german'.",
+  fix:"Brace the word: {German}.",
+  run(ctx){ for (const e of ctx.bib) {
+    const raw = e.get("title");
+    if (!raw) continue;
+    for (const word of PROPER_NOUNS) {
+      const re = new RegExp(`(?<![\\w{])${escapeRe(word)}(?![\\w}])`, "g");
+      const m = re.exec(raw);
+      if (!m) continue;
+      const before = raw.slice(0, m.index);
+      if ((before.split("{").length - 1) > (before.split("}").length - 1)) continue;
+      ctx.add("BIB005", `\`${e.key}\`: '${word}' in the title is not brace-protected`,
+        { file: e.file, line: e.lineOf("title"), context: raw.slice(0, 70), fix: `Write {${word}}.` });
+      break;
+    }}}});
+
+rule({ id:"BIB006", title:"'et al.' inside an author field", cat:"bib", sev:SEV.error,
+  why:"BibTeX reads 'et al.' as a person's name and prints it as an author; the abbreviation is the style's job, not yours.",
+  fix:"List every author, separated by ' and '.",
+  run(ctx){ for (const e of ctx.bib) {
+    const raw = e.get("author") || e.get("editor");
+    if (!raw || !/\bet\.?\s*al\.?/i.test(raw)) continue;
+    ctx.add("BIB006", `\`${e.key}\` has 'et al.' in the author field`,
+      { file: e.file, line: e.lineOf("author"), context: raw.slice(0, 70) });
+  }}});
+
+rule({ id:"BIB007", title:"Authors separated by commas instead of 'and'", cat:"bib", sev:SEV.error,
+  why:"BibTeX splits authors on ' and '; a comma-separated list collapses into one enormous surname.",
+  fix:"Separate every author with ' and '.",
+  run(ctx){ for (const e of ctx.bib) {
+    const raw = e.get("author");
+    if (!raw || /\sand\s/i.test(raw)) continue;
+    if ((raw.match(/,/g) || []).length >= 2)
+      ctx.add("BIB007", `\`${e.key}\` looks like a comma-separated author list`,
+        { file: e.file, line: e.lineOf("author"), context: raw.slice(0, 70) });
+  }}});
+
+rule({ id:"BIB008", title:"Page range with a single hyphen", cat:"bib", sev:SEV.info,
+  why:"Page ranges take an en dash, written as two hyphens in BibTeX.",
+  fix:"Write pages = {101--110}.",
+  run(ctx){ for (const e of ctx.bib) {
+    const pages = e.get("pages");
+    if (!pages || pages.includes("--")) continue;
+    if (!/^\s*\d+\s*-\s*\d+\s*$/.test(pages)) continue;
+    ctx.add("BIB008", `\`${e.key}\` has pages = {${pages}}`,
+      { file: e.file, line: e.lineOf("pages"), context: pages,
+        fix: `Write pages = {${pages.trim().replace(/\s*-\s*/, "--")}}.` });
+  }}});
+
+rule({ id:"BIB009", title:"Missing DOI", cat:"bib", sev:SEV.info,
+  why:"The ACM Reference Format expects a DOI; without one the reference cannot be resolved automatically and the online checks cannot verify it either.",
+  fix:"Copy the DOI from the publisher's page into doi = {10.1145/...}.",
+  run(ctx){ for (const e of ctx.bib) {
+    if (e.doi || ["misc","online","www","unpublished","booklet"].includes(e.type) || e.isPreprint()) continue;
+    ctx.add("BIB009", `\`${e.key}\` has no DOI`, { file: e.file, line: e.line, context: e.title.slice(0, 70) });
+  }}});
+
+rule({ id:"BIB010", title:"URL cited without an access date", cat:"bib", sev:SEV.info,
+  why:"A web source with no access date cannot be checked by a reader later, and most thesis regulations require one.",
+  fix:"Add urldate = {2026-08-27} or note = {Accessed: 2026-08-27}.",
+  run(ctx){ for (const e of ctx.bib) {
+    if (!e.get("url") || e.doi) continue;
+    if (e.get("urldate") || /accessed|retrieved|abgerufen|zugriff/i.test(e.get("note"))) continue;
+    ctx.add("BIB010", `\`${e.key}\` cites a URL with no access date`,
+      { file: e.file, line: e.lineOf("url"), context: e.get("url").slice(0, 70) });
+  }}});
+
+rule({ id:"BIB011", title:"Inconsistent venue name for the same conference", cat:"bib", sev:SEV.info,
+  why:"'Proc. of CHI', 'CHI 24' and the full ACM name in one bibliography print as three different venues.",
+  fix:"Normalise the booktitle across entries.",
+  run(ctx){ const acronyms = new Map();
+    for (const e of ctx.bib) {
+      const venue = e.venue;
+      if (!venue) continue;
+      for (const m of venue.matchAll(/\b(CHI|UIST|CSCW|IMWUT|UbiComp|AutomotiveUI|AutoUI|ASSETS|MobileHCI|IUI|DIS|TEI|ICMI)\b/gi)) {
+        const k = m[1].toUpperCase();
+        if (!acronyms.has(k)) acronyms.set(k, new Set());
+        acronyms.get(k).add(venue.replace(/\s+/g, " ").trim());
+      }
+    }
+    for (const [acronym, variants] of acronyms) {
+      if (variants.size < 2) continue;
+      ctx.add("BIB011", `${acronym} appears under ${variants.size} different venue names`,
+        { file: ctx.bib[0].file, line: 1, context: [...variants].slice(0, 3).map(v => v.slice(0, 40)).join(" | ") });
+    }}});
+
+rule({ id:"BIB012", title:"Bibliography entry with a suspicious year", cat:"bib", sev:SEV.warn,
+  why:"A year in the future or before 1900 is a typo, and typos in years are how a citation becomes unfindable.",
+  fix:"Correct the year.",
+  run(ctx){ const now = new Date().getFullYear();
+    for (const e of ctx.bib) {
+      const y = e.year;
+      if (y === null) continue;
+      if (y < 1900 || y > now + 1)
+        ctx.add("BIB012", `\`${e.key}\` has year = ${y}`, { file: e.file, line: e.lineOf("year"), context: e.title.slice(0, 70) });
+    }}});
+
+/* ---- BIO: verification against Crossref / OpenAlex / DBLP ---- */
+const HARD_MISMATCH = 0.55, SOFT_MISMATCH = 0.80;
+const workTitle = w => !w ? "" : (Array.isArray(w.title) ? (w.title[0] || "") : (w.title || ""));
+function workYear(w) {
+  for (const k of ["issued","published-print","published-online","created"]) {
+    const parts = ((w && w[k] && w[k]["date-parts"]) || [[null]])[0];
+    if (parts && parts[0]) return parseInt(parts[0], 10);
+  }
+  return null;
+}
+const workSurnames = w => ((w && w.author) || []).map(a => a.family).filter(Boolean);
+
+rule({ id:"BIO001", title:"DOI does not resolve", cat:"bib-online", sev:SEV.error, online:true,
+  why:"A DOI that Crossref does not know is either mistyped or points at a work that does not exist. Both must be fixed before submission.",
+  fix:"Open https://doi.org/<the DOI> yourself. If it 404s, find the real DOI on the publisher's page.",
+  async run(ctx){ for (const e of ctx.bib) {
+    if (!e.doi) continue;
+    const work = await ctx.crossrefByDoi(e.doi);
+    if (work) continue;
+    if (await ctx.openAlexByDoi(e.doi)) continue;
+    ctx.add("BIO001", `\`${e.key}\`: DOI ${e.doi} does not resolve`,
+      { file: e.file, line: e.lineOf("doi"), context: e.title.slice(0, 70),
+        fix: `Check https://doi.org/${e.doi} — if it fails, replace the DOI.` });
+  }}});
+
+rule({ id:"BIO002", title:"Cited title does not match the DOI", cat:"bib-online", sev:SEV.error, online:true,
+  why:"If the DOI resolves to a different paper, the citation sends the reader to the wrong work — and every claim attributed to it is unsupported.",
+  fix:"Replace either the DOI or the title so the entry describes one real work.",
+  async run(ctx){ for (const e of ctx.bib) {
+    if (!e.doi || !e.title) continue;
+    const work = await ctx.crossrefByDoi(e.doi);
+    if (!work) continue;
+    const actual = workTitle(work);
+    const score = similarity(e.title, actual);
+    if (score >= SOFT_MISMATCH) continue;
+    ctx.add("BIO002", `\`${e.key}\`: the DOI resolves to "${cleanLatex(actual).slice(0, 80)}" (similarity ${score.toFixed(2)})`,
+      { file: e.file, line: e.lineOf("title"), context: e.title.slice(0, 70),
+        severity: score < HARD_MISMATCH ? undefined : SEV.warn });
+  }}});
+
+rule({ id:"BIO003", title:"Year disagrees with the record", cat:"bib-online", sev:SEV.warn, online:true,
+  why:"A wrong year misleads the reader about how current the work is, and breaks author-year citations.",
+  fix:"Use the year of the version you actually cite.",
+  async run(ctx){ for (const e of ctx.bib) {
+    if (!e.doi) continue;
+    const work = await ctx.crossrefByDoi(e.doi);
+    if (!work) continue;
+    const cited = e.year, actual = workYear(work);
+    if (!cited || !actual || Math.abs(cited - actual) <= 1) continue;
+    ctx.add("BIO003", `\`${e.key}\`: cited as ${cited}, the DOI record says ${actual}`,
+      { file: e.file, line: e.lineOf("year"), context: e.title.slice(0, 70), fix: `Change year to ${actual}.` });
+  }}});
+
+rule({ id:"BIO004", title:"Authors disagree with the record", cat:"bib-online", sev:SEV.warn, online:true,
+  why:"Wrong authorship is a citation error that propagates: the next person to cite you copies it.",
+  fix:"Take the author list from the publisher's page.",
+  async run(ctx){ for (const e of ctx.bib) {
+    if (!e.doi) continue;
+    const work = await ctx.crossrefByDoi(e.doi);
+    if (!work) continue;
+    const cited = new Set(e.authorSurnames().map(s => s.toLowerCase()));
+    const actual = new Set(workSurnames(work).map(s => s.toLowerCase()));
+    if (!cited.size || !actual.size) continue;
+    let inter = 0; for (const c of cited) if (actual.has(c)) inter++;
+    if (inter / Math.max(1, Math.min(cited.size, actual.size)) >= 0.5) continue;
+    ctx.add("BIO004", `\`${e.key}\`: cited authors do not overlap the record's (${[...actual].slice(0, 3).join(", ")})`,
+      { file: e.file, line: e.lineOf("author"), context: e.title.slice(0, 70) });
+  }}});
+
+rule({ id:"BIO005", title:"No record of this work anywhere", cat:"bib-online", sev:SEV.warn, online:true,
+  why:"An entry with no DOI that Crossref, OpenAlex and DBLP have all never heard of may not exist. This is how a fabricated reference looks.",
+  fix:"Verify the reference by hand. If it is real but simply unindexed, add the URL.",
+  async run(ctx){ const skip = new Set(["online","www","misc","unpublished","techreport","mastersthesis","phdthesis","manual","booklet"]);
+    for (const e of ctx.bib) {
+      if (e.doi || skip.has(e.type)) continue;
+      const title = e.title;
+      if (title.length < 15) continue;
+      const author = (e.authorSurnames()[0] || "");
+      let best = 0, bestTitle = "";
+      for (const item of await ctx.crossrefSearch(title, author)) {
+        const s = similarity(title, workTitle(item));
+        if (s > best) { best = s; bestTitle = workTitle(item); }
+      }
+      if (best < SOFT_MISMATCH) for (const item of await ctx.dblpSearch(title)) {
+        const s = similarity(title, item.title || "");
+        if (s > best) { best = s; bestTitle = item.title || ""; }
+      }
+      if (best >= SOFT_MISMATCH) continue;
+      ctx.add("BIO005", `\`${e.key}\` could not be found in Crossref or DBLP.` +
+        (bestTitle ? ` Closest match: "${bestTitle.slice(0, 70)}" (${best.toFixed(2)}).` : ""),
+        { file: e.file, line: e.line, context: title.slice(0, 70) });
+    }}});
+
+rule({ id:"BIO006", title:"Cited work has been retracted", cat:"bib-online", sev:SEV.error, online:true,
+  why:"Citing retracted work without flagging it undermines the argument built on it, and reviewers increasingly check.",
+  fix:"Remove the citation, or cite it explicitly as retracted.",
+  async run(ctx){ for (const e of ctx.bib) {
+    if (!e.doi) continue;
+    const work = await ctx.crossrefByDoi(e.doi) || {};
+    let flagged = false, reason = "";
+    if (String(work.type || "").toLowerCase() === "retraction") { flagged = true; reason = "Crossref type is 'retraction'"; }
+    for (const u of work["update-to"] || [])
+      if (["retraction","withdrawal"].includes(String(u.type || "").toLowerCase())) { flagged = true; reason = "Crossref records a retraction notice"; }
+    if (!flagged) {
+      const rec = await ctx.openAlexByDoi(e.doi);
+      if (rec && rec.is_retracted) { flagged = true; reason = "OpenAlex marks this work as retracted"; }
+    }
+    if (!flagged) continue;
+    ctx.add("BIO006", `\`${e.key}\` appears to be retracted (${reason})`,
+      { file: e.file, line: e.line, context: e.title.slice(0, 70) });
+  }}});
+
+rule({ id:"BIO007", title:"Preprint now has a published version", cat:"bib-online", sev:SEV.info, online:true,
+  why:"Citing the preprint of a paper that has since appeared is a small signal that the related work was assembled once and never revisited.",
+  fix:"Swap in the published version's entry.",
+  async run(ctx){ for (const e of ctx.bib) {
+    if (!e.isPreprint() || !e.title) continue;
+    for (const item of await ctx.crossrefSearch(e.title, e.authorSurnames()[0] || "")) {
+      if (["posted-content","preprint"].includes(String(item.type || "").toLowerCase())) continue;
+      if (similarity(e.title, workTitle(item)) < 0.9) continue;
+      const container = (item["container-title"] || [""])[0] || "";
+      ctx.add("BIO007", `\`${e.key}\` is cited as a preprint but appears published${container ? " in " + container.slice(0, 50) : ""}`,
+        { file: e.file, line: e.line, context: e.title.slice(0, 70), fix: `Cite the published version (DOI ${item.DOI}).` });
+      break;
+    }}}});
+
+/* ---- STR: document skeleton ---- */
+const LEVELS = ["part","chapter","section","subsection","subsubsection","paragraph"];
+const SMALL_WORDS = new Set(["a","an","and","as","at","but","by","for","from","in","into","nor","of","on","onto","or","over","the","to","up","with","via"]);
+function headings(ctx) {
+  if (ctx.cache.headings) return ctx.cache.headings;
+  const out = [];
+  LEVELS.forEach((name, level) => {
+    for (const c of ctx.project.commands(name, 1)) {
+      const title = c.arg(0).trim();
+      if (title) out.push({ start: c.start, level, name, title, cmd: c });
+    }
+  });
+  out.sort((a, b) => a.start - b.start);
+  ctx.cache.headings = out;
+  return out;
+}
+
+rule({ id:"STR001", title:"Referenced file does not exist", cat:"structure", sev:SEV.error,
+  why:"A missing \\input is a chapter that silently is not in the PDF — the failure mode nobody notices until the printed copy.",
+  fix:"Fix the path, or include the file.",
+  run(ctx){ for (const mi of ctx.project.missingInputs)
+    ctx.add("STR001", `\\input{${mi.target}} could not be resolved`,
+      { file: mi.file, line: mi.line, fix: "Check the filename and that the file was included (Overleaf is case-sensitive)." });
+  }});
+
+rule({ id:"STR002", title:"Heading nesting skips a level", cat:"structure", sev:SEV.warn,
+  why:"Jumping from a section straight to a subsubsection breaks the table of contents and the document's logic.",
+  fix:"Insert the missing level, or promote the heading.",
+  run(ctx){ let previous = null;
+    for (const h of headings(ctx)) {
+      if (previous !== null && h.level > previous + 1)
+        ctx.add("STR002", `\\${h.name} "${h.title.slice(0, 40)}" follows a \\${LEVELS[previous]} — a level is skipped`,
+          { at: h.start, fix: `Add a \\${LEVELS[previous + 1]}, or promote this heading.` });
+      previous = h.level;
+    }}});
+
+rule({ id:"STR003", title:"Section with exactly one subsection", cat:"structure", sev:SEV.info,
+  why:"A lone subsection has nothing to be distinguished from; it is a heading pretending to be structure.",
+  fix:"Merge it into its parent, or add its sibling.",
+  run(ctx){ const items = headings(ctx);
+    for (let i = 0; i < items.length; i++) {
+      const h = items[i], children = [];
+      for (const c of items.slice(i + 1)) {
+        if (c.level <= h.level) break;
+        if (c.level === h.level + 1) children.push(c);
+      }
+      if (children.length !== 1) continue;
+      ctx.add("STR003", `"${h.title.slice(0, 35)}" contains exactly one child: "${children[0].title.slice(0, 35)}"`,
+        { at: children[0].start });
+    }}});
+
+rule({ id:"STR004", title:"Empty section", cat:"structure", sev:SEV.warn,
+  why:"A heading immediately followed by another heading is a placeholder that was never filled in.",
+  fix:"Write the section, or delete the heading.",
+  run(ctx){ const items = headings(ctx), minimum = 15;
+    for (let i = 0; i < items.length; i++) {
+      const stop = i + 1 < items.length ? items[i + 1].start : ctx.project.prose.length;
+      const n = wordsIn(ctx.project.prose.slice(items[i].cmd.end, stop));
+      if (n >= minimum) continue;
+      ctx.add("STR004", `\\${items[i].name} "${items[i].title.slice(0, 40)}" has ${n} words of text`, { at: items[i].start });
+    }}});
+
+rule({ id:"STR005", title:"Inconsistent heading capitalisation", cat:"structure", sev:SEV.info,
+  why:"Title Case in one heading and sentence case in the next is the most visible inconsistency in a table of contents.",
+  fix:"Pick one convention for all headings of the same level.",
+  run(ctx){ const items = headings(ctx).filter(h => h.level >= 2);
+    if (items.length < 4) return;
+    const isTitleCase = t => {
+      const words = t.replace(/[^\w\s'-]/g, "").split(/\s+/).filter(Boolean);
+      const content = words.slice(1).filter(w => !SMALL_WORDS.has(w.toLowerCase()) && w.length > 3);
+      if (!content.length) return false;
+      return content.filter(w => /^[A-Z]/.test(w)).length >= Math.max(1, Math.floor(content.length * 0.75));
+    };
+    const flags = items.map(h => ({ h, tc: isTitleCase(h.title) }));
+    const tcCount = flags.filter(f => f.tc).length;
+    if (tcCount === 0 || tcCount === flags.length) return;
+    const majority = tcCount * 2 >= flags.length;
+    for (const f of flags) {
+      if (f.tc === majority) continue;
+      const style = majority ? "Title Case" : "sentence case";
+      ctx.add("STR005", `heading "${f.h.title.slice(0, 45)}" is not in ${style}, unlike most others`,
+        { at: f.h.start, fix: `Rewrite it in ${style}.` });
+    }}});
+
+rule({ id:"STR006", title:"Heading ends with a period", cat:"structure", sev:SEV.info,
+  why:"Headings are labels, not sentences.", fix:"Remove the trailing period.",
+  run(ctx){ for (const h of headings(ctx)) {
+    const t = h.title.trimEnd();
+    if (!t.endsWith(".") || /(etc\.|al\.|e\.g\.|i\.e\.)$/.test(t)) continue;
+    ctx.add("STR006", `\\${h.name} "${h.title.slice(0, 45)}" ends with a period`, { at: h.start });
+  }}});
+
+rule({ id:"STR007", title:"Duplicate heading title", cat:"structure", sev:SEV.info,
+  why:"Two sections with the same name make cross-references ambiguous for the reader and for you.",
+  fix:"Differentiate the titles.",
+  run(ctx){ const generic = new Set(["discussion","limitations","results","method","methods","procedure",
+      "participants","apparatus","measures","summary","conclusion","introduction"]);
+    const counts = new Map();
+    for (const h of headings(ctx)) { const k = h.title.trim().toLowerCase(); counts.set(k, (counts.get(k) || 0) + 1); }
+    const done = new Set();
+    for (const h of headings(ctx)) {
+      const k = h.title.trim().toLowerCase();
+      if ((counts.get(k) || 0) < 2 || generic.has(k) || done.has(k)) continue;
+      done.add(k);
+      ctx.add("STR007", `"${h.title.slice(0, 45)}" is used as a heading ${counts.get(k)} times`, { at: h.start });
+    }}});
+
+rule({ id:"STR008", title:"No abstract", cat:"structure", sev:SEV.warn,
+  why:"Every paper and thesis needs one; its absence usually means the file was never finished.",
+  fix:"Add \\begin{abstract} ... \\end{abstract}.",
+  run(ctx){ if (ctx.project.environments("abstract").length || ctx.project.commands("abstract", 1).length) return;
+    if (!ctx.project.commands("title", 1).length) return;
+    ctx.add("STR008", "no abstract environment found", { file: ctx.project.main });
+  }});
+
+rule({ id:"STR009", title:"Vague internal reference", cat:"structure", sev:SEV.info,
+  why:"'as described above' and 'in the previous chapter' break when sections move; a real cross-reference does not.",
+  fix:"Replace with \\Cref{sec:...}.",
+  run(ctx){ const re = /\b(?:as (?:described|discussed|shown|explained) (?:above|below|earlier|previously)|in the (?:previous|next|following|preceding) (?:section|chapter|subsection))\b/gi;
+    let m; while ((m = re.exec(ctx.project.prose)) !== null)
+      ctx.add("STR009", `vague internal reference: '${m[0]}'`, { at: m.index, context: ctx.project.excerpt(m.index) });
+  }});
+
+/* ---- MET: counts ---- */
+rule({ id:"MET001", title:"Word count over the limit", cat:"metrics", sev:SEV.warn,
+  why:"Length limits are enforced by the submission system, not by the reviewers; discovering the overrun at the deadline costs a night.",
+  fix:"Cut, or check whether your venue counts references (most do not).",
+  run(ctx){ const max = ctx.config.option("MET001", "max_words", ctx.config.venueField("length", "max_words"));
+    const min = ctx.config.option("MET001", "min_words", ctx.config.venueField("length", "min_words"));
+    if (!max && !min) return;
+    const n = wordCount(ctx);
+    if (max && n > max)
+      ctx.add("MET001", `${n.toLocaleString()} words of main text, limit ${(+max).toLocaleString()} (${(n - max).toLocaleString()} over; references and floats excluded)`,
+        { file: ctx.project.main, fix: `Remove about ${(n - max).toLocaleString()} words.` });
+    else if (min && n < min)
+      ctx.add("MET001", `${n.toLocaleString()} words of main text, minimum ${(+min).toLocaleString()}`, { file: ctx.project.main });
+  }});
+
+rule({ id:"MET002", title:"Page count outside the venue's range", cat:"metrics", sev:SEV.error, needsBuild:true,
+  why:"Page limits are the single commonest desk-reject reason, and the only reliable count comes from the compiled PDF.",
+  fix:"Cut content, or move material to an appendix if the venue allows one.",
+  run(ctx){ const max = ctx.config.option("MET002", "max_pages", ctx.config.venueField("length", "max_pages"));
+    const min = ctx.config.option("MET002", "min_pages", ctx.config.venueField("length", "min_pages"));
+    if (!max && !min) return;
+    const pages = pageCount(ctx);
+    if (pages === null) return;
+    const excludes = ctx.config.venueField("length", "excludes");
+    const note = excludes ? ` (${excludes})` : "";
+    if (max && pages > max) ctx.add("MET002", `the PDF has ${pages} pages, limit ${max}${note}`, { file: ctx.project.main });
+    else if (min && pages < min) ctx.add("MET002", `the PDF has ${pages} pages, minimum ${min}${note}`, { file: ctx.project.main });
+  }});
+
+rule({ id:"MET003", title:"Abstract length", cat:"metrics", sev:SEV.info,
+  why:"An abstract far outside 100-300 words either omits the contribution or repeats the introduction.",
+  fix:"Aim for one sentence each: problem, approach, study, finding, implication.",
+  run(ctx){ const envs = ctx.project.environments("abstract");
+    if (!envs.length) return;
+    const n = wordsIn(ctx.project.prose.slice(envs[0].bodyStart, envs[0].bodyEnd));
+    if (n >= 100 && n <= 300) return;
+    ctx.add("MET003", `the abstract is ${n} words (expected 100-300)`, { at: envs[0].start });
+  }});
+
+rule({ id:"MET004", title:"Very few references", cat:"metrics", sev:SEV.info,
+  why:"A thin reference list is the first thing a reviewer counts; CHI-style venues expect the related work to be genuinely covered.",
+  fix:"Broaden the related work, or explain in the paper why the field is small.",
+  run(ctx){ const min = ctx.config.option("MET004", "min_references", 0);
+    if (!min) return;
+    const cited = new Set();
+    for (const c of ctx.project.anyCommands(["cite","citep","citet","autocite","parencite"], 1))
+      for (const k of c.arg(0).split(",")) { const t = k.trim(); if (t) cited.add(t); }
+    if (cited.size >= min) return;
+    ctx.add("MET004", `only ${cited.size} distinct works are cited (expected at least ${min})`, { file: ctx.project.main });
+  }});
+
+rule({ id:"MET005", title:"Section far shorter than the rest", cat:"metrics", sev:SEV.info,
+  why:"A 40-word section and a 4000-word one in the same document usually means the structure drifted from the plan.",
+  fix:"Merge the stub into its neighbour, or split the giant.",
+  run(ctx){ const sections = ctx.project.commands("section", 1);
+    if (sections.length < 4) return;
+    const [, end] = mainTextSpan(ctx);
+    const bounds = [];
+    sections.forEach((sec, i) => {
+      if (sec.start >= end) return;
+      const stop = i + 1 < sections.length ? sections[i + 1].start : end;
+      bounds.push({ sec, n: wordsIn(ctx.project.prose.slice(sec.start, stop)) });
+    });
+    if (bounds.length < 4) return;
+    const sorted = bounds.map(b => b.n).sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    if (!median) return;
+    for (const b of bounds) {
+      if (b.n >= Math.max(60, median * 0.15)) continue;
+      ctx.add("MET005", `section "${b.sec.arg(0).slice(0, 40)}" has ${b.n} words; the median section has ${median}`, { at: b.sec.start });
+    }}});
+/* ---- ACC: accessibility ---- */
+const PLACEHOLDER_DESC = /^\s*(?:an?\s+)?(image|figure|picture|screenshot|photo|diagram|graph|chart|plot|table|illustration|overview|example|results?|todo|tbd|description|alt text)\s*\.?\s*$/i;
+const COLOUR_ONLY = /\b(?:the\s+)?(red|green|blue|orange|yellow|purple|pink|grey|gray|black|white|cyan|magenta)\s+(line|bar|curve|area|region|dot|point|marker|box|circle|square|triangle|shading|band)s?\b/gi;
+
+function descriptionsRequired(ctx) {
+  const v = ctx.config.venueField("accessibility", "descriptions_required");
+  if (v !== undefined) return !!v;
+  return ctx.project.documentclass().cls.toLowerCase() === "acmart";
+}
+
+rule({ id:"ACC001", title:"Figure without a \\Description", cat:"accessibility", sev:SEV.error,
+  why:"ACM requires alt text for every figure and validates it in TAPS; at ASSETS an inaccessible submission is desk-rejected.",
+  fix:"Add \\Description{...} inside the figure: say what the figure shows and what the reader should conclude from it.",
+  run(ctx){ if (!descriptionsRequired(ctx)) return;
+    for (const env of ctx.project.floats()) {
+      if (!env.name.startsWith("figure")) continue;
+      if (parseCommands(env.body(), "Description", 1).length) continue;
+      const caps = parseCommands(env.body(), "caption", 1);
+      ctx.add("ACC001", "figure has no \\Description (alt text)",
+        { at: env.start, context: caps.length ? caps[0].arg(0).slice(0, 60) : "" });
+    }}});
+
+rule({ id:"ACC002", title:"\\Description is a placeholder", cat:"accessibility", sev:SEV.error,
+  why:"'A figure.' satisfies the syntax and helps nobody; it is worse than nothing because it silences the check.",
+  fix:"Describe the content: axes, trend, and the point the figure makes.",
+  run(ctx){ const min = ctx.config.option("ACC002", "min_words", 8);
+    for (const env of ctx.project.floats()) for (const c of parseCommands(env.body(), "Description", 1)) {
+      const body = c.arg(0).trim(), words = body.split(/\s+/).filter(Boolean);
+      const placeholder = PLACEHOLDER_DESC.test(body);
+      if (!placeholder && words.length >= min) continue;
+      ctx.add("ACC002", `\\Description ${placeholder ? "is a placeholder" : `is only ${words.length} words`}`,
+        { at: env.bodyStart + c.start, context: body.slice(0, 70),
+          fix: `Write at least ${min} words describing what the figure shows.` });
+    }}});
+
+rule({ id:"ACC003", title:"\\Description repeats the caption", cat:"accessibility", sev:SEV.warn,
+  why:"A screen-reader user hears the caption already; repeating it verbatim adds nothing they did not have.",
+  fix:"Describe what is visually in the figure, which the caption does not say.",
+  run(ctx){ for (const env of ctx.project.floats()) {
+    const body = env.body();
+    const caps = parseCommands(body, "caption", 1), descs = parseCommands(body, "Description", 1);
+    if (!caps.length || !descs.length) continue;
+    const score = similarity(caps[0].arg(0), descs[0].arg(0));
+    if (score < 0.9) continue;
+    ctx.add("ACC003", `\\Description is essentially the caption again (${score.toFixed(2)} similar)`,
+      { at: env.bodyStart + descs[0].start, context: descs[0].arg(0).slice(0, 70) });
+  }}});
+
+rule({ id:"ACC004", title:"Meaning carried by colour alone", cat:"accessibility", sev:SEV.warn,
+  why:"'the red line' is unreadable to a colour-blind reader and to anyone printing in greyscale — about 8% of male readers.",
+  fix:"Add a second cue: 'the red dashed line (baseline)'.",
+  run(ctx){ const prose = ctx.project.prose;
+    COLOUR_ONLY.lastIndex = 0;
+    let m; while ((m = COLOUR_ONLY.exec(prose)) !== null) {
+      const window = prose.slice(Math.max(0, m.index - 60), m.index + m[0].length + 60).toLowerCase();
+      if (/\b(dashed|dotted|solid|hatch|striped|triangle|circle|square|marker|pattern|thick|thin|labell?ed)\b/.test(window)) continue;
+      ctx.add("ACC004", `'${m[0]}' identifies data by colour alone`, { at: m.index, context: ctx.project.excerpt(m.index) });
+    }}});
+
+rule({ id:"ACC005", title:"Complex table without a description", cat:"accessibility", sev:SEV.info,
+  why:"ACM suggests describing the structure of complex tables so a screen reader can convey the layout.",
+  fix:"Add \\Description{...} summarising what the table contains.",
+  run(ctx){ if (!descriptionsRequired(ctx)) return;
+    for (const env of ctx.project.floats()) {
+      if (!env.name.startsWith("table")) continue;
+      const body = env.body();
+      if (parseCommands(body, "Description", 1).length) continue;
+      const rows = (body.match(/\\\\/g) || []).length;
+      if (rows < 6) continue;
+      ctx.add("ACC005", `table with about ${rows} rows has no \\Description`, { at: env.start });
+    }}});
+
+rule({ id:"ACC006", title:"PDF is not tagged", cat:"accessibility", sev:SEV.warn, needsBuild:true,
+  why:"An untagged PDF has no reading order, so assistive technology cannot navigate it. ASSETS requires an accessible PDF at submission.",
+  fix:"Compile with a recent acmart, or run the publisher's accessibility pipeline.",
+  run(ctx){ if (!ctx.pdfBytes) return;
+    const text = new TextDecoder("latin1").decode(ctx.pdfBytes.slice(0, 4e6));
+    if (/\/Marked\s*true/.test(text)) return;
+    ctx.add("ACC006", "the compiled PDF does not declare itself as tagged (/MarkInfo /Marked true)",
+      { file: ctx.pdfName || "the PDF" });
+  }});
+
+rule({ id:"ACC007", title:"Figure text likely too small", cat:"accessibility", sev:SEV.info,
+  why:"A figure scaled below about half its natural width usually carries axis labels too small to read in print.",
+  fix:"Redraw the figure at the size it will be printed rather than scaling it down.",
+  run(ctx){ for (const c of ctx.project.commands("includegraphics", 1)) {
+    const opts = c.opts.join(" ");
+    let scale = null;
+    const m1 = /(?:width\s*=\s*)?([0-9]*\.?[0-9]+)\s*\\(?:line|column|text)width/.exec(opts);
+    if (m1) scale = parseFloat(m1[1]);
+    else { const m2 = /scale\s*=\s*([0-9]*\.?[0-9]+)/.exec(opts); if (m2) scale = parseFloat(m2[1]); }
+    if (scale === null || scale >= 0.4) continue;
+    ctx.add("ACC007", `graphic scaled to ${scale} of the text width`, { at: c.start, context: ctx.project.excerpt(c.start) });
+  }}});
+
+/* ---- ANON: the double-anonymous sweep ---- */
+const SELF_REF = /\b(?:(?:in|from|of|see|cf\.?)\s+)?(?:our|the\s+authors'?)\s+(?:previous|prior|earlier|own|recent|last|preliminary)\s+(?:work|study|studies|paper|papers|research|publication|experiment|dataset)\b/gi;
+const IDENTIFYING_HOSTS = /https?:\/\/(?:www\.)?(github\.com\/[\w.-]+|gitlab\.com\/[\w.-]+|bitbucket\.org\/[\w.-]+|osf\.io\/\w+|figshare\.com\/\S+|zenodo\.org\/\S+|[\w-]+\.github\.io|researchgate\.net\/\S+|linkedin\.com\/\S+|[\w-]*\.uni-[\w-]+\.de\S*|[\w-]*\.ac\.[a-z]{2}\S*|[\w-]*\.edu\S*)/gi;
+const FUNDING = /\b(funded by|grant (?:no\.?|number)|supported by the|Deutsche Forschungsgemeinschaft|DFG|BMBF|European Union'?s? Horizon|ERC|NSF (?:grant|award))\b/gi;
+
+rule({ id:"ANON001", title:"Author identity present in an anonymous submission", cat:"anonymity", sev:SEV.error,
+  why:"Author names in a double-anonymous submission are the single most common desk reject.",
+  fix:"Add the `anonymous` class option — acmart then replaces the author block automatically.",
+  run(ctx){ if (!isAnonymousStage(ctx)) return;
+    if (ctx.project.documentclass().options.map(o => o.toLowerCase()).includes("anonymous")) return;
+    for (const name of ["author","affiliation","email","orcid","institution"]) {
+      const cmds = ctx.project.commands(name, 1);
+      if (!cmds.length) continue;
+      ctx.add("ANON001", `\\${name} is present but the document is not compiled with the \`anonymous\` option`,
+        { at: cmds[0].start, context: ctx.project.excerpt(cmds[0].start) });
+      return;
+    }}});
+
+rule({ id:"ANON002", title:"Acknowledgements left in an anonymous submission", cat:"anonymity", sev:SEV.error,
+  why:"Acknowledgements name colleagues, funders and institutions — they identify the authors as reliably as the author block.",
+  fix:"Remove for review, or guard the section so it only appears in the camera-ready version.",
+  run(ctx){ if (!isAnonymousStage(ctx)) return;
+    const hits = [...ctx.project.environments("acks")];
+    for (const c of ctx.project.anyCommands(["acksname","acknowledgments","acknowledgements"], 1)) hits.push(c);
+    for (const c of ctx.project.anyCommands(["section","chapter"], 1))
+      if (/acknowledge?ment|danksagung/i.test(c.arg(0))) hits.push(c);
+    if (!hits.length) return;
+    ctx.add("ANON002", "an acknowledgements section is present", { at: hits[0].start });
+  }});
+
+rule({ id:"ANON003", title:"Identifying link", cat:"anonymity", sev:SEV.error,
+  why:"A repository or project URL under your own account de-anonymises the submission in one click.",
+  fix:"Use an anonymised mirror (anonymous.4open.science, an anonymous OSF view-only link) for review.",
+  run(ctx){ if (!isAnonymousStage(ctx)) return;
+    IDENTIFYING_HOSTS.lastIndex = 0;
+    let m; while ((m = IDENTIFYING_HOSTS.exec(ctx.project.text)) !== null) {
+      if (m[0].toLowerCase().includes("anonymous")) continue;
+      ctx.add("ANON003", `identifying link: ${m[0].slice(0, 70)}`, { at: m.index, context: ctx.project.excerpt(m.index) });
+    }}});
+
+rule({ id:"ANON004", title:"Funding statement in an anonymous submission", cat:"anonymity", sev:SEV.warn,
+  why:"A named grant identifies the group as precisely as a name does.",
+  fix:"Move the funding statement to the camera-ready version.",
+  run(ctx){ if (!isAnonymousStage(ctx)) return;
+    FUNDING.lastIndex = 0;
+    const seen = new Set();
+    let m; while ((m = FUNDING.exec(ctx.project.prose)) !== null) {
+      const loc = ctx.project.locate(m.index), key = loc.file + ":" + loc.line;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      ctx.add("ANON004", `funding mentioned: '${m[0]}'`, { at: m.index, context: ctx.project.excerpt(m.index) });
+      if (seen.size >= 3) return;
+    }}});
+
+rule({ id:"ANON005", title:"Self-citation phrased in the first person", cat:"anonymity", sev:SEV.warn,
+  why:"'In our previous work [12]' tells the reviewer exactly who wrote this. Venues ask you to cite your own work in the third person instead.",
+  fix:"Rewrite as 'Prior work [12] showed ...'. Note that ASSETS explicitly asks you NOT to anonymise the citation itself.",
+  run(ctx){ if (!isAnonymousStage(ctx)) return;
+    SELF_REF.lastIndex = 0;
+    let m; while ((m = SELF_REF.exec(ctx.project.prose)) !== null)
+      ctx.add("ANON005", `self-identifying phrase: '${m[0]}'`, { at: m.index, context: ctx.project.excerpt(m.index) });
+  }});
+
+rule({ id:"ANON006", title:"PDF metadata names the author", cat:"anonymity", sev:SEV.error, needsBuild:true,
+  why:"Reviewers see the document properties. An anonymised body with your name in the PDF metadata is the classic near-miss.",
+  fix:"Clear the metadata with \\hypersetup{pdfauthor={}}, or let the anonymous class option do it.",
+  run(ctx){ if (!isAnonymousStage(ctx) || !ctx.pdfBytes) return;
+    const text = new TextDecoder("latin1").decode(ctx.pdfBytes.slice(0, 2e6));
+    for (const m of text.matchAll(/\/Author\s*\(([^)]{1,200})\)/g)) {
+      const value = m[1].trim();
+      if (!value || ["anonymous","anonymous author(s)"].includes(value.toLowerCase())) continue;
+      ctx.add("ANON006", `the PDF metadata author is "${value.slice(0, 60)}"`, { file: ctx.pdfName || "the PDF" });
+      return;
+    }}});
+
+rule({ id:"ANON007", title:"Anonymous option left in a camera-ready document", cat:"anonymity", sev:SEV.error,
+  why:"The mirror image of ANON001, and just as costly: the published version credits 'Anonymous Author(s)'.",
+  fix:"Remove `anonymous` and `review` from \\documentclass for the final version.",
+  run(ctx){ if (ctx.config.stage !== "final" || ctx.config.anonymous) return;
+    const cmds = ctx.project.commands("documentclass", 1);
+    if (!cmds.length) return;
+    const options = cmds[0].opt(0).split(",").map(o => o.trim().toLowerCase());
+    const leftover = ["anonymous","review"].filter(o => options.includes(o));
+    if (!leftover.length) return;
+    ctx.add("ANON007", `\\documentclass still has: ${leftover.join(", ")}`,
+      { at: cmds[0].start, context: ctx.project.excerpt(cmds[0].start) });
+  }});
+
+/* ---- POL: required statements and reporting conventions ---- */
+const ETHICS = /\b(ethic(?:s|al)\s+(?:approval|committee|board|review|clearance)|IRB|institutional review board|informed consent|Ethikkommission)\b/i;
+const AI_DISCLOSURE = /\b(generative\s+AI|large language model|LLM|ChatGPT|GPT-[0-9]|Claude|Copilot|AI[- ]assisted|AI writing|künstliche Intelligenz)\b/i;
+const DATA_AVAILABILITY = /\b(data\s+(?:and\s+materials\s+)?(?:are|is)?\s*available|availability statement|open science|supplementary material|we (?:share|provide|release) (?:our|the) (?:data|code|materials)|osf\.io|zenodo|preregist(?:ered|ration))\b/i;
+const BARE_P = /\bp\s*[<>]\s*\.?0*5\b|\bp\s*[<>]\s*0?\.0?5\b/gi;
+const P_VALUE = /\bp\s*[<=>]\s*0?\.\d+/gi;
+const TEST_STAT = /\b([FtχUWHZ]|chi\^?2)\s*(\([^)]{1,30}\))?\s*=\s*-?\d/g;
+const EFFECT_SIZE = /(\\eta|η|eta)[\^_]?2|\bCohen'?s?\s*d\b|\bd\s*=\s*-?\d|\br\s*=\s*-?[01]?\.\d|\bomega\^?2|\bpartial\s+eta|\bCramer'?s?\s*V\b|\bodds ratio\b|\bOR\s*=/i;
+const DEMOGRAPHICS = /\b(aged?\b|M\s*=\s*\d|mean age|years old|Jahre alt|gender|women|men|non-?binary)\b/gi;
+
+function venueRequires(ctx, key) {
+  return !!ctx.config.venueField("requires", key);
+}
+function venueAlreadyRequires(ctx, command) {
+  for (const spec of ctx.config.venueField("required_commands") || []) {
+    const name = typeof spec === "string" ? spec : spec.command;
+    if (String(name || "").replace(/^\\/, "").toLowerCase() === command.toLowerCase()) return true;
+  }
+  return false;
+}
+
+rule({ id:"POL001", title:"No AI-use disclosure", cat:"policy", sev:SEV.warn,
+  why:"ACM's authorship policy requires disclosing the use of generative AI in producing the work; most universities now require the same in a thesis.",
+  fix:"Add a short statement saying which tools were used and for what — or that none were.",
+  run(ctx){ if (!venueRequires(ctx, "ai_disclosure")) return;
+    if (AI_DISCLOSURE.test(ctx.project.prose)) return;
+    ctx.add("POL001", "no statement about the use (or non-use) of generative AI", { file: ctx.project.main });
+  }});
+
+rule({ id:"POL002", title:"Study reported without an ethics statement", cat:"policy", sev:SEV.warn,
+  why:"A study with human participants and no word about ethics approval or consent is a reviewer's first question and an examiner's second.",
+  fix:"Add one sentence: approving body, approval number, and that participants gave informed consent.",
+  run(ctx){ if (!hasStudy(ctx) || ETHICS.test(ctx.project.prose)) return;
+    ctx.add("POL002", "the document reports a study but never mentions ethics approval or informed consent", { file: ctx.project.main });
+  }});
+
+rule({ id:"POL003", title:"No data availability / open science statement", cat:"policy", sev:SEV.info,
+  why:"Open science statements are expected across HCI now, and several venues have a dedicated field for one.",
+  fix:"Say where the data, materials and analysis code are — or why they cannot be shared.",
+  run(ctx){ if (!venueRequires(ctx, "data_availability") && !hasStudy(ctx)) return;
+    if (DATA_AVAILABILITY.test(ctx.project.prose)) return;
+    ctx.add("POL003", "no data availability or open science statement found", { file: ctx.project.main });
+  }});
+
+rule({ id:"POL004", title:"Participants described without demographics", cat:"policy", sev:SEV.info,
+  why:"Reviewers expect N, age (M/SD) and relevant characteristics; missing them is a predictable revision request.",
+  fix:"Report N, age M/SD, gender distribution and compensation.",
+  run(ctx){ if (!hasStudy(ctx)) return;
+    if ((ctx.project.prose.match(DEMOGRAPHICS) || []).length >= 2) return;
+    STUDY_SIGNALS.lastIndex = 0;
+    const m = STUDY_SIGNALS.exec(ctx.project.prose);
+    ctx.add("POL004", "participants are mentioned but no demographics are reported",
+      m ? { at: m.index } : { file: ctx.project.main });
+  }});
+
+rule({ id:"POL005", title:"Significance reported without an exact p value", cat:"policy", sev:SEV.info,
+  why:"APA style asks for exact p values; a bare 'p < .05' hides how strong the evidence actually is.",
+  fix:"Report the exact value, e.g. p = .032 (use p < .001 only below that threshold).",
+  run(ctx){ BARE_P.lastIndex = 0;
+    let m; while ((m = BARE_P.exec(ctx.project.prose)) !== null)
+      ctx.add("POL005", `'${m[0]}' instead of an exact p value`, { at: m.index, context: ctx.project.excerpt(m.index) });
+  }});
+
+rule({ id:"POL006", title:"Test statistic without degrees of freedom", cat:"policy", sev:SEV.info,
+  why:"F, t and chi-square are uninterpretable without their degrees of freedom.",
+  fix:"Write F(2, 46) = 4.71 rather than F = 4.71.",
+  run(ctx){ TEST_STAT.lastIndex = 0;
+    let m; while ((m = TEST_STAT.exec(ctx.project.prose)) !== null) {
+      if (m[2]) continue;
+      if (!["f","t"].includes(m[1].toLowerCase())) continue;
+      ctx.add("POL006", `'${m[0].trim()}' has no degrees of freedom`, { at: m.index, context: ctx.project.excerpt(m.index) });
+    }}});
+
+rule({ id:"POL007", title:"Significant result without an effect size", cat:"policy", sev:SEV.info,
+  why:"A p value says whether an effect exists; only an effect size says whether it matters. Most HCI venues expect both.",
+  fix:"Report an effect size next to the test (eta squared, Cohen's d, r).",
+  run(ctx){ const prose = ctx.project.prose;
+    P_VALUE.lastIndex = 0;
+    let m; while ((m = P_VALUE.exec(prose)) !== null) {
+      const window = prose.slice(Math.max(0, m.index - 320), m.index + m[0].length + 320);
+      if (EFFECT_SIZE.test(window)) continue;
+      ctx.add("POL007", `'${m[0]}' is reported with no effect size nearby`, { at: m.index, context: ctx.project.excerpt(m.index) });
+    }}});
+
+rule({ id:"POL008", title:"ACM CCS concepts missing", cat:"policy", sev:SEV.error,
+  why:"ACM requires CCS concepts; TAPS rejects submissions without them.",
+  fix:"Generate the block at dl.acm.org/ccs and paste the \\ccsdesc lines below the abstract.",
+  run(ctx){ if (ctx.project.documentclass().cls.toLowerCase() !== "acmart") return;
+    if (venueAlreadyRequires(ctx, "ccsdesc")) return;
+    if (ctx.project.commands("ccsdesc", 1).length || ctx.project.environments("CCSXML").length) return;
+    ctx.add("POL008", "no \\ccsdesc / CCSXML block found", { file: ctx.project.main });
+  }});
+
+rule({ id:"POL009", title:"Keywords missing", cat:"policy", sev:SEV.warn,
+  why:"Keywords drive indexing and search; ACM templates expect them and TAPS flags their absence.",
+  fix:"Add \\keywords{...} with 3-6 terms.",
+  run(ctx){ if (ctx.project.documentclass().cls.toLowerCase() !== "acmart") return;
+    if (venueAlreadyRequires(ctx, "keywords")) return;
+    if (ctx.project.commands("keywords", 1).length) return;
+    ctx.add("POL009", "no \\keywords{...} found", { file: ctx.project.main });
+  }});
+
+/* ---- THE: thesis formalities ---- */
+const DECLARATION = /(eigenst[äa]ndigkeitserkl[äa]rung|selbst[äa]ndigkeitserkl[äa]rung|erkl[äa]rung\s+zur\s+(?:selbst[äa]ndigen|eigenst[äa]ndigen)|declaration\s+of\s+(?:originality|authorship|academic\s+integrity)|statement\s+of\s+originality|ich\s+versichere|hiermit\s+erkl[äa]re\s+ich)/i;
+const AI_CLAUSE = /(hilfsmittel|aids|generative\s+ai|k[üu]nstliche[rn]?\s+intelligenz|large\s+language\s+model|llm|chatgpt|ai[- ]?tools?)/i;
+const GERMAN_MARKERS = /\b(und|der|die|das|nicht|werden|wurde|Untersuchung|Ergebnisse|Zusammenfassung)\b/g;
+const isThesis = ctx => ctx.config.profile.startsWith("thesis") || ctx.project.isThesisLike();
+
+rule({ id:"THE001", title:"No declaration of originality", cat:"structure", sev:SEV.error,
+  why:"Nearly every German examination regulation requires a signed declaration; a thesis submitted without one can be rejected on formal grounds alone.",
+  fix:"Add the declaration your examination office prescribes, including the clause on permitted aids.",
+  run(ctx){ if (!isThesis(ctx)) return;
+    if (DECLARATION.test(ctx.project.prose) || DECLARATION.test(ctx.project.text)) return;
+    ctx.add("THE001", "no declaration of originality (Eigenständigkeitserklärung) found", { file: ctx.project.main });
+  }});
+
+rule({ id:"THE002", title:"Declaration does not mention permitted aids or AI", cat:"structure", sev:SEV.warn,
+  why:"Most universities have added a clause on generative AI to the standard declaration; using last year's template silently omits it.",
+  fix:"Use the current wording from your examination office.",
+  run(ctx){ if (!isThesis(ctx)) return;
+    const m = DECLARATION.exec(ctx.project.prose);
+    if (!m) return;
+    if (AI_CLAUSE.test(ctx.project.prose.slice(m.index, m.index + 2500))) return;
+    ctx.add("THE002", "the declaration does not mention permitted aids or generative AI", { at: m.index });
+  }});
+
+rule({ id:"THE003", title:"Abstract in only one language", cat:"structure", sev:SEV.warn,
+  why:"German CS programmes almost always require both a German Zusammenfassung and an English abstract.",
+  fix:"Add the missing one.",
+  run(ctx){ if (!isThesis(ctx)) return;
+    const text = ctx.project.text;
+    const hasGerman = /\\(chapter|section)\*?\s*\{[^}]*(Zusammenfassung|Kurzfassung|Abstrakt)/i.test(text);
+    const hasEnglish = ctx.project.environments("abstract").length > 0 ||
+                       /\\(chapter|section)\*?\s*\{[^}]*Abstract/i.test(text);
+    if (hasGerman === hasEnglish) return;
+    ctx.add("THE003", `only one abstract found; the ${hasEnglish ? "German (Zusammenfassung)" : "English (Abstract)"} one is missing`,
+      { file: ctx.project.main });
+  }});
+
+rule({ id:"THE004", title:"No list of figures or tables", cat:"structure", sev:SEV.info,
+  why:"Once a document has a dozen floats, examiners expect to be able to find them from the front matter.",
+  fix:"Add \\listoffigures and \\listoftables after the table of contents.",
+  run(ctx){ if (!isThesis(ctx)) return;
+    const floats = ctx.project.floats(), threshold = 8;
+    if (floats.length < threshold) return;
+    const text = ctx.project.text, missing = [];
+    if (!/\\listoffigures/.test(text) && floats.filter(e => e.name.startsWith("figure")).length >= threshold) missing.push("\\listoffigures");
+    if (!/\\listoftables/.test(text) && floats.filter(e => e.name.startsWith("table")).length >= threshold) missing.push("\\listoftables");
+    if (!missing.length) return;
+    ctx.add("THE004", `${floats.length} floats but no ${missing.join(" or ")}`, { file: ctx.project.main });
+  }});
+
+rule({ id:"THE005", title:"No table of contents", cat:"structure", sev:SEV.warn,
+  why:"A thesis without a table of contents is unreadable as a document and unmarkable as an artefact.",
+  fix:"Add \\tableofcontents after the title page.",
+  run(ctx){ if (!isThesis(ctx) || /\\tableofcontents/.test(ctx.project.text)) return;
+    ctx.add("THE005", "no \\tableofcontents found", { file: ctx.project.main });
+  }});
+
+rule({ id:"THE006", title:"Chapter with no content of its own", cat:"structure", sev:SEV.info,
+  why:"A chapter that opens straight onto its first section gives the reader no idea what is coming.",
+  fix:"Write two or three sentences under the chapter heading saying what the chapter does.",
+  run(ctx){ if (!isThesis(ctx)) return;
+    const chapters = ctx.project.commands("chapter", 1), sections = ctx.project.commands("section", 1);
+    for (const ch of chapters) {
+      const next = sections.find(s => s.start > ch.start);
+      if (!next) continue;
+      const n = wordsIn(ctx.project.prose.slice(ch.end, next.start));
+      if (n >= 25) continue;
+      ctx.add("THE006", `chapter "${ch.arg(0).slice(0, 40)}" goes straight into its first section`, { at: ch.start });
+    }}});
+
+rule({ id:"THE007", title:"Mixed languages in the running text", cat:"language", sev:SEV.info,
+  why:"A thesis written in English with German paragraphs left in (or the reverse) usually means text was reused without translation.",
+  fix:"Translate the stray passages.",
+  run(ctx){ if (!isThesis(ctx) || !ctx.config.language.startsWith("en")) return;
+    for (const line of ctx.project.lines) {
+      if (line.verbatim || line.code.trim().length < 60) continue;
+      if ((line.code.match(GERMAN_MARKERS) || []).length < 4) continue;
+      ctx.add("THE007", "this line looks like German in an English document",
+        { file: line.file, line: line.lineno, context: line.raw.trim().slice(0, 96) });
+    }}});
+
+/* ---- VEN: venue packs ---- */
+const asList = v => v == null ? [] : (Array.isArray(v) ? v.filter(x => x != null && x !== "") : [v]);
+const stageKey = ctx => ctx.config.stage === "final" ? "final" : "submission";
+
+rule({ id:"VEN001", title:"Wrong document class for this venue", cat:"policy", sev:SEV.error,
+  why:"Using the wrong template is an explicit desk-reject criterion at CHI and ASSETS.",
+  fix:"Switch to the class the venue's author guide specifies.",
+  run(ctx){ const expected = ctx.config.venue.document_class;
+    if (!expected) return;
+    const { cls } = ctx.project.documentclass();
+    if (cls.toLowerCase() === expected.toLowerCase()) return;
+    const cmds = ctx.project.commands("documentclass", 1);
+    ctx.add("VEN001", `${ctx.config.venue.name} expects \\documentclass{${expected}}, this document uses {${cls || "nothing"}}`,
+      cmds.length ? { at: cmds[0].start } : { file: ctx.project.main });
+  }});
+
+rule({ id:"VEN002", title:"Document class options do not match the venue", cat:"policy", sev:SEV.error,
+  why:"The submission and camera-ready formats differ by a few class options; the wrong ones produce a PDF in the wrong format entirely.",
+  fix:"Use the option set the venue specifies for this stage.",
+  run(ctx){ const stage = stageKey(ctx);
+    const spec = (ctx.config.venue.class_options || {})[stage];
+    if (!spec) return;
+    const present = ctx.project.documentclass().options.map(o => o.toLowerCase());
+    const cmds = ctx.project.commands("documentclass", 1);
+    const loc = cmds.length ? { at: cmds[0].start, context: ctx.project.excerpt(cmds[0].start) } : { file: ctx.project.main };
+    for (const option of asList(spec.required))
+      if (!present.includes(String(option).toLowerCase()))
+        ctx.add("VEN002", `missing \\documentclass option \`${option}\` (required for ${stage})`,
+          { ...loc, fix: `Add \`${option}\` to the class options.` });
+    for (const option of asList(spec.forbidden))
+      if (present.includes(String(option).toLowerCase()))
+        ctx.add("VEN002", `\\documentclass option \`${option}\` must not be used for ${stage}`,
+          { ...loc, fix: `Remove \`${option}\`.` });
+  }});
+
+rule({ id:"VEN003", title:"Wrong bibliography style", cat:"policy", sev:SEV.error,
+  why:"ACM venues require the ACM Reference Format; a different .bst produces a reference list the publisher will reject.",
+  fix:"Set the style the venue requires.",
+  run(ctx){ const expected = ctx.config.venue.bibliography_style;
+    if (!expected) return;
+    const cmds = ctx.project.commands("bibliographystyle", 1);
+    if (!cmds.length) {
+      const pkgs = ctx.project.packages();
+      if (!pkgs.has("biblatex")) return;
+      const options = (pkgs.get("biblatex") || []).join(" ").toLowerCase();
+      if (options.includes(expected.toLowerCase())) return;
+      ctx.add("VEN003", `biblatex is used but the venue expects the ${expected} style`, { file: ctx.project.main });
+      return;
+    }
+    const actual = cmds[0].arg(0).trim();
+    if (actual.toLowerCase() === expected.toLowerCase()) return;
+    ctx.add("VEN003", `\\bibliographystyle{${actual}} but ${ctx.config.venue.name} requires {${expected}}`,
+      { at: cmds[0].start, fix: `Change it to \\bibliographystyle{${expected}}.` });
+  }});
+
+rule({ id:"VEN004", title:"Required command missing", cat:"policy", sev:SEV.error,
+  why:"Venues and publishers require specific commands (CCS concepts, keywords, highlights); their absence stops the production pipeline.",
+  fix:"Add the command the venue requires.",
+  run(ctx){ for (const spec of asList(ctx.config.venue.required_commands)) {
+    const name = String((typeof spec === "string" ? spec : spec.command) || "").replace(/^\\/, "");
+    if (!name) continue;
+    if (ctx.project.commands(name, 1).length || ctx.project.environments(name).length) continue;
+    const why = typeof spec === "object" && spec.why ? `: ${spec.why}` : "";
+    ctx.add("VEN004", `\\${name} is required by ${ctx.config.venue.name}${why}`,
+      { file: ctx.project.main, fix: `Add \\${name}{...}.` });
+  }}});
+
+rule({ id:"VEN005", title:"Required statement missing", cat:"policy", sev:SEV.warn,
+  why:"Publishers increasingly require named statements — data availability, declaration of interest, CRediT roles. A missing one bounces the submission back at the worst moment.",
+  fix:"Add the statement the venue's author guide asks for.",
+  run(ctx){ for (const spec of asList(ctx.config.venue.required_statements)) {
+    if (!spec || !spec.pattern) continue;
+    let re;
+    try { re = new RegExp(spec.pattern, "i"); } catch (err) { continue; }
+    if (re.test(ctx.project.prose)) continue;
+    ctx.add("VEN005", `no ${spec.name || spec.pattern} found, which ${ctx.config.venue.name} requires`,
+      { file: ctx.project.main, severity: SEV[spec.severity] || undefined, fix: spec.fix || `Add a ${spec.name}.` });
+  }}});
+
+rule({ id:"VEN006", title:"File name unsafe for the publisher's pipeline", cat:"policy", sev:SEV.error,
+  why:"ACM's TAPS rejects source packages whose file names contain spaces or characters outside letters, digits, dash and underscore.",
+  fix:"Rename the file to use only A-Z a-z 0-9 - _ and a single dot before the extension.",
+  run(ctx){ if (!ctx.config.venue.filename_charset_strict) return;
+    const allowed = /^[A-Za-z0-9_-]+(\.[A-Za-z0-9]+)?$/;
+    let n = 0;
+    for (const path of ctx.allFiles.keys()) {
+      const base = path.split("/").pop();
+      if (!base || base.startsWith(".") || allowed.test(base)) continue;
+      ctx.add("VEN006", `\`${path}\` ${base.includes(" ") ? "contains a space" : "contains characters TAPS rejects"}`,
+        { file: path, fix: "Rename it: letters, digits, dash and underscore only." });
+      if (++n > 25) return;
+    }}});
+
+rule({ id:"VEN007", title:"Package not on the venue's accepted list", cat:"policy", sev:SEV.warn,
+  why:"ACM TAPS compiles your sources itself and only supports an approved package list; an unsupported package fails at production, after acceptance.",
+  fix:"Replace it, or check the current accepted-packages list.",
+  run(ctx){ const forbidden = new Set(asList(ctx.config.venue.forbidden_packages).map(p => String(p).toLowerCase()));
+    if (!forbidden.size) return;
+    for (const name of ctx.project.packages().keys()) {
+      if (!forbidden.has(name.toLowerCase())) continue;
+      const cmds = ctx.project.commands("usepackage", 1).filter(c => c.arg(0).includes(name));
+      ctx.add("VEN007", `package \`${name}\` is not accepted by ${ctx.config.venue.name}`,
+        cmds.length ? { at: cmds[0].start } : { file: ctx.project.main });
+    }}});
+
+rule({ id:"VEN008", title:"Venue pack has not been re-verified recently", cat:"policy", sev:SEV.info,
+  why:"Page limits and required statements change every cycle. A checker that states an outdated limit confidently is worse than one that admits it does not know.",
+  fix:"Open the current call for papers, confirm the values, and update the pack.",
+  run(ctx){ const pack = ctx.config.venue;
+    if (!pack || !pack.name) return;
+    if (!pack.verified) { ctx.add("VEN008", `venue pack \`${ctx.config.venueKey}\` has no verified date`, { file: ctx.project.main }); return; }
+    const months = (Date.now() - new Date(pack.verified).getTime()) / (1000 * 60 * 60 * 24 * 30.4);
+    if (months < 9) return;
+    ctx.add("VEN008", `venue pack \`${ctx.config.venueKey}\` was last verified ${pack.verified} (${months.toFixed(0)} months ago)`,
+      { file: ctx.project.main, fix: `Re-read ${pack.source_url || "the current call for papers"} and update the pack.` });
+  }});
+
+rule({ id:"VEN009", title:"Text the venue does not allow", cat:"policy", sev:SEV.warn,
+  why:"Some venues forbid specific content in a submission — a visible author block, a non-anonymous repository link, a placeholder title.",
+  fix:"Remove or replace the offending text.",
+  run(ctx){ for (const spec of asList(ctx.config.venue.forbidden_text)) {
+    if (!spec || !spec.pattern) continue;
+    let re;
+    try { re = new RegExp(spec.pattern, "gi"); } catch (err) { continue; }
+    let m, n = 0;
+    while ((m = re.exec(ctx.project.text)) !== null && n++ < 5)
+      ctx.add("VEN009", `${spec.name || "forbidden text"}: '${m[0].slice(0, 60)}'`,
+        { at: m.index, severity: SEV[spec.severity] || undefined, fix: spec.fix || "Remove it." });
+  }}});
+
+/* ---- LOG: what the TeX log says ---- */
+rule({ id:"LOG001", title:"The document did not compile cleanly", cat:"compile", sev:SEV.error, needsBuild:true,
+  why:"An error in the log means the PDF you are looking at is stale or incomplete.",
+  fix:"Read the first error; everything after it is usually a consequence.",
+  run(ctx){ if (!ctx.log) return;
+    const seen = new Set();
+    for (const m of ctx.log.matchAll(/^! (.+)$/gm)) {
+      const message = m[1].trim();
+      if (seen.has(message) || message.startsWith("==")) continue;
+      seen.add(message);
+      const window = ctx.log.slice(Math.max(0, m.index - 2000), m.index + 400);
+      const hits = [...window.matchAll(/^(?:\.\/)?(\S+\.tex):(\d+):/gm)];
+      const last = hits.length ? hits[hits.length - 1] : null;
+      ctx.add("LOG001", `LaTeX error: ${message}`,
+        last ? { file: last[1], line: parseInt(last[2], 10) } : { file: ctx.project.main });
+      if (seen.size >= 10) break;
+    }}});
+
+rule({ id:"LOG002", title:"Undefined references in the compiled document", cat:"compile", sev:SEV.error, needsBuild:true,
+  why:"Each of these prints as '??' in the PDF.", fix:"Define the label, or fix the key — then compile twice.",
+  run(ctx){ if (!ctx.log) return;
+    const keys = new Set([...ctx.log.matchAll(/LaTeX Warning: Reference `([^']+)' on page \S+ undefined/g)].map(m => m[1]));
+    for (const key of keys) ctx.add("LOG002", `reference \`${key}\` is undefined in the compiled PDF`, { file: ctx.project.main });
+  }});
+
+rule({ id:"LOG003", title:"Undefined citations in the compiled document", cat:"compile", sev:SEV.error, needsBuild:true,
+  why:"Each of these prints as '[?]' and is missing from the reference list.",
+  fix:"Add the entry, then run bibtex/biber and compile twice.",
+  run(ctx){ if (!ctx.log) return;
+    const keys = new Set([...ctx.log.matchAll(/Warning: Citation `([^']+)' on page \S+ undefined/g)].map(m => m[1]));
+    for (const key of keys) ctx.add("LOG003", `citation \`${key}\` is undefined in the compiled PDF`, { file: ctx.project.main });
+  }});
+
+rule({ id:"LOG004", title:"Multiply defined labels", cat:"compile", sev:SEV.error, needsBuild:true,
+  why:"References to a duplicated label silently point at whichever came last.", fix:"Rename one of them.",
+  run(ctx){ if (!ctx.log) return;
+    const keys = new Set([...ctx.log.matchAll(/LaTeX Warning: Label `([^']+)' multiply defined/g)].map(m => m[1]));
+    for (const key of keys) ctx.add("LOG004", `label \`${key}\` is defined more than once`, { file: ctx.project.main });
+  }});
+
+rule({ id:"LOG005", title:"Text overflowing the margin", cat:"compile", sev:SEV.warn, needsBuild:true,
+  why:"An overfull hbox is text sticking out past the text block. A few are unavoidable; dozens mean nobody has looked at the printed page.",
+  fix:"Rewrite the line, add a hyphenation hint, or resize the offending table or URL.",
+  run(ctx){ if (!ctx.log) return;
+    const bad = [];
+    for (const m of ctx.log.matchAll(/^(Overfull|Underfull)\s+\\([hv])box\s+\((\d+(?:\.\d+)?)pt too (\w+)\)(?:.*?at lines? (\d+))?/gm)) {
+      if (m[1] !== "Overfull" || m[2] !== "h") continue;
+      const size = parseFloat(m[3]);
+      if (size < 5) continue;
+      bad.push({ size, line: m[5] ? parseInt(m[5], 10) : null });
+    }
+    if (!bad.length) return;
+    bad.sort((a, b) => b.size - a.size);
+    for (const b of bad.slice(0, 15))
+      ctx.add("LOG005", `text overflows the margin by ${b.size.toFixed(1)}pt`, { file: ctx.project.main, line: b.line });
+    if (bad.length > 15)
+      ctx.add("LOG005", `${bad.length - 15} further overfull boxes not listed`, { file: ctx.project.main, severity: SEV.info });
+  }});
+
+rule({ id:"LOG006", title:"Characters missing from the font", cat:"compile", sev:SEV.error, needsBuild:true,
+  why:"A missing character prints as nothing at all — a silently empty gap where a letter should be, typically an umlaut or a dash.",
+  fix:"Load the right font encoding, or switch to LuaLaTeX/XeLaTeX for Unicode.",
+  run(ctx){ if (!ctx.log) return;
+    const seen = new Set();
+    for (const m of ctx.log.matchAll(/Missing character: There is no (\S+) .*?in font ([^!\n]+)/g)) {
+      const key = m[1] + "|" + m[2].trim();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      ctx.add("LOG006", `character ${m[1]} is missing from font ${m[2].trim()}`, { file: ctx.project.main });
+      if (seen.size >= 8) break;
+    }}});
+
+rule({ id:"LOG007", title:"The document needs another compilation pass", cat:"compile", sev:SEV.warn, needsBuild:true,
+  why:"Cross-references and the table of contents are one pass out of date, so the numbers you are reading may be wrong.",
+  fix:"Compile again (latexmk does this automatically).",
+  run(ctx){ if (!ctx.log || !/(Rerun to get|Label\(s\) may have changed)/.test(ctx.log)) return;
+    ctx.add("LOG007", "LaTeX asked to be run again; the cross-references are stale", { file: ctx.project.main });
+  }});
+
+rule({ id:"LOG008", title:"Undefined font shape", cat:"compile", sev:SEV.info, needsBuild:true,
+  why:"LaTeX substituted a different font, so the printed result is not the one you specified.",
+  fix:"Load a font package that provides the shape, or stop asking for it.",
+  run(ctx){ if (!ctx.log) return;
+    const shapes = new Set([...ctx.log.matchAll(/LaTeX Font Warning: Font shape `([^']+)' undefined/g)].map(m => m[1]));
+    for (const s of [...shapes].slice(0, 5))
+      ctx.add("LOG008", `font shape \`${s}\` is undefined and was substituted`, { file: ctx.project.main });
+  }});
+/* ===================== 5. Reading what the user dropped in =============== */
+
+/** Minimal ZIP reader: central directory + DecompressionStream. No library. */
+async function readZip(buffer) {
+  const view = new DataView(buffer), bytes = new Uint8Array(buffer);
+  let eocd = -1;
+  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 66000); i--) {
+    if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd === -1) throw new Error("not a zip file");
+  const count = view.getUint16(eocd + 10, true);
+  let pos = view.getUint32(eocd + 16, true);
+  const out = new Map();
+  for (let n = 0; n < count; n++) {
+    if (view.getUint32(pos, true) !== 0x02014b50) break;
+    const method = view.getUint16(pos + 10, true);
+    const compSize = view.getUint32(pos + 20, true);
+    const nameLen = view.getUint16(pos + 28, true);
+    const extraLen = view.getUint16(pos + 30, true);
+    const commentLen = view.getUint16(pos + 32, true);
+    const localOff = view.getUint32(pos + 42, true);
+    const name = new TextDecoder().decode(bytes.subarray(pos + 46, pos + 46 + nameLen));
+    pos += 46 + nameLen + extraLen + commentLen;
+    if (name.endsWith("/")) continue;
+    const lnLen = view.getUint16(localOff + 26, true);
+    const leLen = view.getUint16(localOff + 28, true);
+    const dataStart = localOff + 30 + lnLen + leLen;
+    const raw = bytes.subarray(dataStart, dataStart + compSize);
+    let data;
+    if (method === 0) data = raw;
+    else if (method === 8) {
+      const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+      data = new Uint8Array(await new Response(stream).arrayBuffer());
+    } else continue;
+    out.set(normalisePath(name), data);
+  }
+  return out;
+}
+
+const TEXTUAL = /\.(tex|bib|cls|sty|bbl|log|txt|md|yaml|yml)$/i;
+
+async function collectFiles(fileList) {
+  const files = new Map();       // path -> Uint8Array
+  for (const file of fileList) {
+    const path = normalisePath(file.webkitRelativePath || file.name);
+    if (/\.zip$/i.test(file.name)) {
+      try {
+        const entries = await readZip(await file.arrayBuffer());
+        for (const [name, data] of entries) files.set(stripTopFolder(name, entries), data);
+      } catch (err) {
+        console.warn("zip", err);
+        throw new Error(`Could not read ${file.name}: ${err.message}`);
+      }
+    } else {
+      files.set(path, new Uint8Array(await file.arrayBuffer()));
+    }
+  }
+  return files;
+}
+
+/** Overleaf zips have no wrapper folder; folder uploads do. Drop it if uniform. */
+function stripTopFolder(name, entries) {
+  const tops = new Set([...entries.keys()].map(k => k.split("/")[0]));
+  if (tops.size === 1 && [...entries.keys()].every(k => k.includes("/"))) {
+    return name.split("/").slice(1).join("/");
+  }
+  return name;
+}
+
+function decodeText(bytes) {
+  try { return new TextDecoder("utf-8", { fatal: false }).decode(bytes); }
+  catch (err) { return new TextDecoder("latin1").decode(bytes); }
+}
+
+/* ===================== 6. Running the checks ============================= */
+
+const SUPPRESS_RE = /%\s*mechcheck:\s*(off-file|off-next|off)\b([^-\n]*)(?:--\s*(.*))?/i;
+
+function collectSuppressions(project) {
+  const out = [];
+  for (const line of project.lines) {
+    const m = SUPPRESS_RE.exec(line.raw);
+    if (!m) continue;
+    out.push({
+      file: line.file, line: line.lineno, scope: m[1].toLowerCase(),
+      rules: (m[2] || "").replace(/,/g, " ").split(/\s+/).filter(Boolean).map(r => r.toUpperCase()),
+      reason: (m[3] || "").trim(), used: false,
+    });
+  }
+  return out;
+}
+
+function suppressionCovers(s, f) {
+  if (s.rules.length && !s.rules.includes(f.rule)) return false;
+  if (f.file !== s.file) return false;
+  if (s.scope === "off-file") return true;
+  if (f.line == null) return false;
+  return s.scope === "off" ? f.line === s.line : f.line === s.line + 1;
+}
+
+/* --- the three services, cached in memory and in localStorage --- */
+/* localStorage throws rather than returning null when site data is blocked, in
+   some private windows, and inside data: URLs. Everything goes through these. */
+function lsGet(key) {
+  try { return localStorage.getItem(key); } catch (err) { return null; }
+}
+function lsSet(key, value) {
+  try { localStorage.setItem(key, value); return true; } catch (err) { return false; }
+}
+
+const netCache = new Map();
+let netBlocked = false;
+
+function cacheGet(key) {
+  if (netCache.has(key)) return netCache.get(key);
+  const raw = lsGet("mechcheck:" + key);
+  if (raw) {
+    try { const v = JSON.parse(raw); netCache.set(key, v); return v; } catch (err) { /* corrupt entry */ }
+  }
+  return undefined;
+}
+function cacheSet(key, value) {
+  netCache.set(key, value);
+  lsSet("mechcheck:" + key, JSON.stringify(value));
+}
+
+async function getJson(url, key) {
+  const cached = cacheGet(key);
+  if (cached !== undefined) return cached;
+  if (netBlocked) return null;
+  try {
+    const res = await fetch(url, { headers: { "Accept": "application/json" } });
+    if (res.status === 404) { cacheSet(key, null); return null; }
+    if (!res.ok) return null;
+    const data = await res.json();
+    cacheSet(key, data);
+    return data;
+  } catch (err) {
+    // A blocked request looks exactly like an offline one; say so once and stop.
+    netBlocked = true;
+    return null;
+  }
+}
+
+function makeFetchers(mailto) {
+  const tail = mailto ? `&mailto=${encodeURIComponent(mailto)}` : "";
+  return {
+    async crossrefByDoi(doi) {
+      if (!doi) return null;
+      const d = await getJson(`https://api.crossref.org/works/${encodeURIComponent(doi)}?x=1${tail}`, "cr:" + doi);
+      return d && d.message ? d.message : null;
+    },
+    async crossrefSearch(title, author) {
+      if (!title) return [];
+      const url = `https://api.crossref.org/works?query.bibliographic=${encodeURIComponent(title)}`
+        + (author ? `&query.author=${encodeURIComponent(author)}` : "")
+        + `&rows=3&select=DOI,title,author,issued,container-title,type,score${tail}`;
+      const d = await getJson(url, "crs:" + title.slice(0, 120) + "|" + (author || ""));
+      return (d && d.message && d.message.items) || [];
+    },
+    async openAlexByDoi(doi) {
+      if (!doi) return null;
+      return await getJson(`https://api.openalex.org/works/doi:${encodeURIComponent(doi)}?x=1${tail}`, "oa:" + doi);
+    },
+    async dblpSearch(title) {
+      if (!title) return [];
+      const d = await getJson(`https://dblp.org/search/publ/api?q=${encodeURIComponent(title.slice(0, 200))}&format=json&h=3`,
+                              "dblp:" + title.slice(0, 120));
+      const hits = (((d || {}).result || {}).hits || {}).hit || [];
+      return hits.map(h => h.info || {});
+    },
+  };
+}
+
+async function runChecks(files, options) {
+  const sources = new Map();
+  const allFiles = new Map();
+  let log = null, pdfBytes = null, pdfName = null;
+
+  for (const [path, bytes] of files) {
+    allFiles.set(path, bytes);
+    if (/\.(tex|cls|sty)$/i.test(path)) sources.set(path, decodeText(bytes));
+    else if (/\.bib$/i.test(path)) sources.set(path, decodeText(bytes));
+    else if (/\.log$/i.test(path)) { const t = decodeText(bytes); if (/This is (pdfTeX|LuaHBTeX|XeTeX|LuaTeX)/.test(t) || !log) log = t; }
+    else if (/\.pdf$/i.test(path)) { pdfBytes = bytes; pdfName = path; }
+  }
+
+  // Prefer a file that looks like a real root, but never refuse to check
+  // something just because the preamble is unusual: fall back to the largest
+  // .tex file and say so rather than making the user guess what went wrong.
+  let mainPath = options.main || findMainDocument(sources);
+  let mainGuessed = false;
+  if (!mainPath) {
+    const texFiles = [...sources.entries()].filter(([p]) => /\.tex$/i.test(p));
+    if (!texFiles.length) throw new Error("No .tex file in what you dropped in.");
+    texFiles.sort((a, b) => b[1].length - a[1].length);
+    mainPath = texFiles[0][0];
+    mainGuessed = true;
+  }
+
+  const project = new TexProject(sources, mainPath);
+  const config = new Config(options);
+
+  const bib = [];
+  for (const [path, bytes] of files) if (/\.bib$/i.test(path)) bib.push(...parseBib(decodeText(bytes), path));
+
+  const findings = [];
+  const ctx = {
+    project, config, bib, log, pdfBytes, pdfName, allFiles,
+    cache: {}, ignoreAcronyms: options.ignoreAcronyms || [],
+    ...makeFetchers(options.mailto),
+    add(id, message, opts = {}) {
+      let file = opts.file, line = opts.line, col = opts.col;
+      if (opts.at !== undefined) { const loc = project.locate(opts.at); file = loc.file; line = loc.line; col = loc.col; }
+      const spec = RULES_BY_ID[id];
+      findings.push({
+        rule: id, message,
+        severity: opts.severity || config.severityFor(id),
+        file: file || null, line: line ?? null, col: col ?? null,
+        context: opts.context || null,
+        fix: opts.fix || (spec && spec.fix) || null,
+        category: spec ? spec.cat : "other",
+      });
+    },
+  };
+
+  const skipped = {};
+  const applicable = RULES.filter(r => {
+    if (!config.enabled(r.id)) { skipped[r.id] = "not part of this profile"; return false; }
+    if (r.online && !options.verify) { skipped[r.id] = "online verification is off"; return false; }
+    if (r.needsBuild && !log && !pdfBytes) { skipped[r.id] = "needs the .log or .pdf"; return false; }
+    return true;
+  });
+
+  let done = 0;
+  for (const r of applicable) {
+    try {
+      const result = r.run(ctx);
+      if (result && typeof result.then === "function") await result;
+    } catch (err) {
+      console.warn("rule " + r.id, err);
+      findings.push({ rule: "INT001", message: `rule ${r.id} crashed: ${err.message}`, severity: SEV.info,
+        file: null, line: null, col: null, context: null, category: "internal",
+        fix: "The other rules still ran." });
+    }
+    done++;
+    if (options.onProgress) options.onProgress(done / applicable.length, r.id);
+  }
+
+  // suppression comments, then a stable order
+  const suppressions = collectSuppressions(project);
+  const kept = [], suppressed = [];
+  for (const f of findings) {
+    const hit = suppressions.find(s => suppressionCovers(s, f));
+    if (hit) { hit.used = true; suppressed.push(f); } else kept.push(f);
+  }
+  kept.sort((a, b) => b.severity - a.severity || (a.file || "").localeCompare(b.file || "")
+                      || (a.line || 0) - (b.line || 0) || a.rule.localeCompare(b.rule));
+
+  return {
+    findings: kept, suppressed, skipped, project, config, bib,
+    stats: {
+      files: project.files.length, words: wordCount(ctx), floats: project.floats().length,
+      references: bib.length, pages: pageCount(ctx), hasLog: !!log, hasPdf: !!pdfBytes,
+      main: mainPath, mainGuessed, netBlocked,
+    },
+  };
+}
+
+/* ===================== 7. Interface ====================================== */
+
+const $ = sel => document.querySelector(sel);
+const el = (tag, props = {}, children = []) => {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") node.className = v;
+    else if (k === "text") node.textContent = v;
+    else if (k === "html") node.innerHTML = v;
+    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+    else if (v !== null && v !== undefined) node.setAttribute(k, v);
+  }
+  for (const c of [].concat(children)) if (c) node.appendChild(c);
+  return node;
+};
+
+const state = { files: null, result: null, filters: { error: true, warn: true, info: true }, query: "", category: "" };
+
+function settings() {
+  return {
+    profile: $("#profile").value,
+    stage: $("#stage").value,
+    venue: $("#venue").value,
+    verify: $("#verify").checked,
+    mailto: lsGet("mechcheck:mailto") || "",
+  };
+}
+
+function saveSettings() {
+  lsSet("mechcheck:settings", JSON.stringify({
+    profile: $("#profile").value, stage: $("#stage").value,
+    venue: $("#venue").value, verify: $("#verify").checked,
+  }));
+}
+
+function restoreSettings() {
+  try {
+    const raw = lsGet("mechcheck:settings");
+    if (!raw) return;
+    const s = JSON.parse(raw);
+    if (s.profile) $("#profile").value = s.profile;
+    if (s.stage) $("#stage").value = s.stage;
+    if (s.venue) $("#venue").value = s.venue;
+    $("#verify").checked = !!s.verify;
+  } catch (err) { /* ignore */ }
+}
+
+function populateVenues() {
+  const sel = $("#venue");
+  for (const [key, pack] of Object.entries(VENUES))
+    sel.appendChild(el("option", { value: key, text: pack.name }));
+}
+
+function setDropState(loaded, label) {
+  const drop = $("#drop");
+  drop.classList.toggle("slim", loaded);
+  drop.innerHTML = "";
+  if (!loaded) {
+    drop.append(
+      el("h2", { text: "Drop your Overleaf project here" }),
+      el("p", { html: 'The <b>.zip</b> from Overleaf’s <span class="mono">Menu → Download → Source</span>, or a folder, or just the <span class="mono">.tex</span> and <span class="mono">.bib</span> files.' }),
+      el("p", { class: "hint", html: 'Add the <span class="mono">.log</span> and <span class="mono">.pdf</span> too and the compile, page-count and PDF checks switch on as well.' }));
+  } else {
+    drop.append(
+      el("span", { class: "loaded mono", text: label }),
+      el("span", { class: "hint", text: "Drop another project to replace it" }));
+  }
+}
+
+function severityName(sev) { return SEV_NAME[sev] || "info"; }
+
+function renderSummary(result) {
+  const box = $("#summary");
+  box.innerHTML = "";
+  box.className = "summary";
+  const counts = { error: 0, warn: 0, info: 0 };
+  for (const f of result.findings) counts[severityName(f.severity)]++;
+  const blocked = result.findings.some(f => f.severity >= SEV.error);
+
+  const stat = (n, l, cls) => el("div", { class: "stat" + (cls ? " " + cls : "") },
+    [el("span", { class: "n", text: String(n) }), el("span", { class: "l", text: l })]);
+
+  if (blocked) box.appendChild(stat(counts.error, "errors", "err"));
+  else box.appendChild(el("div", { class: "stat pass" },
+    [el("span", { class: "n", text: "Nothing left" }), el("span", { class: "l", text: "mechanically" })]));
+  box.appendChild(stat(counts.warn, "warnings", counts.warn ? "warn" : ""));
+  box.appendChild(stat(counts.info, "notes"));
+  box.appendChild(stat(result.stats.words.toLocaleString(), "words"));
+  box.appendChild(stat(result.stats.references, "references"));
+  box.appendChild(stat(result.stats.floats, "floats"));
+  if (result.stats.pages) box.appendChild(stat(result.stats.pages, "pages"));
+  box.appendChild(stat(result.stats.files, "tex files"));
+}
+
+function renderFilters(result) {
+  const box = $("#filters");
+  box.innerHTML = "";
+  box.className = "filters";
+  const counts = { error: 0, warn: 0, info: 0 };
+  for (const f of result.findings) counts[severityName(f.severity)]++;
+
+  for (const key of ["error", "warn", "info"]) {
+    const b = el("button", {
+      class: "pill", "aria-pressed": String(state.filters[key]),
+      onclick: () => { state.filters[key] = !state.filters[key]; renderFilters(result); renderResults(result); },
+    });
+    b.append(document.createTextNode(key + " "), el("span", { class: "c", text: String(counts[key]) }));
+    box.appendChild(b);
+  }
+
+  const cats = [...new Set(result.findings.map(f => f.category))].sort();
+  const catSel = el("select", { "aria-label": "Category",
+    onchange: e => { state.category = e.target.value; renderResults(result); } });
+  catSel.appendChild(el("option", { value: "", text: "All categories" }));
+  for (const c of cats) catSel.appendChild(el("option", { value: c, text: c }));
+  catSel.value = state.category;
+  box.appendChild(catSel);
+
+  box.appendChild(el("input", { type: "search", class: "grow", placeholder: "Filter by rule or text…",
+    value: state.query, oninput: e => { state.query = e.target.value; renderResults(result); } }));
+
+  box.appendChild(el("button", { text: "Copy as Markdown", onclick: () => copyMarkdown(result) }));
+  box.appendChild(el("button", { text: "Download report", onclick: () => downloadReport(result) }));
+  box.appendChild(el("button", { class: "primary", text: "Re-run", onclick: () => rerun() }));
+}
+
+function visible(f) {
+  if (!state.filters[severityName(f.severity)]) return false;
+  if (state.category && f.category !== state.category) return false;
+  if (state.query) {
+    const q = state.query.toLowerCase();
+    if (!(f.rule.toLowerCase().includes(q) || f.message.toLowerCase().includes(q)
+          || (f.file || "").toLowerCase().includes(q) || (f.context || "").toLowerCase().includes(q))) return false;
+  }
+  return true;
+}
+
+function renderResults(result) {
+  const box = $("#results");
+  box.innerHTML = "";
+  const shown = result.findings.filter(visible);
+
+  if (!result.findings.length) {
+    box.appendChild(el("div", { class: "empty" }, [
+      el("div", { class: "big", text: "Nothing mechanical left to fix." }),
+      el("div", { text: "The remaining work is the thinking." }),
+    ]));
+  } else if (!shown.length) {
+    box.appendChild(el("div", { class: "empty" }, [el("div", { text: "No findings match these filters." })]));
+  }
+
+  const byFile = new Map();
+  for (const f of shown) {
+    const key = f.file || "(project)";
+    if (!byFile.has(key)) byFile.set(key, []);
+    byFile.get(key).push(f);
+  }
+  for (const [file, list] of [...byFile.entries()].sort()) {
+    const group = el("div", { class: "filegroup" });
+    group.appendChild(el("h3", {}, [
+      document.createTextNode(file),
+      el("span", { class: "count", text: `${list.length} finding${list.length === 1 ? "" : "s"}` }),
+    ]));
+    for (const f of list) {
+      const body = el("div", { class: "body" });
+      const top = el("div", { class: "top" });
+      top.appendChild(el("span", { class: "rule", text: f.rule }));
+      if (f.line) top.appendChild(el("span", { class: "loc", text: "line " + f.line }));
+      top.appendChild(el("span", { class: "msg", text: f.message }));
+      body.appendChild(top);
+      if (f.context) body.appendChild(el("div", { class: "ctx", text: f.context }));
+      if (f.fix) body.appendChild(el("div", { class: "fix" }, [
+        el("b", { text: "Fix: " }), document.createTextNode(f.fix)]));
+      group.appendChild(el("div", { class: "finding sev-" + severityName(f.severity) },
+        [el("div", { class: "stripe" }), body]));
+    }
+    box.appendChild(group);
+  }
+
+  if (result.suppressed.length)
+    box.appendChild(el("div", { class: "notice",
+      text: `${result.suppressed.length} finding(s) silenced by "% mechcheck: off" comments.` }));
+
+  const venue = result.config.venue;
+  if (venue && venue.uncertain && venue.uncertain.length) {
+    const d = el("details", { class: "raw" });
+    d.appendChild(el("summary", { text: `What the ${venue.name} pack is not sure about (${venue.uncertain.length})` }));
+    const pre = el("pre", { text: venue.uncertain.map(u => "• " + u).join("\n\n")
+      + `\n\nPack last verified ${venue.verified}. The call for papers is the authority.` });
+    d.appendChild(pre);
+    box.appendChild(d);
+  }
+}
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+function toMarkdown(result) {
+  const lines = [`# mechcheck report`, "",
+    `Profile \`${result.config.profile}\` · stage \`${result.config.stage}\``
+    + (result.config.venueKey ? ` · venue \`${result.config.venueKey}\`` : ""),
+    `Main file \`${result.stats.main}\` · ${result.stats.words.toLocaleString()} words · `
+    + `${plural(result.stats.references, "reference")} · ${plural(result.stats.floats, "float")}`, ""];
+  const counts = { error: 0, warn: 0, info: 0 };
+  for (const f of result.findings) counts[severityName(f.severity)]++;
+  lines.push(`**${counts.error} errors, ${counts.warn} warnings, ${counts.info} notes**`, "");
+  if (!result.findings.length) lines.push("Nothing mechanical left to fix.");
+  else {
+    lines.push("| | rule | where | what | fix |", "|---|---|---|---|---|");
+    for (const f of result.findings) {
+      const icon = { error: "❌", warn: "⚠️", info: "ℹ️" }[severityName(f.severity)];
+      const where = f.file ? `\`${f.file}${f.line ? ":" + f.line : ""}\`` : "";
+      lines.push(`| ${icon} | \`${f.rule}\` | ${where} | ${f.message.replace(/\|/g, "\\|")} | ${(f.fix || "").replace(/\|/g, "\\|")} |`);
+    }
+  }
+  return lines.join("\n");
+}
+
+async function copyMarkdown(result) {
+  const text = toMarkdown(result);
+  try { await navigator.clipboard.writeText(text); toast("Report copied to the clipboard"); }
+  catch (err) { downloadReport(result); }
+}
+
+function downloadReport(result) {
+  const blob = new Blob([toMarkdown(result)], { type: "text/markdown" });
+  const a = el("a", { href: URL.createObjectURL(blob), download: "mechcheck-report.md" });
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+function toast(message) {
+  const note = el("div", { class: "notice", text: message });
+  $("#online-note").innerHTML = "";
+  $("#online-note").appendChild(note);
+  setTimeout(() => { if (note.parentNode) note.remove(); }, 4000);
+}
+
+function showNotice(html, kind) {
+  const box = $("#online-note");
+  box.innerHTML = "";
+  if (html) box.appendChild(el("div", { class: "notice" + (kind ? " " + kind : ""), html }));
+}
+
+async function rerun() {
+  if (!state.files) return;
+  const opts = settings();
+  saveSettings();
+  const progress = el("div", { class: "progress" }, [el("i")]);
+  $("#results").innerHTML = "";
+  $("#results").appendChild(progress);
+  const bar = progress.firstChild;
+  netBlocked = false;
+
+  try {
+    const result = await runChecks(state.files, {
+      ...opts,
+      onProgress: (frac, id) => { bar.style.width = Math.round(frac * 100) + "%"; },
+    });
+    state.result = result;
+    renderSummary(result);
+    renderFilters(result);
+    renderResults(result);
+    if (result.stats.mainGuessed) {
+      showNotice(`<b>Guessed the main file:</b> <span class="mono">${result.stats.mainGuessed && result.stats.main}</span>. `
+        + "No file had both \documentclass and \begin{document}, so this is the largest .tex. "
+        + "If that is wrong, the findings will be too.", "warnish");
+    } else if (opts.verify && netBlocked) {
+      showNotice("<b>Reference verification could not reach the internet.</b> Everything else ran. "
+        + "This page blocks outside requests when it is opened from a shared link — save the file and open it "
+        + "locally (double-click it) and the Crossref, OpenAlex and DBLP checks work.", "warnish");
+    } else if (opts.verify) {
+      showNotice("Reference verification is on. Results are cached in this browser, so re-running is instant.");
+    } else {
+      showNotice("");
+    }
+  } catch (err) {
+    $("#results").innerHTML = "";
+    $("#results").appendChild(el("div", { class: "empty" }, [
+      el("div", { class: "big", text: "Could not read that project" }),
+      el("div", { text: err.message }),
+    ]));
+  }
+}
+
+async function handleFiles(fileList) {
+  if (!fileList || !fileList.length) return;
+  showNotice("Reading files…");
+  try {
+    const files = await collectFiles(fileList);
+    const texCount = [...files.keys()].filter(k => /\.tex$/i.test(k)).length;
+    if (!texCount) throw new Error("No .tex files in what you dropped.");
+    state.files = files;
+    const bibCount = [...files.keys()].filter(k => /\.bib$/i.test(k)).length;
+    const extras = [];
+    if ([...files.keys()].some(k => /\.log$/i.test(k))) extras.push("log");
+    if ([...files.keys()].some(k => /\.pdf$/i.test(k))) extras.push("pdf");
+    setDropState(true, `${texCount} tex · ${bibCount} bib${extras.length ? " · " + extras.join(" · ") : ""}`);
+    await rerun();
+  } catch (err) {
+    showNotice(`<b>${err.message}</b>`, "warnish");
+  }
+}
+
+function wireUp() {
+  populateVenues();
+  restoreSettings();
+  setDropState(false);
+
+  const drop = $("#drop");
+  drop.addEventListener("click", e => {
+    if (e.target.tagName === "INPUT") return;
+    $("#filepick").click();
+  });
+  drop.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("#filepick").click(); } });
+  ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => {
+    e.preventDefault(); drop.classList.add("over");
+  }));
+  ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => {
+    e.preventDefault(); drop.classList.remove("over");
+  }));
+  drop.addEventListener("drop", async e => {
+    const items = e.dataTransfer.items;
+    const files = [];
+    if (items && items.length && items[0].webkitGetAsEntry) {
+      const entries = [...items].map(i => i.webkitGetAsEntry()).filter(Boolean);
+      for (const entry of entries) await walkEntry(entry, "", files);
+    } else {
+      files.push(...e.dataTransfer.files);
+    }
+    handleFiles(files);
+  });
+
+  $("#filepick").addEventListener("change", e => handleFiles(e.target.files));
+  $("#dirpick").addEventListener("change", e => handleFiles(e.target.files));
+  for (const id of ["#profile", "#stage", "#venue", "#verify"])
+    $(id).addEventListener("change", () => { saveSettings(); if (state.files) rerun(); });
+
+  $("#net-status").textContent = location.protocol === "file:"
+    ? "Opened locally, so reference verification can reach Crossref."
+    : "";
+}
+
+/** Recursively read a dropped folder. */
+async function walkEntry(entry, prefix, out) {
+  if (entry.isFile) {
+    const file = await new Promise((res, rej) => entry.file(res, rej));
+    Object.defineProperty(file, "webkitRelativePath", { value: prefix + entry.name, configurable: true });
+    out.push(file);
+  } else if (entry.isDirectory) {
+    const reader = entry.createReader();
+    const entries = await new Promise(res => reader.readEntries(res));
+    for (const child of entries) await walkEntry(child, prefix + entry.name + "/", out);
+  }
+}
+
+wireUp();
+
+</script>
+</body>
+</html>
