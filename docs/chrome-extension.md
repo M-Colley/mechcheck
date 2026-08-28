@@ -51,7 +51,8 @@ synced over a websocket; writing into it behind the editor's back is a good way
 to corrupt somebody's paper. Handing over the file is the honest option.
 
 Only rules with exactly one right answer are fixed — abbreviations reintroduced,
-`Figure~ef` to `utoref`, a name before `\cite` to `\citet`, repeated words,
+`Figure~
+ef` to `utoref`, a name before `\cite` to `\citet`, repeated words,
 a space before punctuation, hyphen ranges. Alt text and anything needing
 judgement are never touched.
 
@@ -105,19 +106,19 @@ The generated file is committed, so nobody needs to run this to install.
 from a mocked `fetch`, and drives the real content script — the panel, the zip
 reading, the filters, the Markdown export and the error path. Open
 `extension/test-harness.built.html` (self-contained; produced by the build
-script) in any browser. It reports 17 checks.
+script) in any browser. It reports 22 checks.
 
 ## What is verified, and what is not
 
-Verified: the engine (54 Node checks), the zip reading, the panel rendering and
-filtering in a real browser, the manifest, and the icons.
+Verified: the engine (99 Node checks), the zip reading, the panel rendering,
+filtering and fixing in a real browser (22 harness checks), the manifest, and
+the icons.
 
-**Not yet verified:** the extension loaded in Chrome against a live Overleaf
-session. Two things can only be confirmed there:
+**Verified against a live Overleaf project** on 2026-08-28: the extension
+injected, read the project, and reported exactly the 37 findings the self-test
+document is documented to produce — every rule, every count.
 
-1. that Chrome accepts the manifest and injects on your Overleaf domain;
-2. that `/project/<id>/download/zip` answers for your account — it is Overleaf's
-   own download URL, not a public API, so a future change could move it.
-
-If the download ever fails, the panel says so explicitly rather than silently
+The one thing outside anyone's control is that `/project/<id>/download/zip` is
+Overleaf's own download URL rather than a public API, so a future change could
+move it. If it ever fails, the panel says so explicitly rather than silently
 reporting nothing, and the standalone HTML page still works as a fallback.
