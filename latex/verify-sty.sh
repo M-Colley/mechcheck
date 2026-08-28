@@ -32,6 +32,9 @@ cp ../mechcheck.sty . 2>/dev/null
 
 # ---------------------------------------------------------------- default use
 echo "demo.tex (hooks only, the default configuration)"
+# latexmk skips a run when nothing changed, which would leave a stale or
+# missing report and fail every assertion below for the wrong reason.
+latexmk -C >/dev/null 2>&1
 rm -f mechcheck-report.txt
 if latexmk -pdf -interaction=nonstopmode -file-line-error demo.tex >compile.out 2>&1; then
   ok "compiles"
@@ -54,12 +57,20 @@ for rule in MC001 MC002 MC003 MC004; do
   fi
 done
 
-# The correct figure must not be reported, and the package must not have
-# quietly disabled itself.
-if grep -q "fig:good" mechcheck-report.txt 2>/dev/null; then
-  bad "false positive: the well-formed figure was reported"
+# The correct figure must not be reported. Counting is the honest test here:
+# the messages do not name labels, so grepping for the good figure's label
+# would pass no matter what. The demo has five figures, four of them faulty.
+floats=$(grep -oE '[0-9]+ float\(s\) checked' mechcheck-report.txt 2>/dev/null | grep -oE '^[0-9]+' | head -1)
+mc001=$(grep -c "MC001" mechcheck-report.txt 2>/dev/null)
+if [ "${floats:-0}" = "5" ]; then
+  ok "all five floats were seen"
 else
-  ok "no false positive on the well-formed figure"
+  bad "expected 5 floats checked, report says '${floats:-none}'"
+fi
+if [ "$mc001" = "4" ]; then
+  ok "no false positive: 4 of 5 figures reported, the well-formed one is not"
+else
+  bad "expected exactly 4 MC001 findings, got $mc001 (5 would mean the correct figure was flagged)"
 fi
 
 if grep -qi "could not instrument" demo.log 2>/dev/null; then
@@ -71,6 +82,7 @@ fi
 # --------------------------------------------------------- the opt-in path
 echo
 echo "demo-crossref.tex ([crossref], which patches \\label and \\ref)"
+latexmk -C >/dev/null 2>&1
 rm -f mechcheck-report.txt
 if latexmk -pdf -interaction=nonstopmode -file-line-error demo-crossref.tex >compile-crossref.out 2>&1; then
   ok "compiles"

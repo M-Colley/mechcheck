@@ -3,7 +3,8 @@
 % the assertions in .github/workflows/mechcheck.yml too.
 \documentclass{article}
 
-\usepackage{graphicx}
+% No graphicx: the demo draws with \rule, so it compiles on the
+% smallest possible TeX installation.
 \usepackage{mechcheck}   % add [report] to typeset the summary page
 
 % acmart provides \Description; plain article does not, so define a stand-in
