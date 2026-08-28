@@ -36,14 +36,14 @@ _TECHNOLOGY = {
     # network and protocols
     "TCP", "UDP", "IP", "FTP", "SFTP", "SSH", "SMTP", "IMAP", "DNS", "DHCP",
     "TLS", "SSL", "VPN", "LAN", "WAN", "WLAN", "MQTT", "REST", "SOAP", "RPC",
-    "CDN", "NAT", "OSI", "RTT", "ICMP", "ARP", "SIP", "RTP", "URI", "URN",
-    "NFC", "RFID", "BLE", "GSM", "LTE", "MAC",
+    "CDN", "NAT", "OSI", "ICMP", "ARP", "SIP", "RTP", "URI", "URN",
+    "NFC", "RFID", "BLE", "GSM", "LTE",
     # file formats, encodings and markup
     "CSS", "XHTML", "TSV", "TOML", "PNG", "JPEG", "GIF", "SVG", "TIFF", "BMP",
     "WAV", "AVI", "MOV", "MKV", "ZIP", "TAR", "ASCII", "UTF", "RDF", "EPS",
     # hardware and interfaces
     "SSD", "HDD", "HDMI", "VGA", "DVI", "PCI", "SATA", "TPU", "LCD", "OLED",
-    "IMU", "DPI", "PPI", "RGBA", "CMYK", "HSV", "ADC", "DAC",
+    "DPI", "PPI", "RGBA", "CMYK", "HSV",
     # software platforms and tooling
     "SDK", "IDE", "GUI", "CLI", "VM", "JVM", "JDK", "JRE", "UML",
     # standards bodies and identifiers

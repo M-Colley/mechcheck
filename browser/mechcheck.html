@@ -1444,12 +1444,12 @@ const ABB_COMMON = new Set(["AI","API","CPU","GPU","CSV","PDF","HTML","HTTP","HT
   // reason ABB004 exists. Only runs of 2–9 capitals reach this rule, so
   // IPv6, MP4, Wi-Fi and PCIe need no entry.
   "TCP","UDP","IP","FTP","SFTP","SSH","SMTP","IMAP","DNS","DHCP","TLS","SSL",
-  "VPN","LAN","WAN","WLAN","MQTT","REST","SOAP","RPC","CDN","NAT","OSI","RTT",
-  "ICMP","ARP","SIP","RTP","URI","URN","NFC","RFID","BLE","GSM","LTE","MAC",
+  "VPN","LAN","WAN","WLAN","MQTT","REST","SOAP","RPC","CDN","NAT","OSI",
+  "ICMP","ARP","SIP","RTP","URI","URN","NFC","RFID","BLE","GSM","LTE",
   "CSS","XHTML","TSV","TOML","PNG","JPEG","GIF","SVG","TIFF","BMP","WAV","AVI",
   "MOV","MKV","ZIP","TAR","ASCII","UTF","RDF","EPS",
-  "SSD","HDD","HDMI","VGA","DVI","PCI","SATA","TPU","LCD","OLED","IMU","DPI",
-  "PPI","RGBA","CMYK","HSV","ADC","DAC",
+  "SSD","HDD","HDMI","VGA","DVI","PCI","SATA","TPU","LCD","OLED","DPI",
+  "PPI","RGBA","CMYK","HSV",
   "SDK","IDE","GUI","CLI","VM","JVM","JDK","JRE","UML",
   "IEC","ANSI","IETF","RFC","NIST","DIN","SAE","ITU","ISBN","ISSN","ORCID","APA"]);
 const ABB_DEF = /((?:[A-Z][\w-]*|of|the|for|and|in|on|to|a|an)(?:[ -](?:[A-Za-z][\w-]*|of|the|for|and|in|on|to|a|an)){0,7})\s*\(([A-Z][A-Za-z]{1,9}s?)\)/g;
