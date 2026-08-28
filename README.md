@@ -9,11 +9,19 @@ compile-log analysis, accessibility, anonymity, reporting conventions, and
 per-venue submission requirements for CHI, ASSETS, AutomotiveUI, IMWUT and
 Transportation Research Part F.
 
+**Nothing to install.** Save
+[`browser/mechcheck.html`](browser/mechcheck.html), double-click it, and drop
+your Overleaf `.zip` on the page. Or load [`extension/`](extension/) in Chrome
+and get a button inside Overleaf itself.
+
+If you would rather have a command line:
+
 ```bash
 pip install -e .
 mechcheck check .                       # a thesis
 mechcheck check . --venue chi           # + CHI's submission requirements
 mechcheck check . --venue autoui --profile paper-anonymous --stage final
+mechcheck fix .                         # apply the unambiguous corrections
 ```
 
 ---
@@ -228,3 +236,14 @@ installation on the machine it was written on. The `latex` job in
 TeX Live, compiles `latex/demo/demo.tex`, and asserts both that the planted
 faults are detected and that the well-formed figure is not. Run it before giving
 the `.sty` to students.
+
+---
+
+## Licence
+
+MIT — see [LICENSE](LICENSE). Use it, change it, hand it to your students.
+
+If it saves you an evening, or if a rule fires wrongly on your paper, an issue
+is welcome. False positives are the most useful thing you can report: this
+checker earns its authority by not crying wolf, and every wrong finding is a
+bug worth fixing.
