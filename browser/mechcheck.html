@@ -2689,6 +2689,46 @@ rule({ id:"LOG008", title:"Undefined font shape", cat:"compile", sev:SEV.info, n
     for (const s of [...shapes].slice(0, 5))
       ctx.add("LOG008", `font shape \`${s}\` is undefined and was substituted`, { file: ctx.project.main });
   }});
+/* A class or package warning. acmart wraps long messages and prefixes each
+   continuation with "(acmart)", so only the first line is captured. */
+const CLASS_WARNING = /^(?:Class|Package) ([\w@-]+) Warning: (.+?)(?: on input line (\d+))?\.?$/gm;
+
+/* Warnings a source-level rule already reports, with a line number and a fix.
+   Reporting both would show the same problem twice. */
+const LOG_ALREADY_COVERED = [
+  ["possible image without description", "ACC001"],
+  ["images may lack descriptions", "ACC001"],
+];
+
+const LOG_IGNORED_SOURCES = new Set(["microtype", "rerunfilecheck", "hyperref", "caption",
+  "epstopdf-base", "xcolor", "graphics", "Font"]);
+
+rule({ id:"LOG009", title:"The document class raised a warning", cat:"compile", sev:SEV.warn,
+  needsBuild:true,
+  why:"acmart and its peers check things no external tool can, and say so in a log nobody opens — ACM's accessibility notice arrives this way and is routinely missed.",
+  fix:"Read the message: the class knows something about its own requirements that a linter cannot.",
+  run(ctx){ if (!ctx.log) return;
+    CLASS_WARNING.lastIndex = 0;
+    const seen = new Set();
+    let m;
+    while ((m = CLASS_WARNING.exec(ctx.log)) !== null) {
+      const who = m[1], message = m[2].trim();
+      if (LOG_IGNORED_SOURCES.has(who)) continue;
+      const lowered = message.toLowerCase();
+      if (LOG_ALREADY_COVERED.some(([needle, id]) => lowered.includes(needle) && ctx.config.enabled(id)))
+        continue;
+      const line = m[3] ? parseInt(m[3], 10) : null;
+      // The line is part of the identity: the same warning at two different
+      // places is two problems, not one repeated message.
+      const key = who + "|" + message.slice(0, 80) + "|" + line;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      ctx.add("LOG009", `${who} says: ${message.slice(0, 160)}`,
+        { file: ctx.project.main, line });
+      if (seen.size >= 12) return;
+    }
+  }});
+
 /* ===================== 5. Reading what the user dropped in =============== */
 
 /** Minimal ZIP reader: central directory + DecompressionStream. No library. */

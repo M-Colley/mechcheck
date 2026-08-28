@@ -156,6 +156,54 @@ def font_substitution(ctx):
                           file=ctx.project.main)
 
 
+
+#: A class warning, with its continuation lines: acmart wraps long messages and
+#: prefixes each continuation with "(acmart)".
+_CLASS_WARNING = re.compile(
+    r"^(?:Class|Package) (?P<who>[\w@-]+) Warning: (?P<message>.+?)"
+    r"(?: on input line (?P<line>\d+))?\.?$", re.MULTILINE)
+
+#: Warnings a source-level rule already reports, with the line number and a fix.
+#: Reporting both would show the same problem twice.
+_ALREADY_COVERED = (
+    ("possible image without description", "ACC001"),
+    ("images may lack descriptions", "ACC001"),
+    ("no \\Description", "ACC001"),
+)
+
+
+@rule("LOG009", "The document class raised a warning", Category.COMPILE, Severity.WARN,
+      needs_build=True,
+      rationale="acmart and its peers check things no external tool can, and say so in a log nobody opens -- ACM's accessibility notice arrives this way and is routinely missed.",
+      fix="Read the message: the class knows something about its own requirements that a linter cannot.")
+def class_warnings(ctx):
+    if not ctx.log_text:
+        return
+    # Ignore the noisy families that say nothing about the document.
+    ignore_prefixes = ("microtype", "rerunfilecheck", "hyperref", "caption",
+                       "epstopdf-base", "xcolor", "graphics", "Font")
+    seen = set()
+    for m in _CLASS_WARNING.finditer(ctx.log_text):
+        who, message = m.group("who"), m.group("message").strip()
+        if who in ignore_prefixes:
+            continue
+        lowered = message.lower()
+        if any(needle in lowered and ctx.config.enabled(rule_id)
+               for needle, rule_id in _ALREADY_COVERED):
+            continue
+        line = int(m.group("line")) if m.group("line") else None
+        # The line is part of the identity: the same warning at two different
+        # places is two problems, not one repeated message.
+        key = (who, message[:80], line)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield ctx.finding("LOG009", f"{who} says: {message[:160]}",
+                          file=ctx.project.main, line=line,
+                          data={"package": who})
+        if len(seen) >= 12:
+            return
+
 def _nearest_source(log: str, position: int):
     """Best guess at the source file and line a log message refers to."""
     window = log[max(0, position - 2000):position + 400]

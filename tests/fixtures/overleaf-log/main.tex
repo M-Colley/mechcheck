@@ -1,0 +1,80 @@
+% =====================================================================
+% mechcheck self-test — paste this into a new Overleaf project as main.tex
+% =====================================================================
+%
+% Every fault below is planted on purpose. Running mechcheck on this file
+% should report exactly the rules listed in docs/testing.md — no more, and
+% no fewer. If the counts match, the whole chain works.
+%
+% To test the compile-time layer as well, upload mechcheck.sty next to this
+% file and uncomment the \usepackage line.
+%
+% This is NOT an example of good writing. It is a fixture.
+
+\documentclass[sigconf,review]{acmart}
+
+% \usepackage[report]{mechcheck}   % <- uncomment after uploading mechcheck.sty
+
+\begin{document}
+
+\title{Communicating Intent: A Study of Automated Vehicles}
+\author{Mark Colley}
+\affiliation{\institution{Ulm University}}
+\email{mark.colley@uni-ulm.de}
+
+\begin{abstract}
+We ran a study and found effects.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+
+The Automated Driving System (ADS) is a new technology. Colley et
+al.~\cite{colley2021} showed this earlier, and Rukzio and
+Colley~\cite{rukzio2020} disagree.
+
+As shown in Figure~\ref{fig:results}, the effect holds. Table~\ref{tab:demo}
+lists the values, and Section~\ref{sec:intro} explains them. See also
+\ref{sec:nowhere}, which does not exist.
+
+The Automated Driving System (ADS) appears again here, which it should not.
+
+\section{Method}
+
+Participants took part in a study. The effect was significant, p < .05,
+F = 4.7. This is is a repeated word, and there is a space before , this comma.
+We measured 10-20 participants over the study. TODO write this properly.
+
+Our previous work showed similar results, see
+https://github.com/mcolley/study for the materials. This was funded by the
+Deutsche Forschungsgemeinschaft under grant number 12345.
+
+\begin{figure}
+  \centering
+  \rule{4cm}{2cm}
+  \caption{Results of the study}
+  \label{fig:results}
+\end{figure}
+
+\begin{table}
+  \centering
+  \caption{Participant demographics}
+  \label{tab:demo}
+  \begin{tabular}{ll}
+    a & b \\
+  \end{tabular}
+\end{table}
+
+\begin{figure}
+  \centering
+  \rule{4cm}{2cm}
+  \caption{A figure nobody ever refers to}
+  \label{fig:orphan}
+\end{figure}
+
+The red line shows the baseline condition.
+
+\bibliographystyle{plain}
+\bibliography{refs}
+
+\end{document}
