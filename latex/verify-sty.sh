@@ -73,6 +73,21 @@ else
   bad "expected exactly 4 MC001 findings, got $mc001 (5 would mean the correct figure was flagged)"
 fi
 
+# Overleaf compiles main.tex with -jobname=output, so \jobname is not a file
+# the author has. Locations must never be built from it.
+if grep -qE "^(warn|error) MC[0-9]+ demo:" mechcheck-report.txt 2>/dev/null; then
+  bad "locations were built from \jobname instead of the real file"
+else
+  ok "locations do not invent a filename from \jobname"
+fi
+
+# acmart patches space to warn about exactly the use the report page made.
+if grep -q "vspace should only be used" compile.out 2>/dev/null; then
+  bad "the report page provoked a class warning of its own"
+else
+  ok "the report page provokes no class warnings"
+fi
+
 if grep -qi "could not instrument" demo.log 2>/dev/null; then
   bad "the package could not attach to \\caption in this class"
 else

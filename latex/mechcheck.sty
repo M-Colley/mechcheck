@@ -92,18 +92,20 @@
 
 %% Best-effort source location.  \CurrentFile comes from the LaTeX file hooks;
 %% if the format is too old to provide it we still report the line number.
+%% \CurrentFile is set by the file hooks and names an \input-ed file correctly,
+%% but it is empty while the main file itself is being read. \jobname is not a
+%% substitute: Overleaf compiles main.tex with -jobname=output, so falling back
+%% to it reported "output:57" for a file the author does not have. When there is
+%% no name worth trusting, give the line on its own.
 \cs_new:Npn \mechcheck_where:
   {
-    \mechcheck_current_file: : \int_use:N \inputlineno
-  }
-
-%% \CurrentFile is defined by the file hooks but is empty while the main file
-%% itself is being read, so an existence test is not enough.
-\cs_new:Npn \mechcheck_current_file:
-  {
     \cs_if_exist:NTF \CurrentFile
-      { \tl_if_blank:VTF \CurrentFile { \jobname } { \CurrentFile } }
-      { \jobname }
+      {
+        \tl_if_blank:VTF \CurrentFile
+          { line~\int_use:N \inputlineno }
+          { \CurrentFile : \int_use:N \inputlineno }
+      }
+      { line~\int_use:N \inputlineno }
   }
 
 \cs_new_protected:Npn \mechcheck_record:nnn #1#2#3
@@ -428,7 +430,7 @@
   {
     \iow_open:Nn \g_mechcheck_iow { mechcheck-report.txt }
     \iow_now:Nx \g_mechcheck_iow
-      { mechcheck~--~compile-time~checks~for~\jobname }
+      { mechcheck~--~compile-time~checks~(job:~\jobname) }
     \iow_now:Nn \g_mechcheck_iow { }
     \seq_map_inline:Nn \g_mechcheck_findings_seq { \mechcheck_write_line:n {##1} }
     \iow_now:Nn \g_mechcheck_iow { }
@@ -456,7 +458,9 @@
   }
 
 %% The optional summary page. Deliberately plain: no sectioning command, so it
-%% cannot disturb the table of contents or the class's page style.
+%% cannot disturb the table of contents or the class's page style, and \vskip
+%% rather than \vspace -- acmart patches \vspace to warn about exactly this
+%% use, and a report that generates warnings is a poor sort of report.
 \cs_new_protected:Npn \mechcheck_typeset_report:
   {
     \clearpage
@@ -464,11 +468,11 @@
       \parindent \c_zero_dim
       \raggedright
       { \bfseries mechcheck~report } \par
-      \vspace { 0.5em }
+      \par \vskip 0.5em
       \int_use:N \g_mechcheck_errors_int \c_space_tl error(s),~
       \int_use:N \g_mechcheck_warnings_int \c_space_tl warning(s)~across~
       \int_use:N \g_mechcheck_floats_int \c_space_tl float(s). \par
-      \vspace { 0.5em }
+      \par \vskip 0.5em
       \seq_if_empty:NTF \g_mechcheck_findings_seq
         { Nothing~mechanical~left~to~fix~at~compile~time. \par }
         {
@@ -478,7 +482,7 @@
               { \mechcheck_typeset_line:n {##1} }
           \endgroup
         }
-      \vspace { 0.5em }
+      \par \vskip 0.5em
       { \itshape Remove~the~[report]~option~before~you~submit. } \par
     \endgroup
   }
