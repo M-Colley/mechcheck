@@ -1,5 +1,8 @@
 # mechcheck
 
+[![self-test](https://github.com/M-Colley/mechcheck/actions/workflows/mechcheck.yml/badge.svg)](https://github.com/M-Colley/mechcheck/actions/workflows/mechcheck.yml)
+[![licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
+
 Mechanical checks for LaTeX theses and papers: the boring layer of review,
 automated, so supervision time goes to the argument instead of the formatting.
 
