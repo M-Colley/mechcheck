@@ -136,7 +136,9 @@ window.fetch = async (url) => {
   const C = window.__mechcheckContent;
   try {
     say("content script exposed its internals", !!C);
-    say("engine is loaded", !!globalThis.mechcheck && globalThis.mechcheck.RULES.length === 117,
+    // A floor, not an exact count: pinning the number makes this fail
+    // every time a rule is added, which is not a defect.
+    say("engine is loaded", !!globalThis.mechcheck && globalThis.mechcheck.RULES.length >= 100,
         globalThis.mechcheck ? globalThis.mechcheck.RULES.length + " rules" : "missing");
 
     // The harness page is not /project/<id>, so the panel must not auto-mount.

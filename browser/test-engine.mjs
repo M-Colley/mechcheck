@@ -130,6 +130,24 @@ console.log("\nfixture: style");
     check(`${id} fires`, fired.has(id));
 }
 
+console.log("\nfixture: refstyle (autoref and citet preferences)");
+{
+  const r = await run("refstyle", { profile: "paper" });
+  const fired = rulesFired(r);
+  const ref008 = r.findings.filter(f => f.rule === "REF008");
+  const ref009 = r.findings.filter(f => f.rule === "REF009");
+  check("REF008 flags a word-prefixed reference", fired.has("REF008"));
+  check("REF009 flags a name written before a citation", fired.has("REF009"));
+  // Figure~ref, Table~ref, Section~ref, and Figure~autoref (the doubled word)
+  check("REF008 count", ref008.length === 4, String(ref008.length));
+  // "Colley et al.", "Rukzio and Colley", "Bazilinskyy" -- but not the bare cite
+  check("REF009 count", ref009.length === 3, String(ref009.length));
+  check("REF008 catches the doubled word", ref008.some(f => f.message.includes("twice")));
+  check("REF009 suggests citet under acmart",
+        ref009.every(f => (f.fix || "").includes("citet")), ref009.map(f => f.fix).join(" | "));
+  check("REF004 stands aside for REF008", !fired.has("REF004"));
+}
+
 // --- 4. behaviour that protects the user ----------------------------------
 console.log("\nbehaviour");
 {

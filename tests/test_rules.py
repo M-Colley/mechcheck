@@ -190,6 +190,76 @@ def test_disabled_rules_do_not_run(tmp_path):
     assert "STY001" not in rules_fired(result)
 
 
+
+# --------------------------------------------------------------------------- #
+# reference style: prefer utoref and \citet
+# --------------------------------------------------------------------------- #
+
+def test_prefixed_ref_suggests_autoref(tmp_path):
+    root = build(tmp_path, "As shown in Figure~" + BS + "ref{fig:a}, it holds.")
+    result = check(root, only=["REF008"])
+    assert "REF008" in rules_fired(result)
+    assert "autoref" in result.findings[0].message
+
+
+def test_plain_autoref_is_not_reported(tmp_path):
+    root = build(tmp_path, "As shown in " + BS + "autoref{fig:a}, it holds.")
+    assert "REF008" not in rules_fired(check(root, only=["REF008"]))
+
+
+def test_word_before_autoref_is_a_doubled_word(tmp_path):
+    root = build(tmp_path, "See Figure~" + BS + "autoref{fig:a}.")
+    result = check(root, only=["REF008"])
+    assert "twice" in result.findings[0].message
+
+
+def test_word_before_cref_is_a_doubled_word(tmp_path):
+    root = build(tmp_path, "See Table~" + BS + "Cref{tab:a}.")
+    result = check(root, only=["REF008"])
+    assert "twice" in result.findings[0].message
+
+
+def test_ref004_defers_to_ref008(tmp_path):
+    """Both look at 'Figure \ref'; only the better advice should appear."""
+    root = build(tmp_path, "As shown in Figure " + BS + "ref{fig:a}.")
+    fired = rules_fired(check(root))
+    assert "REF008" in fired
+    assert "REF004" not in fired
+
+
+def test_name_before_cite_suggests_citet(tmp_path):
+    preamble = BS + "documentclass{acmart}" + chr(10)
+    root = build(tmp_path, "Colley et al.~" + BS + "cite{c2021} showed this.", preamble=preamble)
+    result = check(root, only=["REF009"])
+    assert "REF009" in rules_fired(result)
+    assert "citet" in result.findings[0].fix
+
+
+def test_two_names_before_cite(tmp_path):
+    preamble = BS + "documentclass{acmart}" + chr(10)
+    root = build(tmp_path, "Rukzio and Colley~" + BS + "cite{r2020} disagree.", preamble=preamble)
+    assert "REF009" in rules_fired(check(root, only=["REF009"]))
+
+
+def test_bare_cite_is_not_reported(tmp_path):
+    preamble = BS + "documentclass{acmart}" + chr(10)
+    root = build(tmp_path, "This has been shown before " + BS + "cite{c2021}.", preamble=preamble)
+    assert "REF009" not in rules_fired(check(root, only=["REF009"]))
+
+
+def test_float_word_before_cite_is_not_a_name(tmp_path):
+    preamble = BS + "documentclass{acmart}" + chr(10)
+    root = build(tmp_path, "The values in Table~" + BS + "cite{c2021} are wrong.", preamble=preamble)
+    assert "REF009" not in rules_fired(check(root, only=["REF009"]))
+
+
+def test_biblatex_projects_are_told_to_use_textcite(tmp_path):
+    preamble = (BS + "documentclass{article}" + chr(10)
+                + BS + "usepackage{biblatex}" + chr(10))
+    root = build(tmp_path, "Colley et al.~" + BS + "cite{c2021} showed this.", preamble=preamble)
+    result = check(root, only=["REF009"])
+    assert "textcite" in result.findings[0].fix
+
 # --------------------------------------------------------------------------- #
 # robustness
 # --------------------------------------------------------------------------- #
