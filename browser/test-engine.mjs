@@ -148,6 +148,31 @@ console.log("\nfixture: refstyle (autoref and citet preferences)");
   check("REF004 stands aside for REF008", !fired.has("REF004"));
 }
 
+console.log("\nfixture: selftest (the document you paste into Overleaf)");
+{
+  const r = await run("selftest", { profile: "paper-anonymous", stage: "submission", venue: "autoui" });
+  const counts = {};
+  for (const f of r.findings) counts[f.rule] = (counts[f.rule] || 0) + 1;
+  // The same list is asserted by tests/test_selftest.py. If the two ever
+  // disagree, one implementation has drifted -- which is the single most
+  // damaging thing that could happen to a checker people run in two places.
+  const EXPECTED = {
+    ABB001: 1, ACC001: 2, ACC004: 1, ANON001: 1, ANON003: 1, ANON004: 2, ANON005: 1,
+    BIB006: 1, BIB008: 1, BIB009: 1, FIG003: 1, MET003: 1, MET004: 1,
+    POL001: 1, POL002: 1, POL003: 1, POL004: 1, POL005: 1, POL006: 1, POL007: 1,
+    REF001: 1, REF008: 3, REF009: 2, STY001: 1, STY003: 1, STY005: 1, STY007: 1,
+    VEN002: 2, VEN003: 1, VEN004: 2,
+  };
+  const wrong = [];
+  for (const [id, n] of Object.entries(EXPECTED))
+    if (counts[id] !== n) wrong.push(`${id}: expected ${n}, got ${counts[id] || 0}`);
+  for (const id of Object.keys(counts))
+    if (!(id in EXPECTED)) wrong.push(`${id}: unexpected (${counts[id]})`);
+  check("self-test document produces exactly the documented findings",
+        wrong.length === 0, wrong.join("; "));
+  check("self-test totals", r.findings.length === 37, String(r.findings.length));
+}
+
 // --- 4. behaviour that protects the user ----------------------------------
 console.log("\nbehaviour");
 {
