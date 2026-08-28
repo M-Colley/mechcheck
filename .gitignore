@@ -16,3 +16,9 @@ mechcheck-report.md
 mechcheck-report.txt
 digest.md
 extension/test-harness.built.html
+
+# Fixtures are inputs, not build output. The real Overleaf log under
+# tests/fixtures/ is the whole point of those tests, and *.log above hid it
+# until a fresh clone in CI failed.
+!tests/fixtures/**/*.log
+!tests/fixtures/**/*.pdf

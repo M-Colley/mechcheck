@@ -3,7 +3,7 @@ name: mechcheck self-test
 # This is the workflow for the checker's own repository: it tests the Python
 # package, and -- crucially -- compiles a real LaTeX document against
 # mechcheck.sty. The .sty cannot be meaningfully unit-tested any other way, so
-# this job is the thing that proves the in-Overleaf layer works.
+# that job is the thing that proves the in-Overleaf layer works.
 
 on:
   push:
@@ -13,14 +13,19 @@ on:
 jobs:
   python:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.10', '3.12']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
       - run: pip install -e ".[dev]"
+
       - name: Unit tests
         run: python -m pytest -q
+
       - name: Check the rule reference is up to date
         run: |
           mechcheck rules --markdown > /tmp/rules.md
@@ -28,96 +33,48 @@ jobs:
             echo "::error::docs/rules.md is stale — run: mechcheck rules --markdown > docs/rules.md"
             exit 1
           }
+
       - name: Self-check the example projects (offline)
         run: |
           mechcheck check tests/fixtures/sample --offline --fail-on never
           mechcheck check tests/fixtures/paper --venue autoui --offline --fail-on never
-    strategy:
-      matrix:
-        python: ['3.10', '3.12']
+
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: The browser engine, against the same fixtures as Python
+        run: node browser/test-engine.mjs
+
+      - name: The extension's engine must be in sync with the page
+        run: |
+          node browser/build-extension.mjs
+          git diff --exit-code -- extension/engine.js || {
+            echo "::error::extension/engine.js is stale — run: node browser/build-extension.mjs"
+            exit 1
+          }
 
   latex:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
+      # apt rather than a setup action: this repository cannot pull third-party
+      # actions ("Repository access blocked"), and the demo deliberately needs
+      # only a base LaTeX with expl3 and latexmk.
       - name: Install a TeX Live subset
-        uses: teatimeguest/setup-texlive-action@v3
-        with:
-          packages: |
-            scheme-basic
-            latexmk
-            l3packages
-            l3kernel
-            graphics
-            tools
-            hyperref
-            cleveref
-            booktabs
-            caption
-            xcolor
-            geometry
-            etoolbox
-
-      - name: Compile the demo against mechcheck.sty
-        working-directory: latex/demo
         run: |
-          cp ../mechcheck.sty .
-          latexmk -pdf -interaction=nonstopmode -file-line-error demo.tex
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends texlive-latex-base texlive-latex-recommended latexmk
+          pdflatex --version | head -1
 
-      - name: The package must have produced a report
-        working-directory: latex/demo
-        run: |
-          test -f mechcheck-report.txt || {
-            echo "::error::mechcheck.sty did not write mechcheck-report.txt"
-            exit 1
-          }
-          echo "--- mechcheck-report.txt ---"
-          cat mechcheck-report.txt
-
-      - name: The report must contain the planted problems
-        working-directory: latex/demo
-        run: |
-          fail=0
-          for rule in MC001 MC002 MC003 MC004; do
-            grep -q "$rule" mechcheck-report.txt || {
-              echo "::error::$rule was not detected in the demo document"
-              fail=1
-            }
-          done
-          # The well-formed figure must NOT be reported: a checker that cries
-          # wolf on correct input is worse than no checker.
-          if grep -q "fig:good" mechcheck-report.txt; then
-            echo "::error::the well-formed figure was reported — false positive"
-            fail=1
-          fi
-          # And the instrumentation self-check must not have tripped.
-          if grep -qi "could not instrument" ../demo/demo.log; then
-            echo "::error::mechcheck.sty could not attach to \\caption in this class"
-            fail=1
-          fi
-          exit $fail
-
-      - name: The opt-in [crossref] path must also compile and detect
-        working-directory: latex/demo
-        run: |
-          latexmk -pdf -interaction=nonstopmode -file-line-error demo-crossref.tex
-          mv mechcheck-report.txt crossref-report.txt || true
-          test -s crossref-report.txt
-          echo "--- crossref-report.txt ---"
-          cat crossref-report.txt
-          fail=0
-          # sec:nowhere is referenced but never defined
-          grep -q "MC006" crossref-report.txt || {
-            echo "::error::[crossref] did not detect the undefined reference"
-            fail=1
-          }
-          exit $fail
-
-      - name: The CLI must agree with the .sty about the demo
-        run: |
-          pip install -e .
-          mechcheck check latex/demo --offline --build-dir latex/demo --fail-on never
+      # One script, so the assertions cannot drift from the ones run locally.
+      - name: Verify mechcheck.sty against a real LaTeX
+        run: bash latex/verify-sty.sh
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -127,3 +84,4 @@ jobs:
             latex/demo/*.pdf
             latex/demo/*.log
             latex/demo/mechcheck-report.txt
+          if-no-files-found: ignore
