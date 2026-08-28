@@ -50,6 +50,33 @@ Findings can be filtered by severity, by category, or by a text search, and
 exported with **Copy as Markdown** / **Download report** — which is what to
 paste into an email or a supervision issue.
 
+## Fixing the trivial ones
+
+Some findings have exactly one right answer. For those, press **Fix N
+automatically** and the page hands you the corrected file: copy it, open that
+file in Overleaf, select all, paste.
+
+| Fixed automatically | Left to you |
+|---|---|
+| `ABB001` a second expansion of an abbreviation | `ACC001` alt text — no machine can write it |
+| `REF008` `Figure~ef{x}` becomes `utoref{x}` | `BIO*` whether a reference is real |
+| `REF009` `Colley et al.~\cite{k}` becomes `\citet{k}` | anything needing a sentence rewritten |
+| `STY003` a repeated word | |
+| `STY005` a space before punctuation | |
+| `STY007` `10-20` becomes `10--20` | |
+
+A page cannot write into an Overleaf project, which is why it gives you the
+file rather than editing it. Two things make that safe to paste:
+
+* **Only unambiguous rules carry a fix.** A rule earns one when the correction
+  is fully determined, never when it needs judgement.
+* **Overlapping edits are refused, not merged.** If two fixes touch the same
+  span, one applies and the other is reported as skipped.
+
+The same fixes are available from the command line with `mechcheck fix .`,
+which additionally re-checks the project afterwards and reports anything that
+was not there before.
+
 ## Silencing a check
 
 Same syntax as every other layer, and it stays visible in the source:

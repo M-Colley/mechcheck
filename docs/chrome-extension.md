@@ -41,6 +41,20 @@ Compiled output is a best-effort extra: it tries the known `output.log` and
 `output.pdf` paths, and if this Overleaf version does not expose them, the
 compile and page-count rules simply report as skipped rather than guessing.
 
+## Fixing
+
+After a check, the panel's **Fix N** button appears. It produces the corrected
+file for you to copy and paste over the original in Overleaf.
+
+It deliberately does not edit the document for you. Overleaf's editor is a CRDT
+synced over a websocket; writing into it behind the editor's back is a good way
+to corrupt somebody's paper. Handing over the file is the honest option.
+
+Only rules with exactly one right answer are fixed — abbreviations reintroduced,
+`Figure~ef` to `utoref`, a name before `\cite` to `\citet`, repeated words,
+a space before punctuation, hyphen ranges. Alt text and anything needing
+judgement are never touched.
+
 ## Privacy
 
 - Runs only on `overleaf.com/project/*` pages.

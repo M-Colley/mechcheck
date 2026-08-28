@@ -19,8 +19,8 @@ const script = html.slice(html.indexOf("<script>") + 8, html.lastIndexOf("</scri
 const engine = script.slice(0, script.indexOf("/* ===================== 7. Interface"));
 
 const module = await import("data:text/javascript;base64," +
-  Buffer.from(engine + "\nexport { runChecks, TexProject, parseBib, similarity, findMainDocument, RULES, SEV, collectFiles, readZip };").toString("base64"));
-const { runChecks, parseBib, similarity, findMainDocument, RULES, SEV } = module;
+  Buffer.from(engine + "\nexport { runChecks, applyFixes, TexProject, parseBib, similarity, findMainDocument, RULES, SEV, collectFiles, readZip };").toString("base64"));
+const { runChecks, applyFixes, parseBib, similarity, findMainDocument, RULES, SEV } = module;
 
 // --- helpers ---------------------------------------------------------------
 function loadDir(dir) {
@@ -290,6 +290,60 @@ console.log("\nreal-paper false positives");
   const r = await runChecks(withFigure, opts);
   check("a figure PDF is not treated as the compiled output",
         !r.stats.hasPdf, String(r.stats.hasPdf));
+}
+
+console.log("\nautomatic fixes");
+{
+  const enc = new TextEncoder();
+  const source = String.raw`\documentclass{acmart}
+\begin{document}
+The Automated Driving System (ADS) is new. The ADS works well.
+Later the Automated Driving System (ADS) appears again here.
+As shown in Figure~\ref{fig:a} and Table~\ref{tab:b}.
+Colley et al.~\cite{a} showed this. Bazilinskyy~\cite{b} did too.
+This is is repeated, with a space before , this comma, and 10-20 people.
+\end{document}
+`;
+  const load = text => new Map([["main.tex", enc.encode(text)]]);
+  const opts = { profile: "paper", verify: false, maxPerRule: 0 };
+
+  const before = await runChecks(load(source), opts);
+  const fx = applyFixes(before);
+  const fixed = fx.files.get("main.tex");
+
+  check("a corrected file is produced", !!fixed);
+  check("the prefixed reference becomes autoref", fixed.includes(String.raw`\autoref{fig:a}`));
+  check("the name before a citation becomes citet", fixed.includes(String.raw`\citet{a}`));
+  check("the repeated word is gone", fixed.includes("This is repeated,"));
+  check("the space before punctuation is closed up", !fixed.includes(" ,"));
+  check("the numeric range gets an en dash", fixed.includes("10--20"));
+
+  // ABB001 must delete only the words that make the acronym.
+  check("the second expansion is collapsed",
+        fixed.includes("Later the ADS appears again here."), fixed.split("\n")[3]);
+  check("the first expansion is kept",
+        (fixed.match(/Automated Driving System \(ADS\)/g) || []).length === 1);
+
+  // A lone surname is not a REF009 case, so the text must be untouched.
+  check("a lone surname is left alone", fixed.includes(String.raw`Bazilinskyy~\cite{b}`));
+  check("alt text is never fixed", !fx.applied.some(a => a.rule.startsWith("ACC")));
+
+  // The safety property: re-check the corrected text; nothing may be worse.
+  const after = await runChecks(load(fixed), opts);
+  const tally = res => {
+    const c = {};
+    for (const f of res.findings.concat(res.truncated || [])) c[f.rule] = (c[f.rule] || 0) + 1;
+    return c;
+  };
+  const b = tally(before), a = tally(after);
+  const grew = Object.entries(a).filter(([k, v]) => v > (b[k] || 0));
+  check("re-checking the corrected file finds nothing new", grew.length === 0, JSON.stringify(grew));
+  for (const id of ["ABB001", "REF008", "REF009", "STY003", "STY005", "STY007"])
+    check(`${id} is resolved`, !a[id], String(a[id]));
+
+  // Python asserts the same behaviours in tests/test_fixer.py.
+  const clean = await runChecks(load("\\documentclass{acmart}\n\\begin{document}\nOrdinary text here.\n\\end{document}\n"), opts);
+  check("a clean document yields no fixes", applyFixes(clean).files.size === 0);
 }
 
 // --- 5. the zip path, which is how most people will actually use it -------

@@ -256,12 +256,17 @@ class TexProject {
   _finalise() {
     const chunks = [];
     let offset = 0;
-    for (const file of this.files) for (const line of file.lines) {
-      line.offset = offset;
-      this.lines.push(line);
-      this.lineOffsets.push(offset);
-      chunks.push(line.code);
-      offset += line.code.length + 1;
+    for (const file of this.files) {
+      let local = 0;                       // offset within this file's own text
+      for (const line of file.lines) {
+        line.offset = offset;
+        line.fileOffset = local;
+        this.lines.push(line);
+        this.lineOffsets.push(offset);
+        chunks.push(line.code);
+        offset += line.code.length + 1;
+        local += line.raw.length + 1;
+      }
     }
     this.text = chunks.join("\n");
     this.prose = buildProse(this.text);
@@ -278,6 +283,21 @@ class TexProject {
   locate(offset) {
     const ln = this.lineAt(offset);
     return { file: ln.file, line: ln.lineno, col: offset - ln.offset + 1 };
+  }
+  /** The file exactly as it is, rebuilt from its lines. */
+  rawText(path) {
+    for (const f of this.files) if (f.path === path) return f.lines.map(l => l.raw).join("\n");
+    return "";
+  }
+  /** Map a span of this.text to (file, start, end) inside that file.
+      Null when the span crosses files or touches verbatim: neither may be
+      rewritten automatically. */
+  toFileSpan(start, end) {
+    const first = this.lineAt(start), last = this.lineAt(Math.max(start, end - 1));
+    if (first.file !== last.file || first.verbatim || last.verbatim) return null;
+    return { file: first.file,
+             start: first.fileOffset + (start - first.offset),
+             end: last.fileOffset + (end - last.offset) };
   }
   excerpt(offset, width = 96) {
     const s = (this.lineAt(offset).raw || "").trim();
@@ -1060,17 +1080,25 @@ rule({ id:"REF008", title:"Prefixed cross-reference where \\autoref would do", c
   why:"Writing the word yourself means two places to keep in step, and it is the half that goes wrong: a table renumbered into a figure still reads 'Table'. \\autoref supplies the word from the label's own type.",
   fix:"Replace Figure~\\ref{x} with \\autoref{x}.",
   run(ctx){ PREFIXED_REF.lastIndex = 0;
-    let m; while ((m = PREFIXED_REF.exec(ctx.project.text)) !== null) {
+    const text = ctx.project.text;
+    let m; while ((m = PREFIXED_REF.exec(text)) !== null) {
       const word = m[1], cmd = m[2];
+      // The argument is needed to rewrite the whole invocation, braces included.
+      const group = readGroup(text, skipSpace(text, m.index + m[0].length));
+      const key = group ? group.inner : null;
+      const argEnd = group ? group.end : m.index + m[0].length;
       if (cmd === "ref") {
         ctx.add("REF008", `write \\autoref instead of '${word}~\\ref'`,
           { at: m.index, context: ctx.project.excerpt(m.index),
-            fix: `Replace '${word}~\\ref{x}' with \\autoref{x}.` });
+            fix: `Replace '${word}~\\ref{x}' with \\autoref{x}.`,
+            edit: key ? ctx.editSpan(m.index, argEnd, `\\autoref{${key}}`,
+                                     `${word}~\\ref{${key}} -> \\autoref{${key}}`) : null });
       } else {
         // cleveref and \autoref print the word themselves, so this prints it twice.
         ctx.add("REF008", `'${word}~\\${cmd}' prints the word twice — \\${cmd} supplies it already`,
           { at: m.index, context: ctx.project.excerpt(m.index),
-            fix: `Delete '${word}~' and keep \\${cmd}{...}.` });
+            fix: `Delete '${word}~' and keep \\${cmd}{...}.`,
+            edit: ctx.editSpan(m.index, m.index + word.length + 1, "", `delete '${word}~'`) });
       }
     }}});
 
@@ -1091,8 +1119,15 @@ rule({ id:"REF009", title:"Author name written out before \\cite", cat:"crossref
       const advice = command
         ? `Replace '${shown}~\\${m[3]}{key}' with ${command}{key}.`
         : "Load natbib (or biblatex) to get a textual citation command, then use \\citet{key}.";
+      const group = readGroup(ctx.project.text, skipSpace(ctx.project.text, m.index + m[0].length));
+      const key = group ? group.inner : null;
+      const argEnd = group ? group.end : m.index + m[0].length;
       ctx.add("REF009", `'${shown}~\\${m[3]}' writes out a name the citation style can produce`,
-        { at: m.index, context: ctx.project.excerpt(m.index), fix: advice });
+        { at: m.index, context: ctx.project.excerpt(m.index), fix: advice,
+          edit: (command && key)
+            ? ctx.editSpan(m.index, argEnd, `${command}{${key}}`,
+                           `${shown}~\\${m[3]}{${key}} -> ${command}{${key}}`)
+            : null });
     }}});
 
 /* ---- ABB: abbreviations ---- */
@@ -1110,6 +1145,21 @@ function abbManaged(ctx) {
   const pkgs = ctx.project.packages();
   return ["acronym","glossaries","glossaries-extra","acro","nomencl","abbrevs"].some(p => pkgs.has(p));
 }
+/** Shortest trailing run of words that still yields the acronym. */
+function minimalExpansion(expansion, acronym) {
+  const words = expansion.split(" ");
+  // From the shortest suffix upwards: the other direction always matches the
+  // whole string first and trims nothing.
+  for (let start = words.length - 1; start >= 0; start--) {
+    const candidate = words.slice(start).join(" ");
+    const initials = candidate.replace(/-/g, " ").split(/\s+/).filter(Boolean)
+      .map(w => w[0]).join("");
+    if (initialsMatch(initials, acronym))
+      return { expansion: candidate, trimmed: expansion.length - candidate.length };
+  }
+  return { expansion, trimmed: 0 };
+}
+
 function initialsMatch(initials, acronym) {
   const a = acronym.toUpperCase(), i = initials.toUpperCase().replace(/[^A-Z]/g, "");
   if (i === a) return true;
@@ -1129,9 +1179,16 @@ function abbDefinitions(ctx) {
     const plural = /s$/.test(acronym) && acronym.slice(0, -1) === acronym.slice(0, -1).toUpperCase();
     const core = plural ? acronym.slice(0, -1) : acronym;
     if (!initialsMatch(initials, core)) continue;
+    // Keep only the words that actually produce the acronym: the pattern
+    // allows stop-words, so "Later the Automated Driving System (ADS)" would
+    // otherwise count "Later the" as part of the term -- and the auto-fix
+    // deletes the matched span.
+    const trim = minimalExpansion(expansion, core);
     const key = core.toUpperCase();
     if (!found.has(key)) found.set(key, []);
-    found.get(key).push({ at: m.index + m[0].lastIndexOf("("), expansion, start: m.index });
+    found.get(key).push({ at: m.index + m[0].lastIndexOf("("), expansion: trim.expansion,
+                          start: m.index + trim.trimmed, end: m.index + m[0].length,
+                          asWritten: acronym });
   }
   ctx.cache.abb = found;
   return found;
@@ -1147,7 +1204,9 @@ rule({ id:"ABB001", title:"Abbreviation introduced more than once", cat:"languag
       for (const o of occ.slice(1))
         ctx.add("ABB001", `\`${acronym}\` was already introduced at ${first.file}:${first.line}`,
           { at: o.at, context: `${o.expansion} (${acronym})`,
-            fix: `Delete this expansion and write just \`${acronym}\`.` });
+            fix: `Delete this expansion and write just \`${acronym}\`.`,
+            edit: ctx.editSpan(o.start, o.end, o.asWritten,
+                               `${o.expansion} (${o.asWritten}) -> ${o.asWritten}`) });
     }}});
 
 rule({ id:"ABB002", title:"Abbreviation used before it is introduced", cat:"language", sev:SEV.warn,
@@ -1266,7 +1325,9 @@ rule({ id:"STY003", title:"Repeated word", cat:"style", sev:SEV.warn,
   run(ctx){ const re = /(?<![\w])([A-Za-z]{2,})\s+\1(?![\w])/gi;
     let m; while ((m = re.exec(ctx.project.prose)) !== null) {
       if (DOUBLE_OK.has(m[1].toLowerCase())) continue;
-      ctx.add("STY003", `repeated word: '${m[0].trim()}'`, { at: m.index, context: ctx.project.excerpt(m.index) });
+      ctx.add("STY003", `repeated word: '${m[0].trim()}'`,
+        { at: m.index, context: ctx.project.excerpt(m.index),
+          edit: ctx.editSpan(m.index, m.index + m[0].length, m[1], `${m[0]} -> ${m[1]}`) });
     }}});
 
 rule({ id:"STY004", title:"Straight double quotes", cat:"style", sev:SEV.info,
@@ -1289,7 +1350,10 @@ rule({ id:"STY005", title:"Space before punctuation", cat:"style", sev:SEV.warn,
     const re = /(?<=[\w)\}])[ \t]+([,.;:!?])(?=[ \t]|$)/g; let m;
     while ((m = re.exec(line.code)) !== null)
       ctx.add("STY005", `space before '${m[1]}'`,
-        { file: line.file, line: line.lineno, col: m.index + 1, context: line.raw.trim().slice(0, 96) });
+        { file: line.file, line: line.lineno, col: m.index + 1,
+          context: line.raw.trim().slice(0, 96),
+          edit: ctx.editSpan(line.offset + m.index, line.offset + m.index + m[0].length,
+                             m[1], `' ${m[1]}' -> '${m[1]}'`) });
   }}});
 
 rule({ id:"STY006", title:"Citation glued to the preceding word", cat:"style", sev:SEV.info,
@@ -1310,7 +1374,10 @@ rule({ id:"STY007", title:"Hyphen used for a numeric range", cat:"style", sev:SE
       // "Core 7-1355" is a product number. Real ranges have endpoints of
       // comparable magnitude; a one-digit to four-digit jump does not.
       if (m[2].length - m[1].length > 1) continue;
-      ctx.add("STY007", `'${m[0]}' should use an en dash: ${a}--${b}`, { at: m.index, context: ctx.project.excerpt(m.index) });
+      ctx.add("STY007", `'${m[0]}' should use an en dash: ${a}--${b}`,
+        { at: m.index, context: ctx.project.excerpt(m.index),
+          edit: ctx.editSpan(m.index, m.index + m[0].length, `${a}--${b}`,
+                             `${m[0]} -> ${a}--${b}`) });
     }}});
 
 rule({ id:"STY008", title:"Mixed British and American spelling", cat:"style", sev:SEV.warn,
@@ -2774,6 +2841,15 @@ async function runChecks(files, options) {
     project, config, bib, log, pdfBytes, pdfName, allFiles,
     cache: {}, ignoreAcronyms: options.ignoreAcronyms || [],
     ...makeFetchers(options.mailto, options.fetchJson),
+    /* Build an edit from a span of project.text. Returns null when the span
+       is not safely rewritable, so a rule can pass the result straight on. */
+    editSpan(start, end, replacement, describe) {
+      const mapped = project.toFileSpan(start, end);
+      if (!mapped) return null;
+      const was = project.rawText(mapped.file).slice(mapped.start, mapped.end);
+      return { file: mapped.file, start: mapped.start, end: mapped.end,
+               replacement, describe: describe || `${was} -> ${replacement}` };
+    },
     add(id, message, opts = {}) {
       let file = opts.file, line = opts.line, col = opts.col;
       if (opts.at !== undefined) { const loc = project.locate(opts.at); file = loc.file; line = loc.line; col = loc.col; }
@@ -2784,6 +2860,8 @@ async function runChecks(files, options) {
         file: file || null, line: line ?? null, col: col ?? null,
         context: opts.context || null,
         fix: opts.fix || (spec && spec.fix) || null,
+        // Present only when the correction is unambiguous.
+        edit: opts.edit || null,
         category: spec ? spec.cat : "other",
       });
     },
@@ -2850,9 +2928,45 @@ async function runChecks(files, options) {
   };
 }
 
+/* ===================== 6b. Applying the safe fixes ======================= */
+
+/* Only rules whose correction is fully determined carry an edit; everything
+   else stays a finding for a person. The result is corrected file *text*: a
+   web page cannot write into an Overleaf project, so what it can honestly
+   offer is the finished file to paste back. */
+function applyFixes(result) {
+  const byFile = new Map();
+  for (const f of result.findings.concat(result.truncated || [])) {
+    if (!f.edit) continue;
+    if (!byFile.has(f.edit.file)) byFile.set(f.edit.file, []);
+    byFile.get(f.edit.file).push(f);
+  }
+
+  const files = new Map();
+  const applied = [], skipped = [];
+  for (const [path, findings] of byFile) {
+    findings.sort((a, b) => b.edit.start - a.edit.start);   // right to left
+    const original = result.project.rawText(path);
+    let text = original, writtenFrom = text.length;
+    for (const f of findings) {
+      const e = f.edit;
+      if (e.end > writtenFrom) { skipped.push({ rule: f.rule, path, why: "overlaps an earlier fix" }); continue; }
+      if (!(e.start >= 0 && e.start <= e.end && e.end <= text.length)) {
+        skipped.push({ rule: f.rule, path, why: "span no longer matches the file" });
+        continue;
+      }
+      text = text.slice(0, e.start) + e.replacement + text.slice(e.end);
+      writtenFrom = e.start;
+      applied.push({ rule: f.rule, path, describe: e.describe });
+    }
+    if (text !== original) files.set(path, text);
+  }
+  return { files, applied, skipped };
+}
+
 /* The content script needs these; a content script shares one isolated world
    with the other scripts on its list, so plain globals are enough. */
 globalThis.mechcheck = {
-  runChecks, collectFiles, readZip, normalisePath, findMainDocument,
+  runChecks, applyFixes, collectFiles, readZip, normalisePath, findMainDocument,
   RULES, RULES_BY_ID, SEV, SEV_NAME, VENUES, PROFILES, STAGES, Config,
 };

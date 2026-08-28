@@ -41,7 +41,7 @@ const footer = `
 /* The content script needs these; a content script shares one isolated world
    with the other scripts on its list, so plain globals are enough. */
 globalThis.mechcheck = {
-  runChecks, collectFiles, readZip, normalisePath, findMainDocument,
+  runChecks, applyFixes, collectFiles, readZip, normalisePath, findMainDocument,
   RULES, RULES_BY_ID, SEV, SEV_NAME, VENUES, PROFILES, STAGES, Config,
 };
 `;

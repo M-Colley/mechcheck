@@ -172,6 +172,22 @@ window.fetch = async (url) => {
 
     say("report renders as Markdown", C.reportMarkdown(result).includes("mechcheck —"));
 
+    // the fix path: a button that becomes enabled, then a corrected file
+    const fixBtn = shadow.querySelector(".fix");
+    say("the fix button reports how many are fixable",
+        /Fix \d+/.test(fixBtn.textContent) && !fixBtn.disabled, fixBtn.textContent);
+    const fixes = globalThis.mechcheck.applyFixes(result);
+    say("a corrected file is produced", fixes.files.size >= 1,
+        [...fixes.files.keys()].join(", "));
+    say("the corrected file still looks like LaTeX",
+        (fixes.files.get("main.tex") || "").includes(String.raw`\begin{document}`));
+    say("alt text is never among the fixes",
+        !fixes.applied.some(a => a.rule.startsWith("ACC")),
+        fixes.applied.map(a => a.rule).join(","));
+    C.showFixes(result);
+    say("clicking Fix shows the corrected file to copy",
+        shadow.querySelector(".body").textContent.includes("Copy corrected file"));
+
     // error path
     C.renderError(new Error("Overleaf refused the download (HTTP 403)."));
     say("failure is explained, not silent", shadow.querySelector(".empty").textContent.includes("403"));

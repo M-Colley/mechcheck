@@ -252,6 +252,7 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
       <select class="venue" title="Venue"></select>
       <label class="toggle"><input type="checkbox" class="verify"> verify refs</label>
       <button class="btn primary check">Check</button>
+      <button class="btn fix" disabled>Fix</button>
     </div>
     <div class="progress"><i></i></div>
     <div class="note hidden"></div>
@@ -272,6 +273,7 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
     });
     q(".close").addEventListener("click", () => q(".panel").classList.add("hidden"));
     q(".check").addEventListener("click", run);
+    q(".fix").addEventListener("click", () => showFixes());
     q(".copy").addEventListener("click", copyReport);
 
     fillSelect(q(".profile"), Object.keys(M.PROFILES).map(k => [k, k]));
@@ -400,6 +402,11 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
       body.appendChild(row);
     }
 
+    const fixable = result.findings.concat(result.truncated || []).filter(f => f.edit).length;
+    const fixButton = root.querySelector(".fix");
+    fixButton.disabled = !fixable;
+    fixButton.textContent = fixable ? `Fix ${fixable}` : "Fix";
+
     setStatus(`${counts.error} error${counts.error === 1 ? "" : "s"}, ${counts.warn} warning${counts.warn === 1 ? "" : "s"}`
       + (result.suppressed.length ? ` · ${result.suppressed.length} silenced` : ""));
   }
@@ -411,6 +418,62 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
       `<div class="empty"><b>Could not check this project</b>${escapeHtml(err.message || String(err))}</div>`;
     setStatus("Failed");
     setNote("");
+  }
+
+  /* A content script cannot edit the Overleaf document -- it is a CRDT synced
+     over a websocket, and writing into it behind the editor's back is a good
+     way to corrupt somebody's paper. Handing over the corrected file is the
+     honest option: copy, select all in Overleaf, paste. */
+  function showFixes(result) {
+    // Defaulting to the last run keeps the click handler trivial; taking a
+    // result explicitly is what lets the harness exercise this path.
+    const target = (result && result.findings) ? result : lastResult;
+    if (!target) return;
+    const fx = M.applyFixes(target);
+    const body = root.querySelector(".body");
+    body.innerHTML = "";
+    if (!fx.files.size) {
+      body.innerHTML = `<div class="empty">Nothing here can be fixed automatically.</div>`;
+      return;
+    }
+    const intro = document.createElement("div");
+    intro.className = "note";
+    intro.textContent = `${fx.applied.length} fix(es) ready. Copy the corrected file, then in `
+      + "Overleaf open it, select all, and paste. Only rules with exactly one right answer "
+      + "are fixed; alt text and anything needing judgement are left alone.";
+    body.appendChild(intro);
+
+    for (const [path, text] of fx.files) {
+      const n = fx.applied.filter(a => a.path === path).length;
+      const row = document.createElement("div");
+      row.className = "finding";
+      const stripe = document.createElement("div"); stripe.className = "stripe";
+      const main = document.createElement("div"); main.className = "main";
+      const top = document.createElement("div"); top.className = "top";
+      const name = document.createElement("span"); name.className = "rule"; name.textContent = path;
+      const count = document.createElement("span"); count.className = "loc";
+      count.textContent = `${n} change${n === 1 ? "" : "s"}`;
+      top.append(name, count);
+      const button = document.createElement("button");
+      button.className = "btn primary";
+      button.textContent = "Copy corrected file";
+      button.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          button.textContent = "Copied — paste over the file in Overleaf";
+        } catch (err) {
+          button.textContent = "Could not copy (clipboard blocked)";
+        }
+      });
+      const what = document.createElement("div");
+      what.className = "fix";
+      what.textContent = fx.applied.filter(a => a.path === path)
+        .slice(0, 6).map(a => a.describe).join(" · ");
+      main.append(top, what, button);
+      row.append(stripe, main);
+      body.appendChild(row);
+    }
+    setStatus(`${fx.applied.length} fix(es) ready to copy`);
   }
 
   const escapeHtml = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -454,5 +517,5 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
      chrome API and a mocked fetch. Costs nothing in production and means the
      rendering path is not shipped untested. */
   globalThis.__mechcheckContent = { run, render, renderError, ensureUI, reportMarkdown,
-                                    fetchProjectZip, fetchOutputs, PROJECT_ID };
+                                    fetchProjectZip, fetchOutputs, showFixes, PROJECT_ID };
 })();
