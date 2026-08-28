@@ -126,6 +126,8 @@ class SourceLine:
     verbatim: bool = False
     #: offset of this line's first character inside ``TexProject.text``
     offset: int = 0
+    #: offset of the same character inside its own file's raw text
+    file_offset: int = 0
 
 
 @dataclass
@@ -294,12 +296,15 @@ class TexProject:
         chunks = []
         offset = 0
         for tf in self.files:
+            local = 0
             for ln in tf.lines:
                 ln.offset = offset
+                ln.file_offset = local
                 self.lines.append(ln)
                 self._line_offsets.append(offset)
                 chunks.append(ln.code)
                 offset += len(ln.code) + 1  # +1 for the joining newline
+                local += len(ln.raw) + 1
         self.text = "\n".join(chunks)
         self.prose = build_prose_view(self.text)
 
@@ -408,6 +413,26 @@ class TexProject:
         cls, _ = self.documentclass()
         return cls.lower() in {"book", "report", "scrbook", "scrreprt", "memoir", "thesis"} or bool(
             self.commands("chapter", 1))
+
+    def raw_text(self, path: str) -> str:
+        """The file exactly as it is on disk, rebuilt from its lines."""
+        for tf in self.files:
+            if tf.path == path:
+                return "\n".join(ln.raw for ln in tf.lines)
+        return ""
+
+    def to_file_span(self, start: int, end: int):
+        """Map a span of ``self.text`` to ``(file, start, end)`` within that file.
+
+        Returns ``None`` when the span crosses a file boundary or touches
+        verbatim content, neither of which may be rewritten automatically.
+        """
+        first, last = self.line_at(start), self.line_at(max(start, end - 1))
+        if first.file != last.file or first.verbatim or last.verbatim:
+            return None
+        return (first.file,
+                first.file_offset + (start - first.offset),
+                last.file_offset + (end - last.offset))
 
     def rel(self, path: str) -> str:
         try:

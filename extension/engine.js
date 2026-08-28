@@ -714,6 +714,9 @@ const RULES = [];
 const RULES_BY_ID = {};
 function rule(spec) { RULES.push(spec); RULES_BY_ID[spec.id] = spec; }
 
+const UNREFERENCED_LABEL_EXEMPT = new Set(["fig","figure","tab","table",
+  "sec","subsec","subsubsec","section","chap","chapter","part","app","appendix"]);
+
 const REF_CMDS = ["ref","cref","Cref","crefrange","Crefrange","autoref","vref","pageref","nameref","labelcref","subref","eqref"];
 const CITE_CMDS = ["cite","citep","citet","citeauthor","citeyear","citealp","citealt","citenum","parencite",
                    "textcite","autocite","footcite","nocite","citeA","shortcite","fullcite"];
@@ -954,7 +957,9 @@ rule({ id:"REF002", title:"Label never referenced", cat:"crossref", sev:SEV.info
     for (const c of ctx.project.commands("label", 1)) {
       const key = c.arg(0).trim();
       if (!key || refs.has(key) || seen.has(key)) continue;
-      if (["fig","figure","tab","table"].includes(key.split(":")[0].toLowerCase())) continue;
+      // Floats are covered by FIG003. Sectioning labels are exempt outright:
+      // authors label sections so a reference *can* be made, and most never are.
+      if (UNREFERENCED_LABEL_EXEMPT.has(key.split(":")[0].toLowerCase())) continue;
       seen.add(key);
       ctx.add("REF002", `label \`${key}\` is never referenced`, { at: c.start, context: ctx.project.excerpt(c.start) });
     }}});
@@ -1073,13 +1078,15 @@ rule({ id:"REF009", title:"Author name written out before \\cite", cat:"crossref
   why:"'Colley et al. [12]' spells out a name the bibliography style can produce itself, so the two drift apart when the entry changes; a textual citation command keeps them in one place.",
   fix:"Replace 'Name et al.~\\cite{key}' with \\citet{key} (natbib/acmart) or \\textcite{key} (biblatex).",
   run(ctx){ const command = textualCiteCommand(ctx);
-    const includeSingle = ctx.config.option("REF009", "include_single_names", true);
+    const includeSingle = ctx.config.option("REF009", "include_single_names", false);
     NAME_BEFORE_CITE.lastIndex = 0;
     let m; while ((m = NAME_BEFORE_CITE.exec(ctx.project.text)) !== null) {
       const name = m[1];
       if (NOT_A_NAME.has(name.toLowerCase())) continue;
       const rest = (m[2] || "").trim();
       if (!rest && !includeSingle) continue;
+      // ALL-CAPS before a citation is an acronym (VR, ANOVA, ADMS), not a surname.
+      if (name === name.toUpperCase()) continue;
       const shown = (name + " " + rest).trim();
       const advice = command
         ? `Replace '${shown}~\\${m[3]}{key}' with ${command}{key}.`
@@ -1092,7 +1099,9 @@ rule({ id:"REF009", title:"Author name written out before \\cite", cat:"crossref
 const ABB_COMMON = new Set(["AI","API","CPU","GPU","CSV","PDF","HTML","HTTP","HTTPS","URL","USB","RAM","ROM",
   "OS","PC","ID","IT","UK","USA","US","EU","GDPR","ISO","IEEE","ACM","CHI","DOI","FAQ","GPS","LED","PIN","RGB",
   "SQL","XML","JSON","YAML","OK","TV","3D","2D","1D","AM","PM","CI","CD","IRB","ANOVA","SD","SE","RQ","LLM",
-  "ML","DL","NLP","TODO","FIXME","XXX","TBD","HACK","NOTE"]);
+  "ML","DL","NLP","TODO","FIXME","XXX","TBD","HACK","NOTE",
+  "NASA","HCI","VR","AR","XR","MR","UI","UX","HMD","GB","MB","TB","KB",
+  "HZ","FPS","SUS","TLX","IQR","SPSS"]);
 const ABB_DEF = /((?:[A-Z][\w-]*|of|the|for|and|in|on|to|a|an)(?:[ -](?:[A-Za-z][\w-]*|of|the|for|and|in|on|to|a|an)){0,7})\s*\(([A-Z][A-Za-z]{1,9}s?)\)/g;
 const ABB_USE = /(?<![\w\\])([A-Z]{2,9})(?:s|es)?(?![\w])/g;
 const NOT_ACRONYM = /^(?:[IVXLCDM]+|[A-Z]|\d+[A-Z]*|[A-Z]{2}\d+)$/;
@@ -1298,6 +1307,9 @@ rule({ id:"STY007", title:"Hyphen used for a numeric range", cat:"style", sev:SE
     let m; while ((m = re.exec(ctx.project.prose)) !== null) {
       const a = +m[1], b = +m[2];
       if (b <= a) continue;
+      // "Core 7-1355" is a product number. Real ranges have endpoints of
+      // comparable magnitude; a one-digit to four-digit jump does not.
+      if (m[2].length - m[1].length > 1) continue;
       ctx.add("STY007", `'${m[0]}' should use an en dash: ${a}--${b}`, { at: m.index, context: ctx.project.excerpt(m.index) });
     }}});
 
@@ -1727,18 +1739,39 @@ rule({ id:"STR003", title:"Section with exactly one subsection", cat:"structure"
 rule({ id:"STR004", title:"Empty section", cat:"structure", sev:SEV.warn,
   why:"A heading immediately followed by another heading is a placeholder that was never filled in.",
   fix:"Write the section, or delete the heading.",
-  run(ctx){ const items = headings(ctx), minimum = 15;
+  run(ctx){ const items = headings(ctx), minimum = 5;
     for (let i = 0; i < items.length; i++) {
-      const stop = i + 1 < items.length ? items[i + 1].start : ctx.project.prose.length;
+      // A section opening straight onto a subsection is ordinary writing, not a
+      // placeholder. Only an entirely empty subtree is one.
+      let stop = ctx.project.prose.length;
+      for (let j = i + 1; j < items.length; j++) {
+        if (items[j].level <= items[i].level) { stop = items[j].start; break; }
+      }
       const n = wordsIn(ctx.project.prose.slice(items[i].cmd.end, stop));
       if (n >= minimum) continue;
-      ctx.add("STR004", `\\${items[i].name} "${items[i].title.slice(0, 40)}" has ${n} words of text`, { at: items[i].start });
+      ctx.add("STR004",
+        `\\${items[i].name} "${items[i].title.slice(0, 40)}" and everything under it has ${n} words of text`,
+        { at: items[i].start });
     }}});
 
 rule({ id:"STR005", title:"Inconsistent heading capitalisation", cat:"structure", sev:SEV.info,
   why:"Title Case in one heading and sentence case in the next is the most visible inconsistency in a table of contents.",
   fix:"Pick one convention for all headings of the same level.",
-  run(ctx){ const items = headings(ctx).filter(h => h.level >= 2);
+  run(ctx){
+    // Compare like with like: sections in Title Case and subsections in
+    // sentence case is a deliberate house style, and comparing across levels
+    // reported every section of a real paper as wrong.
+    const byLevel = new Map();
+    for (const h of headings(ctx)) {
+      if (h.level < 2) continue;
+      if (!byLevel.has(h.level)) byLevel.set(h.level, []);
+      byLevel.get(h.level).push(h);
+    }
+    for (const items of byLevel.values()) headingCaseWithin(ctx, items);
+  }});
+
+function headingCaseWithin(ctx, items) {
+  {
     if (items.length < 4) return;
     const isTitleCase = t => {
       const words = t.replace(/[^\w\s'-]/g, "").split(/\s+/).filter(Boolean);
@@ -1755,7 +1788,9 @@ rule({ id:"STR005", title:"Inconsistent heading capitalisation", cat:"structure"
       const style = majority ? "Title Case" : "sentence case";
       ctx.add("STR005", `heading "${f.h.title.slice(0, 45)}" is not in ${style}, unlike most others`,
         { at: f.h.start, fix: `Rewrite it in ${style}.` });
-    }}});
+    }
+  }
+}
 
 rule({ id:"STR006", title:"Heading ends with a period", cat:"structure", sev:SEV.info,
   why:"Headings are labels, not sentences.", fix:"Remove the trailing period.",
@@ -1795,6 +1830,14 @@ rule({ id:"STR009", title:"Vague internal reference", cat:"structure", sev:SEV.i
     let m; while ((m = re.exec(ctx.project.prose)) !== null)
       ctx.add("STR009", `vague internal reference: '${m[0]}'`, { at: m.index, context: ctx.project.excerpt(m.index) });
   }});
+
+/* Sections whose whole purpose is to be short: comparing them against the
+   median length of a Results section says nothing. */
+const SHORT_BY_DESIGN = ["open science", "acknowledgment", "acknowledgement",
+  "danksagung", "data availability", "availability statement", "declaration",
+  "conflict of interest", "competing interest", "funding", "ethics", "ethical",
+  "credit", "author contribution", "supplementary", "appendix", "abstract",
+  "keywords", "ccs concepts", "disclosure", "preregistration", "artifact"];
 
 /* ---- MET: counts ---- */
 rule({ id:"MET001", title:"Word count over the limit", cat:"metrics", sev:SEV.warn,
@@ -1865,6 +1908,8 @@ rule({ id:"MET005", title:"Section far shorter than the rest", cat:"metrics", se
     if (!median) return;
     for (const b of bounds) {
       if (b.n >= Math.max(60, median * 0.15)) continue;
+      const title = b.sec.arg(0).trim().toLowerCase();
+      if (SHORT_BY_DESIGN.some(marker => title.includes(marker))) continue;
       ctx.add("MET005", `section "${b.sec.arg(0).slice(0, 40)}" has ${b.n} words; the median section has ${median}`, { at: b.sec.start });
     }}});
 /* ---- ACC: accessibility ---- */
@@ -2156,7 +2201,13 @@ rule({ id:"POL009", title:"Keywords missing", cat:"policy", sev:SEV.warn,
 const DECLARATION = /(eigenst[äa]ndigkeitserkl[äa]rung|selbst[äa]ndigkeitserkl[äa]rung|erkl[äa]rung\s+zur\s+(?:selbst[äa]ndigen|eigenst[äa]ndigen)|declaration\s+of\s+(?:originality|authorship|academic\s+integrity)|statement\s+of\s+originality|ich\s+versichere|hiermit\s+erkl[äa]re\s+ich)/i;
 const AI_CLAUSE = /(hilfsmittel|aids|generative\s+ai|k[üu]nstliche[rn]?\s+intelligenz|large\s+language\s+model|llm|chatgpt|ai[- ]?tools?)/i;
 const GERMAN_MARKERS = /\b(und|der|die|das|nicht|werden|wurde|Untersuchung|Ergebnisse|Zusammenfassung)\b/g;
-const isThesis = ctx => ctx.config.profile.startsWith("thesis") || ctx.project.isThesisLike();
+/* Classes that are unambiguously a paper. A declaration of originality is not
+   something an ACM submission has, whatever profile happens to be selected. */
+const PAPER_CLASSES = new Set(["acmart", "elsarticle", "ieeetran", "llncs",
+  "sig-alternate", "acmconf", "revtex4", "revtex4-1", "revtex4-2", "svjour3",
+  "interact", "tandf", "wileynj", "springer"]);
+const isThesis = ctx => !PAPER_CLASSES.has(ctx.project.documentclass().cls.toLowerCase())
+  && (ctx.config.profile.startsWith("thesis") || ctx.project.isThesisLike());
 
 rule({ id:"THE001", title:"No declaration of originality", cat:"structure", sev:SEV.error,
   why:"Nearly every German examination regulation requires a signed declaration; a thesis submitted without one can be rejected on formal grounds alone.",
@@ -2673,13 +2724,30 @@ async function runChecks(files, options) {
   const sources = new Map();
   const allFiles = new Map();
   let log = null, pdfBytes = null, pdfName = null;
+  const pdfCandidates = [];
 
   for (const [path, bytes] of files) {
     allFiles.set(path, bytes);
     if (/\.(tex|cls|sty)$/i.test(path)) sources.set(path, decodeText(bytes));
     else if (/\.bib$/i.test(path)) sources.set(path, decodeText(bytes));
     else if (/\.log$/i.test(path)) { const t = decodeText(bytes); if (/This is (pdfTeX|LuaHBTeX|XeTeX|LuaTeX)/.test(t) || !log) log = t; }
-    else if (/\.pdf$/i.test(path)) { pdfBytes = bytes; pdfName = path; }
+    else if (/\.pdf$/i.test(path)) pdfCandidates.push([path, bytes]);
+  }
+
+  /* A figure is a PDF too. Picking the last one in the project made ACC006
+     report a plot as "the compiled PDF": prefer the compiler's own output, then
+     a PDF named after the main file, and never one buried in a subdirectory. */
+  if (pdfCandidates.length) {
+    const stem = (options.main || "main").replace(/\.tex$/i, "").split("/").pop();
+    const score = ([path]) => {
+      const base = path.split("/").pop().toLowerCase();
+      if (base === "output.pdf") return 0;
+      if (base === stem.toLowerCase() + ".pdf") return 1;
+      if (!path.includes("/")) return 2;
+      return 9;                       // inside a directory: almost certainly a figure
+    };
+    pdfCandidates.sort((a, b) => score(a) - score(b));
+    if (score(pdfCandidates[0]) < 9) { pdfName = pdfCandidates[0][0]; pdfBytes = pdfCandidates[0][1]; }
   }
 
   // Prefer a file that looks like a real root, but never refuse to check

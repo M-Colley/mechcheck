@@ -95,7 +95,9 @@ def repeated_word(ctx):
             continue
         f, line, col = ctx.project.locate(m.start())
         yield ctx.finding("STY003", f"repeated word: '{m.group(0).strip()}'",
-                          file=f, line=line, col=col, context=ctx.project.excerpt(m.start()))
+                          file=f, line=line, col=col, context=ctx.project.excerpt(m.start()),
+                          edit=ctx.edit_span(m.start(), m.end(), m.group(1),
+                                             f"{m.group(0)} -> {m.group(1)}"))
 
 
 @rule("STY004", "Straight double quotes", Category.STYLE, Severity.INFO,
@@ -124,9 +126,12 @@ def space_before_punctuation(ctx):
         if line.verbatim:
             continue
         for m in re.finditer(r"(?<=[\w\)\}])[ \t]+([,.;:!?])(?=[ \t]|$)", line.code):
+            start = line.offset + m.start()
             yield ctx.finding("STY005", f"space before '{m.group(1)}'",
                               file=line.file, line=line.lineno, col=m.start() + 1,
-                              context=line.raw.strip()[:90])
+                              context=line.raw.strip()[:90],
+                              edit=ctx.edit_span(start, line.offset + m.end(), m.group(1),
+                                                 f"' {m.group(1)}' -> '{m.group(1)}'"))
 
 
 @rule("STY006", "Citation glued to the preceding word", Category.STYLE, Severity.INFO,
@@ -147,10 +152,16 @@ def numeric_range_hyphen(ctx):
     for m in re.finditer(r"(?<![\d\-])(\d{1,4})\s?-\s?(\d{1,4})(?![\d\-])", ctx.project.prose):
         a, b = int(m.group(1)), int(m.group(2))
         if b <= a:
+            continue
+        # "Core 7-1355" is a product number, not a range. Real ranges have
+        # endpoints of comparable magnitude; a 1-digit to 4-digit jump does not.
+        if len(m.group(2)) - len(m.group(1)) > 1:
             continue  # not a range: more likely a subtraction or an identifier
         f, line, col = ctx.project.locate(m.start())
         yield ctx.finding("STY007", f"'{m.group(0)}' should use an en dash: {a}--{b}",
-                          file=f, line=line, col=col, context=ctx.project.excerpt(m.start()))
+                          file=f, line=line, col=col, context=ctx.project.excerpt(m.start()),
+                          edit=ctx.edit_span(m.start(), m.end(), f"{a}--{b}",
+                                             f"{m.group(0)} -> {a}--{b}"))
 
 
 @rule("STY008", "Mixed British and American spelling", Category.STYLE, Severity.WARN,

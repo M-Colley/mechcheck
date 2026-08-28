@@ -28,7 +28,17 @@ _GERMAN_MARKERS = re.compile(
     r"\b(und|der|die|das|nicht|werden|wurde|Untersuchung|Ergebnisse|Zusammenfassung)\b")
 
 
+#: Classes that are unambiguously a paper. A declaration of originality is not
+#: a thing an ACM submission has, whatever profile happens to be selected.
+PAPER_CLASSES = {"acmart", "elsarticle", "ieeetran", "llncs", "sig-alternate",
+                 "acmconf", "revtex4", "revtex4-1", "revtex4-2", "svjour3",
+                 "interact", "tandf", "wileynj", "springer"}
+
+
 def _is_thesis(ctx) -> bool:
+    cls, _ = ctx.project.documentclass()
+    if cls.lower() in PAPER_CLASSES:
+        return False
     if ctx.config.profile.startswith("thesis"):
         return True
     return ctx.project.is_thesis_like()

@@ -73,6 +73,21 @@ class Category(str, enum.Enum):
 
 
 @dataclass(frozen=True)
+class Edit:
+    """A span of one file's raw text, and what to put there instead.
+
+    Only rules whose correction is fully determined attach one. "Delete the
+    duplicated word" qualifies; "write alt text for this figure" never will.
+    """
+
+    file: str
+    start: int          # offset into the file's raw text
+    end: int            # exclusive
+    replacement: str
+    describe: str = ""  # shown in the preview, e.g. "Figure~\\ref{x} -> \\autoref{x}"
+
+
+@dataclass(frozen=True)
 class Finding:
     """One machine-checkable problem, anchored to a source location."""
 
@@ -84,6 +99,8 @@ class Finding:
     col: int | None = None
     context: str | None = None
     fix: str | None = None
+    #: Present only when the correction is unambiguous; see ``mechcheck fix``.
+    edit: "Edit | None" = None
     # Free-form, used by reporters (e.g. the DOI a bib check resolved).
     data: dict = field(default_factory=dict)
 
@@ -99,6 +116,10 @@ class Finding:
         d = dataclasses.asdict(self)
         d["severity"] = self.severity.label
         return d
+
+    @property
+    def fixable(self) -> bool:
+        return self.edit is not None
 
     def sort_key(self) -> tuple:
         return (-int(self.severity), self.file or "", self.line or 0, self.rule)
@@ -224,6 +245,19 @@ class RuleContext:
     def opt(self, rule_id: str, key: str, default=None):
         """Per-rule option from config, e.g. ``ctx.opt("MET001", "max_words", 25000)``."""
         return self.config.rule_option(rule_id, key, default)
+
+    def edit_span(self, start: int, end: int, replacement: str, describe: str = ""):
+        """Build an :class:`Edit` from a span of ``project.text``.
+
+        Returns ``None`` if the span is not safely rewritable -- across files,
+        or into verbatim -- so a rule can simply pass the result along.
+        """
+        mapped = self.project.to_file_span(start, end)
+        if mapped is None:
+            return None
+        path, a, b = mapped
+        return Edit(file=path, start=a, end=b, replacement=replacement,
+                    describe=describe or f"{self.project.raw_text(path)[a:b]} -> {replacement}")
 
     def finding(self, rule_id: str, message: str, **kw) -> Finding:
         sev = self.config.severity_for(rule_id)

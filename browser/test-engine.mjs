@@ -140,8 +140,10 @@ console.log("\nfixture: refstyle (autoref and citet preferences)");
   check("REF009 flags a name written before a citation", fired.has("REF009"));
   // Figure~ref, Table~ref, Section~ref, and Figure~autoref (the doubled word)
   check("REF008 count", ref008.length === 4, String(ref008.length));
-  // "Colley et al.", "Rukzio and Colley", "Bazilinskyy" -- but not the bare cite
-  check("REF009 count", ref009.length === 3, String(ref009.length));
+  // "Colley et al." and "Rukzio and Colley". A lone surname is deliberately
+  // not reported: on a real paper that shape produced nine wrong findings
+  // ("Questionnaire~cite", "ANOVA~cite"), and it carries an auto-fix.
+  check("REF009 count", ref009.length === 2, String(ref009.length));
   check("REF008 catches the doubled word", ref008.some(f => f.message.includes("twice")));
   check("REF009 suggests citet under acmart",
         ref009.every(f => (f.fix || "").includes("citet")), ref009.map(f => f.fix).join(" | "));
@@ -248,6 +250,46 @@ console.log("\nvolume: one habit must not bury everything else");
 
   // Python asserts the identical numbers in tests/test_volume.py.
   check("browser and Python agree on the cap", sty.length === 10 && capped.truncated.length === 15);
+}
+
+console.log("\nreal-paper false positives");
+{
+  const enc = new TextEncoder();
+  const doc = (body, cls) => new Map([["main.tex",
+    enc.encode("\\documentclass{" + (cls || "acmart") + "}\n\\begin{document}\n" + body + "\n\\end{document}\n")]]);
+  const opts = { profile: "thesis", verify: false, maxPerRule: 0 };
+  const fired = async (files, o) =>
+    new Set((await runChecks(files, { ...opts, ...o })).findings.map(f => f.rule));
+
+  check("a noun before a citation is not a name",
+        !(await fired(doc("We used the Questionnaire~\\cite{a} and the Scale~\\cite{b}."))).has("REF009"));
+  check("an acronym before a citation is not a name",
+        !(await fired(doc("We used ANOVA~\\cite{a} and VR~\\cite{b}."))).has("REF009"));
+  check("et al. is still reported",
+        (await fired(doc("Colley et al.~\\cite{a} showed this."))).has("REF009"));
+  check("two surnames are still reported",
+        (await fired(doc("Rukzio and Colley~\\cite{a} disagree."))).has("REF009"));
+
+  check("unreferenced section labels are exempt",
+        !(await fired(doc("\\section{Method}\\label{sec:m}\nText here for it."))).has("REF002"));
+
+  check("a section opening on a subsection is not empty",
+        !(await fired(doc("\\section{Related Work}\n\\subsection{VR in training}\nPlenty of real content lives here indeed."))).has("STR004"));
+
+  check("a product number is not a range",
+        !(await fired(doc("The machine had a Core 7-1355 processor inside."))).has("STY007"));
+  check("a real range is still reported",
+        (await fired(doc("We recruited 10-20 participants for the study."))).has("STY007"));
+
+  const theRules = [...(await fired(doc("A paper, not a thesis.", "acmart")))].filter(r => r.startsWith("THE"));
+  check("thesis rules do not fire on a paper class", theRules.length === 0, theRules.join(","));
+
+  // A figure is a PDF too: it must not be mistaken for the compiled output.
+  const withFigure = doc("\\section{A}\nText here in the section.");
+  withFigure.set("figures/plot.pdf", enc.encode("%PDF-1.4\n" + "x".repeat(400)));
+  const r = await runChecks(withFigure, opts);
+  check("a figure PDF is not treated as the compiled output",
+        !r.stats.hasPdf, String(r.stats.hasPdf));
 }
 
 // --- 5. the zip path, which is how most people will actually use it -------

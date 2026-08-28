@@ -153,7 +153,9 @@
 :host { all: initial; }
 * { box-sizing: border-box; }
 .wrap {
-  position: fixed; right: 16px; bottom: 16px; z-index: 2147483000;
+  /* Clear of the bottom-right corner: other Overleaf extensions put their own
+     button there, and two overlapping circles is nobody's idea of a good time. */
+  position: fixed; right: 16px; bottom: 96px; z-index: 2147483000;
   font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
   color-scheme: light dark;
 }

@@ -16,6 +16,17 @@ import subprocess
 from mechcheck.model import Category, Severity, rule
 from mechcheck.rules.bib import entries
 
+#: Sections whose whole purpose is to be short. Comparing them against the
+#: median length of a Results section says nothing.
+SHORT_BY_DESIGN = (
+    "open science", "acknowledgment", "acknowledgement", "danksagung",
+    "data availability", "availability statement", "declaration",
+    "conflict of interest", "competing interest", "funding",
+    "ethics", "ethical", "credit", "author contribution",
+    "supplementary", "appendix", "abstract", "keywords",
+    "ccs concepts", "disclosure", "preregistration", "artifact",
+)
+
 _STOP_COMMANDS = ("printbibliography", "bibliography", "printbibheading",
                   "begin{thebibliography}", "appendix")
 
@@ -209,6 +220,9 @@ def section_balance(ctx):
     for sec, count in bounds:
         if count >= max(60, median * 0.15):
             continue
+        title = sec.arg(0).strip().lower()
+        if any(marker in title for marker in SHORT_BY_DESIGN):
+            continue   # these are meant to be short
         f, line, col = ctx.project.locate(sec.start)
         yield ctx.finding("MET005",
                           f"section \"{sec.arg(0)[:40]}\" has {count} words; the median section has {median}",

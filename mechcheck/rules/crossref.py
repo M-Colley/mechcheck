@@ -24,6 +24,14 @@ CITE_CMDS = ["cite", "citep", "citet", "citeauthor", "citeyear", "citealp", "cit
              "citeA", "shortcite", "fullcite", "citeyearpar"]
 
 
+#: Label prefixes REF002 never complains about.
+_UNREFERENCED_LABEL_EXEMPT = {
+    "fig", "figure", "tab", "table",          # FIG003 reports these better
+    "sec", "subsec", "subsubsec", "section",  # labelled for optional reference
+    "chap", "chapter", "part", "app", "appendix",
+}
+
+
 def _labels(ctx) -> dict:
     out = defaultdict(list)
     for cmd in ctx.project.commands("label", 1):
@@ -87,7 +95,9 @@ def unreferenced_label(ctx):
         if key in refs:
             continue
         # Floats are covered more precisely by FIG003; avoid reporting twice.
-        if key.split(":", 1)[0].lower() in ("fig", "figure", "tab", "table"):
+        # Sectioning labels are exempt outright: authors label sections so a
+        # cross-reference *can* be made, and most never are. That is not a defect.
+        if key.split(":", 1)[0].lower() in _UNREFERENCED_LABEL_EXEMPT:
             continue
         offset = offsets[0]
         f, line, col = ctx.project.locate(offset)
@@ -239,31 +249,49 @@ def _textual_cite_command(ctx) -> str:
       rationale="Writing the word yourself means two places to keep in step, and it is the half that goes wrong: a table renumbered into a figure still reads 'Table'. \\autoref supplies the word from the label's own type.",
       fix="Replace Figure~\\ref{x} with \\autoref{x}.")
 def prefer_autoref(ctx):
-    for m in _PREFIXED_REF.finditer(ctx.project.text):
+    from mechcheck.texsource import read_group, skip_space
+
+    text = ctx.project.text
+    for m in _PREFIXED_REF.finditer(text):
         word, cmd = m.group(1), m.group(2)
         f, line, col = ctx.project.locate(m.start())
+        # The argument is needed to rewrite the whole invocation, not just the
+        # command name: Figure~\ref{x} becomes \autoref{x}, braces included.
+        group = read_group(text, skip_space(text, m.end()))
+        key = group[0] if group else None
+        arg_end = group[1] if group else m.end()
         if cmd in ("cref", "Cref"):
             # cleveref already prints the word, so this prints it twice.
             yield ctx.finding("REF008",
                               f"'{word}~\\{cmd}' prints the word twice — \\{cmd} supplies it already",
                               file=f, line=line, col=col, context=ctx.project.excerpt(m.start()),
-                              fix=f"Delete '{word}~' and keep \\{cmd}{{...}}.")
+                              fix=f"Delete '{word}~' and keep \\{cmd}{{...}}.",
+                              edit=ctx.edit_span(m.start(), m.start(2) - 1, "",
+                                                 f"delete '{word}~'"))
         elif cmd == "autoref":
             yield ctx.finding("REF008",
                               f"'{word}~\\autoref' prints the word twice — \\autoref supplies it already",
                               file=f, line=line, col=col, context=ctx.project.excerpt(m.start()),
-                              fix=f"Delete '{word}~' and keep \\autoref{{...}}.")
+                              fix=f"Delete '{word}~' and keep \\autoref{{...}}.",
+                              edit=ctx.edit_span(m.start(), m.start(2) - 1, "",
+                                                 f"delete '{word}~'"))
         else:
             yield ctx.finding("REF008",
                               f"write \\autoref instead of '{word}~\\ref'",
                               file=f, line=line, col=col, context=ctx.project.excerpt(m.start()),
-                              fix=f"Replace '{word}~\\ref{{x}}' with \\autoref{{x}}.")
+                              fix=f"Replace '{word}~\\ref{{x}}' with \\autoref{{x}}.",
+                              edit=(ctx.edit_span(m.start(), arg_end,
+                                                  BS + "autoref{" + key + "}",
+                                                  f"{word}~{BS}ref{{{key}}} -> {BS}autoref{{{key}}}")
+                                    if key else None))
 
 
 @rule("REF009", "Author name written out before \\cite", Category.CROSSREF, Severity.WARN,
       rationale="'Colley et al. [12]' spells out a name the bibliography style can produce itself, so the two drift apart when the entry changes; a textual citation command keeps them in one place.",
       fix="Replace 'Name et al.~\\cite{key}' with \\citet{key} (natbib/acmart) or \\textcite{key} (biblatex).")
 def prefer_citet(ctx):
+    from mechcheck.texsource import read_group, skip_space
+
     command = _textual_cite_command(ctx)
     for m in _NAME_BEFORE_CITE.finditer(ctx.project.text):
         name = m.group("name")
@@ -273,10 +301,16 @@ def prefer_citet(ctx):
         cmd = m.group("cmd")
         # A bare surname immediately before a citation is the weakest signal;
         # require the "et al." or "and X" shape unless the option says otherwise.
-        if not rest and not bool(ctx.opt("REF009", "include_single_names", True)):
+        if not rest and not bool(ctx.opt("REF009", "include_single_names", False)):
+            continue
+        # ALL-CAPS before a citation is an acronym (VR, ANOVA, ADMS), never a surname.
+        if name.isupper():
             continue
         shown = (name + " " + rest).strip()
         f, line, col = ctx.project.locate(m.start())
+        group = read_group(ctx.project.text, skip_space(ctx.project.text, m.end()))
+        key = group[0] if group else None
+        arg_end = group[1] if group else m.end()
         if command:
             advice = f"Replace '{shown}~\\{cmd}{{key}}' with {command}{{key}}."
         else:
@@ -285,7 +319,10 @@ def prefer_citet(ctx):
         yield ctx.finding("REF009",
                           f"'{shown}~\\{cmd}' writes out a name the citation style can produce",
                           file=f, line=line, col=col, context=ctx.project.excerpt(m.start()),
-                          fix=advice, data={"name": name})
+                          fix=advice, data={"name": name},
+                          edit=(ctx.edit_span(m.start(), arg_end, f"{command}{{{key}}}",
+                                              f"{shown}~{BS}{cmd}{{{key}}} -> {command}{{{key}}}")
+                                if command and key else None))
 
 def _closest(key: str, candidates, cutoff: float = 0.82):
     from difflib import get_close_matches

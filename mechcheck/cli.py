@@ -72,6 +72,17 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--with-sty", action="store_true", help="also copy mechcheck.sty into the project")
     init.add_argument("--force", action="store_true")
 
+    fixp = sub.add_parser("fix", help="apply the fixes that are unambiguous")
+    fixp.add_argument("path", nargs="?", default=".")
+    fixp.add_argument("--config")
+    fixp.add_argument("--profile", choices=sorted(PROFILES))
+    fixp.add_argument("--stage", choices=sorted(STAGES))
+    fixp.add_argument("--venue")
+    fixp.add_argument("--only", action="append", default=[], metavar="RULE",
+                      help="fix only these rules (repeatable)")
+    fixp.add_argument("--dry-run", action="store_true",
+                      help="show what would change and write nothing")
+
     base = sub.add_parser("baseline", help="freeze current findings so only new ones fail")
     base.add_argument("path", nargs="?", default=".")
     base.add_argument("--config")
@@ -213,6 +224,20 @@ def cmd_init(args) -> int:
                         with_ci=args.with_ci, with_sty=args.with_sty, force=args.force)
 
 
+def cmd_fix(args) -> int:
+    from mechcheck import fixer
+
+    root = os.path.abspath(args.path)
+    if not os.path.isdir(root):
+        print(f"mechcheck: not a directory: {root}", file=sys.stderr)
+        return EXIT_USAGE
+    config = Config.load(root, explicit=args.config, overrides=_overrides(args))
+    report = fixer.fix(root, config, run, only=args.only, offline=True,
+                       dry_run=args.dry_run)
+    print(fixer.render(report))
+    return EXIT_OK if report.ok else EXIT_FINDINGS
+
+
 def cmd_baseline(args) -> int:
     root = os.path.abspath(args.path)
     config = Config.load(root, explicit=args.config, overrides=_overrides(args))
@@ -245,6 +270,7 @@ def main(argv=None) -> int:
         "rules": cmd_rules,
         "explain": cmd_explain,
         "init": cmd_init,
+        "fix": cmd_fix,
         "baseline": cmd_baseline,
         "venues": cmd_venues,
     }

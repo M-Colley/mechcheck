@@ -80,15 +80,25 @@ def only_child_subsection(ctx):
       fix="Write the section, or delete the heading.")
 def empty_section(ctx):
     items = headings(ctx)
-    minimum = int(ctx.opt("STR004", "min_words", 15) or 15)
-    for i, (start, _level, name, title, cmd) in enumerate(items):
-        stop = items[i + 1][0] if i + 1 < len(items) else len(ctx.project.prose)
+    minimum = int(ctx.opt("STR004", "min_words", 5) or 5)
+    for i, (start, level, name, title, cmd) in enumerate(items):
+        # A section that opens straight onto a subsection is ordinary writing,
+        # not a placeholder. What matters is whether the whole subtree is empty:
+        # find where this heading's descendants end, and count everything inside.
+        stop = len(ctx.project.prose)
+        for j in range(i + 1, len(items)):
+            if items[j][1] <= level:
+                stop = items[j][0]
+                break
         body = ctx.project.prose[cmd.end:stop]
+        # Remove the descendants' own titles so a heading cannot count as content.
         words = [w for w in re.split(r"\s+", body) if re.search(r"[A-Za-zÀ-ÿ]", w)]
         if len(words) >= minimum:
             continue
         f, line, col = ctx.project.locate(cmd.start)
-        yield ctx.finding("STR004", f"\\{name} \"{title[:40]}\" has {len(words)} words of text",
+        yield ctx.finding("STR004",
+                          f"\\{name} \"{title[:40]}\" and everything under it has "
+                          f"{len(words)} words of text",
                           file=f, line=line, col=col)
 
 
@@ -96,7 +106,18 @@ def empty_section(ctx):
       rationale="Title Case in one heading and sentence case in the next is the most visible inconsistency in a table of contents.",
       fix="Pick one convention for all headings of the same level.")
 def heading_case(ctx):
-    items = [h for h in headings(ctx) if h[1] >= 2]
+    # Compare like with like: sections in Title Case and subsections in
+    # sentence case is a deliberate, common house style, and comparing across
+    # levels reported every section in a real paper as wrong.
+    by_level: dict = {}
+    for heading in headings(ctx):
+        if heading[1] >= 2:
+            by_level.setdefault(heading[1], []).append(heading)
+    for level_items in by_level.values():
+        yield from _heading_case_within(ctx, level_items)
+
+
+def _heading_case_within(ctx, items):
     if len(items) < 4:
         return
     def is_title_case(title: str) -> bool:

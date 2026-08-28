@@ -24,6 +24,9 @@ COMMON = {
     "IEEE", "ACM", "CHI", "DOI", "FAQ", "GPS", "LED", "PIN", "RGB", "SQL", "XML",
     "JSON", "YAML", "OK", "TV", "3D", "2D", "1D", "AM", "PM", "CI", "CD", "IRB",
     "ANOVA", "SD", "SE", "CI95", "RQ", "H1", "H2", "H3", "LLM", "ML", "DL", "NLP",
+    # widely understood in HCI and computing writing
+    "NASA", "HCI", "VR", "AR", "XR", "MR", "UI", "UX", "HMD", "GB", "MB",
+    "TB", "KB", "HZ", "FPS", "SUS", "TLX", "IQR", "SPSS", "PDF", "DOI",
     # editing markers, reported by STY001 instead
     "TODO", "FIXME", "XXX", "TBD", "HACK", "NOTE",
 }
@@ -52,7 +55,7 @@ def _ignored(ctx) -> set:
 
 
 def _definitions(ctx) -> dict:
-    """Map acronym -> list of (offset, expansion) in document order."""
+    """Map acronym -> list of (acronym_at, expansion, start, end, as_written)."""
     cached = ctx.cache.get("abbrev_definitions")
     if cached is not None:
         return cached
@@ -67,9 +70,34 @@ def _definitions(ctx) -> dict:
         # dropped articles ("Level of Automation (LoA)") and case differences.
         if not _initials_match(initials, core):
             continue
-        found[core.upper()].append((m.start("acronym"), expansion, m.start()))
+        # Keep only the words that actually produce the acronym. Without this,
+        # "Later the Automated Driving System (ADS)" counts "Later the" as part
+        # of the term -- and the auto-fix would delete those words.
+        expansion, trimmed_by = _minimal_expansion(expansion, core)
+        found[core.upper()].append(
+            (m.start("acronym"), expansion, m.start() + trimmed_by, m.end(), acronym))
     ctx.cache["abbrev_definitions"] = found
     return found
+
+
+def _minimal_expansion(expansion: str, acronym: str):
+    """Shortest trailing run of words that still yields the acronym.
+
+    Returns ``(expansion, characters_trimmed_from_the_front)`` so a caller can
+    correct the span as well as the text.
+    """
+    words = expansion.split(" ")
+    # Search from the shortest suffix upwards. Going the other way always
+    # matches the whole string first -- the initials of "Later the Automated
+    # Driving System" still contain A, D and S in order -- and nothing is
+    # trimmed at all.
+    for start in range(len(words) - 1, -1, -1):
+        candidate = words[start:]
+        initials = "".join(w[0] for w in " ".join(candidate).replace("-", " ").split() if w)
+        if _initials_match(initials, acronym):
+            trimmed = " ".join(candidate)
+            return trimmed, len(expansion) - len(trimmed)
+    return expansion, 0
 
 
 def _initials_match(initials: str, acronym: str) -> bool:
@@ -97,13 +125,15 @@ def redefined_abbreviation(ctx):
             continue
         first_offset = occurrences[0][0]
         first_f, first_line, _ = ctx.project.locate(first_offset)
-        for offset, expansion, _start in occurrences[1:]:
+        for offset, expansion, start, end, as_written in occurrences[1:]:
             f, line, col = ctx.project.locate(offset)
             yield ctx.finding("ABB001",
                               f"`{acronym}` was already introduced at {first_f}:{first_line}",
                               file=f, line=line, col=col,
                               context=f"{expansion} ({acronym})",
                               fix=f"Delete this expansion and write just `{acronym}`.",
+                              edit=ctx.edit_span(start, end, as_written,
+                                                 f"{expansion} ({as_written}) -> {as_written}"),
                               data={"acronym": acronym})
 
 
@@ -157,7 +187,7 @@ def defined_but_unused(ctx):
         # The definition itself counts as one occurrence of the token.
         if uses.get(acronym, 0) >= min_uses:
             continue
-        offset, expansion, _start = occurrences[0]
+        offset, expansion, _start = occurrences[0][:3]
         f, line, col = ctx.project.locate(offset)
         yield ctx.finding("ABB003",
                           f"`{acronym}` is introduced but then used {max(0, uses.get(acronym, 1) - 1)} time(s)",
@@ -197,7 +227,7 @@ def inconsistent_expansion(ctx):
         return
     for acronym, occurrences in _definitions(ctx).items():
         variants = {}
-        for offset, expansion, _start in occurrences:
+        for offset, expansion, _start, _end, _as_written in occurrences:
             key = re.sub(r"[^a-z ]", "", expansion.lower()).strip()
             variants.setdefault(key, (offset, expansion))
         if len(variants) < 2:
