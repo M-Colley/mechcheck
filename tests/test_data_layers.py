@@ -114,6 +114,8 @@ rules:
   STY012:
     max_words: 45
 flow: [a, b, c]
+severity: {}
+pairs: {STR005: info, FIG003: warn}
 """
 
 
@@ -128,6 +130,34 @@ def test_yaml_subset_round_trips_through_both_parsers(parse):
     assert data["rules"]["ABB004"]["ignore"] == ["HMI", "ADAS"]
     assert data["rules"]["STY012"]["max_words"] == 45
     assert data["flow"] == ["a", "b", "c"]
+    assert data["severity"] == {}
+    assert data["pairs"] == {"STR005": "info", "FIG003": "warn"}
+
+
+# The default config that `mechcheck init` writes contains "severity: {}".
+# Read back as the string "{}", that made severity_for() raise on .items() --
+# so on a machine without PyYAML, which is what `pip install mechcheck` gives
+# you, every rule that actually found something crashed instead of reporting.
+
+def test_the_config_that_init_writes_parses_the_same_without_pyyaml():
+    from mechcheck.scaffold import CONFIG_TEMPLATE
+    text = CONFIG_TEMPLATE.format(profile="thesis", venue_line="venue: null")
+    builtin, best = minyaml.loads_builtin(text), minyaml.loads(text)
+    assert isinstance(builtin["severity"], dict)
+    for key in ("profile", "stage", "severity", "disable", "enable", "rules"):
+        assert builtin[key] == best[key], key
+
+
+def test_a_config_of_the_wrong_shape_cannot_crash_a_rule(tmp_path):
+    # Every one of these is the wrong type for its key.
+    (tmp_path / "mechcheck.yaml").write_text(
+        "\n".join(["severity: '{}'", "rules: nonsense", "disable: ACC006", "enable: ''"]),
+        encoding="utf-8", newline="\n")
+    cfg = Config.load(str(tmp_path))
+    assert cfg.severity_for("STR005") is not None      # used to raise
+    assert cfg.rule_option("ABB004", "ignore", []) == []
+    assert cfg.enabled("ACC006") is False              # the scalar was meant as a list
+    assert cfg.enabled("STR005") is True
 
 
 def test_builtin_parser_survives_malformed_input():

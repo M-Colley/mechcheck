@@ -38,6 +38,20 @@ def _scalar(raw: str):
     if s.startswith("[") and s.endswith("]"):
         inner = s[1:-1].strip()
         return [_scalar(p) for p in _split_flow(inner)] if inner else []
+    # Flow mappings. Chiefly the empty one: `mechcheck init` writes
+    # "severity: {}", and reading that back as the *string* "{}" made every
+    # rule that fired crash on a machine without PyYAML -- which is the
+    # default install.
+    if s.startswith("{") and s.endswith("}"):
+        inner = s[1:-1].strip()
+        if not inner:
+            return {}
+        out = {}
+        for part in _split_flow(inner):
+            key, sep, value = part.partition(":")
+            if sep:
+                out[key.strip().strip("'\"")] = _scalar(value)
+        return out
     low = s.lower()
     if low in ("true", "yes", "on"):
         return True

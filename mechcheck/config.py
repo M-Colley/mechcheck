@@ -76,6 +76,27 @@ DEFAULTS: dict = {
 }
 
 
+def _coerce_shapes(data: dict) -> None:
+    """Force the keys whose shape the rest of the code relies on.
+
+    A configuration file is user input, and it is read by a parser that is
+    documented never to raise. Something has to stand between "the file says
+    something odd" and "every rule crashes halfway through the run", and this
+    is it: a wrong type degrades to the empty default, and a bare scalar where
+    a list belongs is read as a list of one, which is what was meant.
+    """
+    for key in ("disable", "enable", "ignore_paths"):
+        value = data.get(key)
+        if isinstance(value, str):
+            value = value.strip()
+            data[key] = [value] if value and value not in ("[]", "{}") else []
+        elif not isinstance(value, list):
+            data[key] = []
+    for key in ("severity", "rules"):
+        if not isinstance(data.get(key), dict):
+            data[key] = {}
+
+
 @dataclass
 class Config:
     data: dict = field(default_factory=dict)
@@ -107,6 +128,7 @@ class Config:
 
         data["profile"] = profile_name
         data["venue"] = venue_name
+        _coerce_shapes(data)
         cfg = cls(data=data, path=user_path, venue_data=venue_data)
         return cfg
 
