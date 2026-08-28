@@ -118,16 +118,25 @@ def heading_case(ctx):
 
 
 def _heading_case_within(ctx, items):
-    if len(items) < 4:
-        return
-    def is_title_case(title: str) -> bool:
+    def case_of(title: str):
+        """True for Title Case, False for sentence case, None when undecidable.
+
+        Only the words after the first carry the signal: the first word is
+        capitalised in both conventions. A heading with nothing after it --
+        "Motivation" -- or nothing but short words -- "Research Gap" -- is
+        therefore both styles at once, and counting it as sentence case
+        reported every one-word heading in a normal thesis as wrong.
+        """
         words = [w for w in re.split(r"\s+", re.sub(r"[^\w\s'-]", "", title)) if w]
         content = [w for w in words[1:] if w.lower() not in _SMALL_WORDS and len(w) > 3]
         if not content:
-            return False
+            return None
         return sum(1 for w in content if w[0].isupper()) >= max(1, int(len(content) * 0.75))
 
-    flags = [(cmd, title, is_title_case(title)) for _s, _l, _n, title, cmd in items]
+    flags = [(cmd, title, case_of(title)) for _s, _l, _n, title, cmd in items]
+    flags = [f for f in flags if f[2] is not None]
+    if len(flags) < 4:
+        return
     title_case = sum(1 for _c, _t, f in flags if f)
     if title_case in (0, len(flags)):
         return

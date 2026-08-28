@@ -143,6 +143,18 @@ every Monday.
 The digest deliberately reports mechanical counts only. It is a triage list for
 deciding who needs a message this week — not an assessment.
 
+### Start students somewhere clean
+
+Every check here is remedial: it catches a mistake after it is made. The
+preventive half is a document where the mistake is harder to make.
+
+**[M-Colley/thesis-template](https://github.com/M-Colley/thesis-template)** is a
+LaTeX thesis wired up for all of this — `mechcheck.sty` already loaded, the
+house style already applied, each section a prompt that turns into a
+compilation error if it survives to the final version. A fresh copy reports
+zero findings from this checker, online checks included, so the first finding a
+student sees is genuinely theirs.
+
 ---
 
 ## Venue packs

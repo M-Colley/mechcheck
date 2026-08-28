@@ -180,3 +180,50 @@ def test_thesis_rules_still_fire_on_a_thesis_class(tmp_path):
     root = build(tmp_path, BS + "chapter{One}\nText.", cls="scrbook")
     result = check(root, profile="thesis", only=["THE001", "THE005"])
     assert fired(result) == {"THE001", "THE005"}
+
+
+# --------------------------------------------------------------------------- #
+# STR005: a one-word heading is not evidence of a house style
+# --------------------------------------------------------------------------- #
+#
+# Found by running the checker on the thesis template, whose section headings
+# are the ordinary ones -- Motivation, Participants, Apparatus, Analysis. Only
+# the words after the first tell the two conventions apart, because the first
+# is capitalised in both, so a heading with no such word decides nothing. The
+# rule used to count those as sentence case and then report them for being in
+# the minority it had just invented.
+
+def _sections(*titles: str) -> str:
+    return "\n\n".join(BS + "section{" + t + "}\n\nSome text in the section."
+                       for t in titles)
+
+
+def test_one_word_headings_are_not_reported(tmp_path):
+    body = _sections("Motivation", "Participants", "Apparatus", "Analysis",
+                     "Study Design", "Design Implications")
+    assert "STR005" not in fired(check(build(tmp_path, body), only=["STR005"]))
+
+
+def test_headings_whose_only_other_word_is_short_are_not_reported(tmp_path):
+    # "Research Gap" -- "Gap" is filtered out as too short to carry the signal.
+    body = _sections("Research Gap", "Future Work", "Related Work", "Study Design",
+                     "Design Implications", "Summary of Contributions")
+    assert "STR005" not in fired(check(build(tmp_path, body), only=["STR005"]))
+
+
+def test_a_genuine_mixture_is_still_reported(tmp_path):
+    body = _sections("Study Design", "Design Implications", "Summary of Contributions",
+                     "Related Work Overview", "The odd one out here")
+    result = check(build(tmp_path, body), only=["STR005"])
+    assert "STR005" in fired(result)
+    assert [f for f in result.findings if "odd one out" in f.message]
+
+
+def test_undecidable_headings_do_not_swing_the_majority(tmp_path):
+    # Three sentence-case headings decide the house style; the one-word
+    # headings must not outvote them into Title Case.
+    body = _sections("Motivation", "Analysis", "Apparatus", "Participants",
+                     "The study design", "The design implications",
+                     "The summary of contributions")
+    result = check(build(tmp_path, body), only=["STR005"])
+    assert not [f for f in result.findings if "study design" in f.message.lower()]

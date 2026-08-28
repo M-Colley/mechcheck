@@ -2092,14 +2092,19 @@ rule({ id:"STR005", title:"Inconsistent heading capitalisation", cat:"structure"
 
 function headingCaseWithin(ctx, items) {
   {
-    if (items.length < 4) return;
-    const isTitleCase = t => {
+    // null means "undecidable": only the words after the first carry the
+    // signal, because the first is capitalised in both conventions. A heading
+    // with nothing after it ("Motivation") or nothing but short words
+    // ("Research Gap") is both styles at once, and counting those as sentence
+    // case reported every one-word heading in a normal thesis as wrong.
+    const caseOf = t => {
       const words = t.replace(/[^\w\s'-]/g, "").split(/\s+/).filter(Boolean);
       const content = words.slice(1).filter(w => !SMALL_WORDS.has(w.toLowerCase()) && w.length > 3);
-      if (!content.length) return false;
+      if (!content.length) return null;
       return content.filter(w => /^[A-Z]/.test(w)).length >= Math.max(1, Math.floor(content.length * 0.75));
     };
-    const flags = items.map(h => ({ h, tc: isTitleCase(h.title) }));
+    const flags = items.map(h => ({ h, tc: caseOf(h.title) })).filter(f => f.tc !== null);
+    if (flags.length < 4) return;
     const tcCount = flags.filter(f => f.tc).length;
     if (tcCount === 0 || tcCount === flags.length) return;
     const majority = tcCount * 2 >= flags.length;

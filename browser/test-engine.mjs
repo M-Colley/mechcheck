@@ -284,6 +284,23 @@ console.log("\nreal-paper false positives");
   const theRules = [...(await fired(doc("A paper, not a thesis.", "acmart")))].filter(r => r.startsWith("THE"));
   check("thesis rules do not fire on a paper class", theRules.length === 0, theRules.join(","));
 
+  // STR005: only the words after the first tell the two conventions apart,
+  // so a one-word heading decides nothing and must not be counted as either.
+  const sections = (...titles) =>
+    titles.map(t => String.raw`\section{` + t + "}\n\nSome text in the section.").join("\n\n");
+
+  check("one-word headings are not reported as miscapitalised",
+        !(await fired(doc(sections("Motivation", "Participants", "Apparatus", "Analysis",
+                                   "Study Design", "Design Implications")))).has("STR005"));
+  check("a heading whose only other word is short is not reported",
+        !(await fired(doc(sections("Research Gap", "Future Work", "Related Work",
+                                   "Study Design", "Design Implications",
+                                   "Summary of Contributions")))).has("STR005"));
+  check("a genuine mixture of heading styles is still reported",
+        (await fired(doc(sections("Study Design", "Design Implications",
+                                  "Summary of Contributions", "Related Work Overview",
+                                  "The odd one out here")))).has("STR005"));
+
   // A figure is a PDF too: it must not be mistaken for the compiled output.
   const withFigure = doc("\\section{A}\nText here in the section.");
   withFigure.set("figures/plot.pdf", enc.encode("%PDF-1.4\n" + "x".repeat(400)));
