@@ -320,7 +320,9 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
     ensureUI();
     const q = sel => root.querySelector(sel);
     const counts = { error: 0, warn: 0, info: 0 };
-    for (const f of result.findings) counts[M.SEV_NAME[f.severity]]++;
+    // Totals cover everything found, including what the per-rule cap held back.
+    for (const f of result.findings.concat(result.truncated || []))
+      counts[M.SEV_NAME[f.severity]]++;
 
     const badge = root.querySelector(".badge");
     const total = counts.error + counts.warn;
@@ -344,7 +346,12 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
     q(".stats").textContent = `${s.main} · ${s.words.toLocaleString()} words · `
       + `${s.references} reference${s.references === 1 ? "" : "s"} · ${s.floats} float${s.floats === 1 ? "" : "s"}`
       + (s.pages ? ` · ${s.pages} pages` : "")
-      + (s.hasLog ? "" : " · no .log, compile checks skipped");
+      + (s.hasLog ? "" : " · no .log, compile checks skipped")
+      + (Object.keys(result.truncatedByRule || {}).length
+         ? " · repeated findings listed once: "
+           + Object.entries(result.truncatedByRule).sort()
+               .map(([r, n]) => `${r} +${n}`).join(", ")
+         : "");
     // When the output files could not be reached, say what was tried rather
     // than leaving a bare "skipped" that nobody can act on.
     q(".stats").title = s.hasLog ? "" :

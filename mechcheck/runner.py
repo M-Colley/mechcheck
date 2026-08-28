@@ -57,6 +57,8 @@ class Suppression:
 class RunResult:
     findings: list = field(default_factory=list)
     suppressed: list = field(default_factory=list)
+    #: Findings held back by the per-rule cap. Counted, never silently dropped.
+    truncated: list = field(default_factory=list)
     skipped: dict = field(default_factory=dict)      # rule id -> why
     unused_suppressions: list = field(default_factory=list)
     duration_s: float = 0.0
@@ -68,14 +70,24 @@ class RunResult:
         return max((f.severity for f in self.findings), default=None)
 
     def counts(self) -> dict:
+        """Everything found, including what the cap held back.
+
+        The headline must not shrink because the list was shortened.
+        """
         out = {"error": 0, "warn": 0, "info": 0}
-        for f in self.findings:
+        for f in self.findings + self.truncated:
             out[f.severity.label] += 1
         return out
 
+    def truncated_by_rule(self) -> dict:
+        counts: dict = {}
+        for f in self.truncated:
+            counts[f.rule] = counts.get(f.rule, 0) + 1
+        return counts
+
     def should_fail(self) -> bool:
         threshold = self.config.fail_on if self.config else Severity.ERROR
-        return any(f.severity >= threshold for f in self.findings)
+        return any(f.severity >= threshold for f in self.findings + self.truncated)
 
 
 def collect_suppressions(project: TexProject) -> list:
@@ -155,6 +167,7 @@ def run(root: str, config: Config, only=None, offline: bool = False,
     _apply_suppressions(result, project)
     _apply_baseline(result, baseline)
     result.findings.sort(key=lambda f: f.sort_key())
+    _apply_cap(result, config.max_per_rule)
     result.duration_s = time.time() - started
     return result
 
@@ -171,6 +184,23 @@ def _apply_suppressions(result: RunResult, project: TexProject) -> None:
         result.suppressed.append(finding)
     result.findings = kept
     result.unused_suppressions = [s for s in suppressions if not s.used]
+
+
+def _apply_cap(result: RunResult, max_per_rule: int) -> None:
+    """Keep the first N findings of each rule; count the rest.
+
+    Runs after sorting, so what survives is the most severe and earliest of
+    each kind -- the ones worth looking at first.
+    """
+    if not max_per_rule:
+        return
+    kept, held = [], []
+    seen: dict = {}
+    for finding in result.findings:
+        seen[finding.rule] = seen.get(finding.rule, 0) + 1
+        (kept if seen[finding.rule] <= max_per_rule else held).append(finding)
+    result.findings = kept
+    result.truncated = held
 
 
 def _apply_baseline(result: RunResult, baseline: str | None) -> None:

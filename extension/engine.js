@@ -2754,8 +2754,26 @@ async function runChecks(files, options) {
   kept.sort((a, b) => b.severity - a.severity || (a.file || "").localeCompare(b.file || "")
                       || (a.line || 0) - (b.line || 0) || a.rule.localeCompare(b.rule));
 
+  /* Cap how many findings any one rule may show. A 27,000-word thesis produced
+     1,708 findings here, one rule accounting for 1,062 of them; nobody reads
+     that, they close it, and the twelve that mattered go with the rest. The
+     counts stay truthful -- `truncated` is held, never dropped. */
+  const maxPerRule = options.maxPerRule === undefined ? 10 : Math.max(0, options.maxPerRule);
+  let shown = kept, truncated = [];
+  if (maxPerRule) {
+    const seen = new Map();
+    shown = []; truncated = [];
+    for (const f of kept) {
+      const n = (seen.get(f.rule) || 0) + 1;
+      seen.set(f.rule, n);
+      (n <= maxPerRule ? shown : truncated).push(f);
+    }
+  }
+  const truncatedByRule = {};
+  for (const f of truncated) truncatedByRule[f.rule] = (truncatedByRule[f.rule] || 0) + 1;
+
   return {
-    findings: kept, suppressed, skipped, project, config, bib,
+    findings: shown, truncated, truncatedByRule, suppressed, skipped, project, config, bib,
     stats: {
       files: project.files.length, words: wordCount(ctx), floats: project.floats().length,
       references: bib.length, pages: pageCount(ctx), hasLog: !!log, hasPdf: !!pdfBytes,

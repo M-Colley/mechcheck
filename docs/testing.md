@@ -154,6 +154,23 @@ unverified ground.
 
 ---
 
+## A note on volume
+
+Each rule shows at most **10** findings and counts the rest, so one systematic
+habit cannot bury everything else. The headline totals always cover
+*everything* found — a shortened list never shrinks the number of problems.
+
+To see every instance:
+
+```bash
+mechcheck check . --max-per-rule 0
+```
+
+or set `max_per_rule: 0` in `mechcheck.yaml`. On a generated 27,000-word thesis
+this is the difference between 73 findings and 1,708.
+
+---
+
 ## Re-running my suites
 
 Nothing here is needed to *use* the tool, only to change it.

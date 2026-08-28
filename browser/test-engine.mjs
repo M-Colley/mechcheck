@@ -219,6 +219,37 @@ console.log("\nbehaviour");
         r.findings.filter(f => f.rule === "INT001").map(f => f.message).join("; "));
 }
 
+console.log("\nvolume: one habit must not bury everything else");
+{
+  const enc = new TextEncoder();
+  const lines = [];
+  for (let i = 0; i < 25; i++) lines.push(`This is is repeated line number ${i} here.`);
+  const doc = "\\documentclass{article}\n\\begin{document}\n" + lines.join("\n") + "\n\\end{document}\n";
+  const files = () => new Map([["main.tex", enc.encode(doc)]]);
+
+  const capped = await runChecks(files(), { profile: "thesis", verify: false });
+  const sty = capped.findings.filter(f => f.rule === "STY003");
+  check("a rule is capped", sty.length === 10, String(sty.length));
+  check("the rest are held, not dropped", capped.truncated.length === 15, String(capped.truncated.length));
+  check("held findings are counted per rule",
+        capped.truncatedByRule.STY003 === 15, JSON.stringify(capped.truncatedByRule));
+
+  const total = capped.findings.concat(capped.truncated).filter(f => f.rule === "STY003").length;
+  check("nothing is lost", total === 25, String(total));
+
+  const uncapped = await runChecks(files(), { profile: "thesis", verify: false, maxPerRule: 0 });
+  check("the cap can be turned off",
+        uncapped.findings.filter(f => f.rule === "STY003").length === 25);
+  check("and then nothing is held", uncapped.truncated.length === 0);
+
+  const custom = await runChecks(files(), { profile: "thesis", verify: false, maxPerRule: 3 });
+  check("a custom cap is honoured",
+        custom.findings.filter(f => f.rule === "STY003").length === 3);
+
+  // Python asserts the identical numbers in tests/test_volume.py.
+  check("browser and Python agree on the cap", sty.length === 10 && capped.truncated.length === 15);
+}
+
 // --- 5. the zip path, which is how most people will actually use it -------
 console.log("\nzip reading");
 {

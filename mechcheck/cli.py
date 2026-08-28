@@ -52,6 +52,8 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--baseline", default=".mechcheck-baseline.json",
                        help="findings to ignore (created by `mechcheck baseline`)")
     check.add_argument("--no-baseline", action="store_true", help="ignore the baseline file")
+    check.add_argument("--max-per-rule", type=int, metavar="N",
+                       help="show at most N findings per rule (0 = all; default 10)")
     check.add_argument("--fail-on", choices=["error", "warn", "info", "never"],
                        help="exit non-zero at this severity (default: error)")
 
@@ -88,6 +90,8 @@ def _overrides(args) -> dict:
         value = getattr(args, key, None)
         if value:
             out[key] = value
+    if getattr(args, "max_per_rule", None) is not None:
+        out["max_per_rule"] = args.max_per_rule
     fail_on = getattr(args, "fail_on", None)
     if fail_on:
         out["fail_on"] = fail_on

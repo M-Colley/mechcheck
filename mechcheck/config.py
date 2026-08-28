@@ -64,6 +64,9 @@ DEFAULTS: dict = {
     "language": "en",
     "main": None,
     "fail_on": "error",
+    #: Most findings shown per rule; 0 shows everything. A systematic
+    #: habit should cost one entry and a count, not three hundred.
+    "max_per_rule": 10,
     "anonymous": False,
     "disable": [],
     "enable": [],
@@ -136,6 +139,13 @@ class Config:
     @property
     def anonymous(self) -> bool:
         return bool(self.data.get("anonymous"))
+
+    @property
+    def max_per_rule(self) -> int:
+        try:
+            return max(0, int(self.data.get("max_per_rule", 10)))
+        except (TypeError, ValueError):
+            return 10
 
     @property
     def fail_on(self) -> Severity:

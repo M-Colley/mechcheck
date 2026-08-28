@@ -61,10 +61,16 @@ def render_text(result, color: bool | None = None, show_fix: bool = True) -> str
                 fix = f"      fix: {f.fix}"
                 out.append(f"{_DIM}{fix}{_RESET}" if use_color else fix)
 
+    for rule_id, held in sorted(getattr(result, "truncated_by_rule", lambda: {})().items()):
+        out.append(f"  … and {held} more {rule_id}. `mechcheck explain {rule_id}` says why, "
+                   f"or raise max_per_rule to list them all.")
+
     counts = result.counts()
     out.append("")
     summary = (f"{counts['error']} error(s), {counts['warn']} warning(s), "
                f"{counts['info']} note(s) in {result.duration_s:.1f}s")
+    if result.truncated:
+        summary += f"; {len(result.truncated)} not listed"
     if result.suppressed:
         summary += f"; {len(result.suppressed)} suppressed"
     out.append(summary)
@@ -129,6 +135,12 @@ def render_markdown(result, title: str = "mechcheck", max_rows: int = 60) -> str
     else:
         bits.append("_No mechanical issues found._")
 
+    held = getattr(result, "truncated_by_rule", lambda: {})()
+    if held:
+        bits.append("")
+        bits.append("**Repeated findings, listed once each:** "
+                    + ", ".join(f"`{r}` +{n}" for r, n in sorted(held.items())))
+
     top = Counter(f.rule for f in result.findings).most_common(3)
     if top:
         bits.append("")
@@ -161,6 +173,7 @@ def render_json(result) -> str:
         "findings": [f.to_dict() for f in result.findings],
         "suppressed": [f.to_dict() for f in result.suppressed],
         "skipped": result.skipped,
+        "truncated": [f.to_dict() for f in getattr(result, "truncated", [])],
     }
     return json.dumps(payload, indent=2, ensure_ascii=False)
 
