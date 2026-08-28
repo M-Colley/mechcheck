@@ -20,6 +20,7 @@
 
   let host = null, root = null, panel = null;
   let lastResult = null, running = false;
+  let lastOutputAttempts = [];
 
   const DEFAULTS = { profile: "thesis", stage: "submission", venue: "", verify: false, autorun: false };
 
@@ -45,22 +46,67 @@
   }
 
   /* The compiled log and PDF unlock the compile, page-count and PDF-metadata
-     checks. Overleaf has moved these paths around between versions, so try the
-     ones we know and give up quietly: the affected rules simply report as
-     skipped, which is honest. */
+     checks -- including ANON006, which reads the author name out of the PDF
+     and is the classic way a carefully anonymised paper de-anonymises itself.
+
+     Guessing the URL does not work: Overleaf serves output from
+     /project/<id>/build/<buildId>/output/<file>, with a clsiserverid query
+     parameter that routes to the machine holding that build. Neither is
+     knowable from the outside.
+
+     But the editor has already downloaded both files to show you the PDF, so
+     the exact URLs -- build id, query string and all -- are sitting in this
+     page's resource timeline. Reusing them costs nothing, triggers no compile,
+     and stays correct when Overleaf changes the scheme again. */
+  const OUTPUT_PATTERNS = [
+    /\/(?:download\/)?project\/[0-9a-fA-F]+\/build\/[0-9a-fA-F-]+\/output\/([\w.-]+)/,
+    /\/project\/[0-9a-fA-F]+\/output\/([\w.-]+)/,
+  ];
+
+  function discoverOutputUrls() {
+    const found = new Map();
+    try {
+      for (const entry of performance.getEntriesByType("resource")) {
+        for (const pattern of OUTPUT_PATTERNS) {
+          const m = pattern.exec(entry.name);
+          if (m) { found.set(m[1], entry.name); break; }   // later entries win
+        }
+      }
+    } catch (err) { /* resource timing unavailable */ }
+    return found;
+  }
+
   async function fetchOutputs(files) {
-    const candidates = [
-      ["output.log", `/project/${PROJECT_ID}/output/output.log`],
-      ["output.pdf", `/project/${PROJECT_ID}/output/output.pdf`],
-    ];
-    for (const [name, url] of candidates) {
+    const discovered = discoverOutputUrls();
+    const attempts = [];
+
+    // Whatever the editor actually fetched, in the form it fetched it.
+    for (const [name, url] of discovered) {
+      if (/\.(log|pdf)$/i.test(name)) attempts.push([name, url]);
+    }
+    // The editor fetches the log too, but if only the PDF is in the timeline,
+    // the log sits beside it under the same build.
+    const pdfUrl = discovered.get("output.pdf");
+    if (pdfUrl && !discovered.has("output.log"))
+      attempts.push(["output.log", pdfUrl.replace(/output\.pdf/, "output.log")]);
+    // Last resort: the path older Overleaf versions served.
+    attempts.push(["output.log", `/project/${PROJECT_ID}/output/output.log`]);
+    attempts.push(["output.pdf", `/project/${PROJECT_ID}/output/output.pdf`]);
+
+    const tried = [];
+    for (const [name, url] of attempts) {
+      if (files.has(name)) continue;               // already have this one
       try {
         const res = await fetch(url, { credentials: "same-origin" });
+        tried.push(`${url.split("?")[0]} -> ${res.status}`);
         if (!res.ok) continue;
         const buf = new Uint8Array(await res.arrayBuffer());
         if (buf.byteLength > 100) files.set(name, buf);
-      } catch (err) { /* not available in this Overleaf version */ }
+      } catch (err) {
+        tried.push(`${url.split("?")[0]} -> ${err.message}`);
+      }
     }
+    lastOutputAttempts = tried;
     return files;
   }
 
@@ -299,6 +345,11 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
       + `${s.references} reference${s.references === 1 ? "" : "s"} · ${s.floats} float${s.floats === 1 ? "" : "s"}`
       + (s.pages ? ` · ${s.pages} pages` : "")
       + (s.hasLog ? "" : " · no .log, compile checks skipped");
+    // When the output files could not be reached, say what was tried rather
+    // than leaving a bare "skipped" that nobody can act on.
+    q(".stats").title = s.hasLog ? "" :
+      ("Tried:\n" + (lastOutputAttempts.join("\n") || "nothing — the editor had not "
+       + "fetched the output yet in this page load. Recompile, then check again."));
 
     if (s.mainGuessed)
       setNote(`Guessed ${s.main} as the main file — no file had both \\documentclass and \\begin{document}.`, true);

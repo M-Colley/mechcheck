@@ -49,6 +49,12 @@ That does not matter for tests 1 and 2, which read the source, not the PDF.
 
 **Pass:** the panel shows **12 errors, 15 warnings, 10 notes** — 37 findings.
 
+That figure is for a check with no compiled output. When the extension can
+also reach the `.log` and `.pdf`, more rules become eligible (overfull boxes,
+page count, PDF tagging, and `ANON006`, which reads the author name out of the
+PDF metadata) — so a higher count with a `.log` present is correct, not a
+regression. The header line tells you which case you are in.
+
 Spot-check that these specific ones appear, because each proves a different
 part of the chain is alive:
 
@@ -72,6 +78,7 @@ and re-check: `BIO001` should appear, saying the DOI does not resolve.
 |---|---|
 | No button appears | the content script did not inject — check `chrome://extensions` for an error under mechcheck, and confirm the URL is `overleaf.com/project/…` |
 | "Overleaf refused the download (HTTP 4xx)" | the download endpoint moved or the session is not shared — this is the thing I could not verify from here |
+| Header still says "no .log" | hover the header line — it now lists every URL tried and the status each returned; send me that |
 | Findings appear but `verify refs` finds nothing | the service worker relay is not working; check the extension's *service worker* console |
 | Counts differ from 12/15/10 | send me the numbers — that is a real disagreement between us |
 
