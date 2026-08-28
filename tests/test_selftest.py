@@ -24,7 +24,7 @@ EXPECTED = {
     "ABB001": 1, "ACC001": 2, "ACC004": 1, "ANON001": 1, "ANON003": 1, "ANON004": 2,
     "ANON005": 1, "BIB006": 1, "BIB008": 1, "BIB009": 1, "FIG003": 1, "MET003": 1,
     "MET004": 1, "POL001": 1, "POL002": 1, "POL003": 1, "POL004": 1, "POL005": 1,
-    "POL006": 1, "POL007": 1, "REF001": 1, "REF008": 3, "REF009": 2, "STY001": 1,
+    "POL006": 1, "POL007": 1, "REF001": 1, "REF008": 2, "REF009": 2, "STY001": 1,
     "STY003": 1, "STY005": 1, "STY007": 1, "VEN002": 2, "VEN003": 1, "VEN004": 2,
 }
 
@@ -48,4 +48,4 @@ def test_nothing_unexpected_fires(counts):
 
 
 def test_total_matches_the_documented_figure(counts):
-    assert sum(counts.values()) == 37
+    assert sum(counts.values()) == 36

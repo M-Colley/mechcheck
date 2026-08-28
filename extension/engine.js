@@ -803,6 +803,29 @@ function isAnonymousStage(ctx) {
   const model = String(ctx.config.venueField("anonymity", "model") || "").toLowerCase();
   return model.includes("double") || model.includes("anonymous");
 }
+/* Environments acmart itself removes from an anonymous build. From the class:
+       \if@ACM@anonymous
+         \excludecomment{anonsuppress}
+         \excludecomment{acks}
+   Text inside them is not merely styled differently, it is not typeset at all,
+   so a reviewer cannot see it. Reporting it would report the correct construct
+   as a mistake, which teaches people to stop using it. */
+const CLASS_SUPPRESSED_ENVS = ["acks", "anonsuppress"];
+function classHidesAcks(ctx) {
+  const dc = ctx.project.documentclass();
+  return dc.cls.toLowerCase() === "acmart" &&
+         dc.options.map(o => o.toLowerCase()).includes("anonymous");
+}
+function suppressedSpans(ctx) {
+  if (!classHidesAcks(ctx)) return [];
+  if (!ctx.cache.anonSuppressed) {
+    ctx.cache.anonSuppressed = CLASS_SUPPRESSED_ENVS.flatMap(
+      n => [...ctx.project.environments(n)].map(e => [e.start, e.end]));
+  }
+  return ctx.cache.anonSuppressed;
+}
+const isSuppressed = (ctx, at) => suppressedSpans(ctx).some(([s, e]) => at >= s && at < e);
+
 function hasStudy(ctx) { return (ctx.project.prose.match(STUDY_SIGNALS) || []).length >= 3; }
 const STUDY_SIGNALS = /\b(participants?|subjects?|respondents?|interviewees?|we recruited|sample of|between-subjects?|within-subjects?|user study|field study|survey|questionnaire)\b/gi;
 
@@ -999,12 +1022,16 @@ rule({ id:"REF003", title:"Duplicate label", cat:"crossref", sev:SEV.error,
 rule({ id:"REF004", title:"Missing non-breaking space before a cross-reference", cat:"crossref", sev:SEV.info,
   why:"'Figure 7' must not break across a line; LaTeX only prevents that if you write the tie yourself.",
   fix:"Write Figure~\\ref{...} with a tilde.",
-  run(ctx){ // REF008 covers the same text with better advice; stand aside when it is on.
-    if (ctx.config.enabled("REF008")) return;
+  run(ctx){ // REF008 covers the same text with better advice, so stand aside —
+    // but only for the words it actually asks about. It says nothing about
+    // "Section \ref", and a missing tie there is still a bad line break.
+    const defer = ctx.config.enabled("REF008");
     const re = /\b(Figure|Fig\.|Table|Section|Sec\.|Chapter|Chap\.|Equation|Eq\.|Algorithm|Listing|Appendix)([ ]+)\\(ref|cref|Cref|autoref|eqref|vref)\b/g;
-    let m; while ((m = re.exec(ctx.project.text)) !== null)
+    let m; while ((m = re.exec(ctx.project.text)) !== null) {
+      if (defer && autorefApplies(ctx, m[1])) continue;
       ctx.add("REF004", `use a non-breaking space: \`${m[1]}~\\${m[3]}\``,
         { at: m.index + m[1].length, context: ctx.project.excerpt(m.index) });
+    }
   }});
 
 rule({ id:"REF005", title:"Citation key not in the bibliography", cat:"crossref", sev:SEV.error,
@@ -1052,12 +1079,27 @@ rule({ id:"REF007", title:"Inconsistent cross-reference commands", cat:"crossref
         { at: first[n], fix: `Convert the ${counts[n]} \\${n} to \\${dominant}.` });
     }}});
 
-/* Words a reference command can supply for itself. */
-const AUTOREF_WORDS = ["Figures", "Figure", "Fig\\.", "Tables", "Table", "Sections", "Section",
-  "Sec\\.", "Chapter", "Chap\\.", "Equation", "Eq\\.", "Algorithm", "Listing", "Appendix",
-  "Subsection", "Part"];
+/* Words \autoref reproduces exactly, so writing them by hand is duplication. */
+const AUTOREF_EXACT = ["Figures", "Figure", "Fig\\.", "Tables", "Table",
+  "Chapter", "Chap\\.", "Equation", "Eq\\.", "Part"];
+
+/* Words \autoref would replace with a *different* one, so writing them by hand
+   is a decision rather than a mistake. \autoref takes the word from the level
+   of the thing labelled, not from the word you wrote: a \subsection prints
+   "Subsection 3.2.1" where the convention is to write "Section" at every
+   depth, a reference into the appendix prints "Chapter", and most setups
+   define no autoref name at all for algorithms and listings. */
+const AUTOREF_VARIES = ["Sections", "Section", "Sec\\.", "Subsection",
+  "Appendix", "Algorithm", "Listing"];
+
+const AUTOREF_WORDS = [...AUTOREF_EXACT, ...AUTOREF_VARIES];
+const AUTOREF_EXACT_PLAIN = new Set(AUTOREF_EXACT.map(w => w.replace(/\\/g, "")));
 const PREFIXED_REF = new RegExp(
   "(?<![\\w])(" + AUTOREF_WORDS.join("|") + ")[ ~]+\\\\(ref|cref|Cref|autoref)\\b", "g");
+
+/* Would \autoref print exactly the word the author wrote? */
+const autorefApplies = (ctx, word) =>
+  AUTOREF_EXACT_PLAIN.has(word) || !!(ctx.options && ctx.options.autorefSections);
 
 /* Capitalised words that are not surnames, so not a case for \citet. */
 const NOT_A_NAME = new Set(["figure","fig","table","section","sec","chapter","equation","eq",
@@ -1083,6 +1125,10 @@ rule({ id:"REF008", title:"Prefixed cross-reference where \\autoref would do", c
     const text = ctx.project.text;
     let m; while ((m = PREFIXED_REF.exec(text)) !== null) {
       const word = m[1], cmd = m[2];
+      // Writing the word twice is wrong whatever the house style, so the
+      // \autoref and \cref branch below applies to every word. Only the advice
+      // to *switch* to \autoref is limited to the words it reproduces.
+      if (cmd === "ref" && !autorefApplies(ctx, word)) continue;
       // The argument is needed to rewrite the whole invocation, braces included.
       const group = readGroup(text, skipSpace(text, m.index + m[0].length));
       const key = group ? group.inner : null;
@@ -1136,7 +1182,23 @@ const ABB_COMMON = new Set(["AI","API","CPU","GPU","CSV","PDF","HTML","HTTP","HT
   "SQL","XML","JSON","YAML","OK","TV","3D","2D","1D","AM","PM","CI","CD","IRB","ANOVA","SD","SE","RQ","LLM",
   "ML","DL","NLP","TODO","FIXME","XXX","TBD","HACK","NOTE",
   "NASA","HCI","VR","AR","XR","MR","UI","UX","HMD","GB","MB","TB","KB",
-  "HZ","FPS","SUS","TLX","IQR","SPSS"]);
+  "HZ","FPS","SUS","TLX","IQR","SPSS",
+  // Names of technologies, formats and standards. These work as proper nouns:
+  // nobody writes "User Datagram Protocol (UDP)", and a reader who does not
+  // recognise the name is not helped by the expansion either. Domain jargon
+  // does not belong here however ubiquitous it is inside its field — ADAS,
+  // eHMI and LSTM are what an outside examiner stumbles over, which is the
+  // reason ABB004 exists. Only runs of 2–9 capitals reach this rule, so
+  // IPv6, MP4, Wi-Fi and PCIe need no entry.
+  "TCP","UDP","IP","FTP","SFTP","SSH","SMTP","IMAP","DNS","DHCP","TLS","SSL",
+  "VPN","LAN","WAN","WLAN","MQTT","REST","SOAP","RPC","CDN","NAT","OSI","RTT",
+  "ICMP","ARP","SIP","RTP","URI","URN","NFC","RFID","BLE","GSM","LTE","MAC",
+  "CSS","XHTML","TSV","TOML","PNG","JPEG","GIF","SVG","TIFF","BMP","WAV","AVI",
+  "MOV","MKV","ZIP","TAR","ASCII","UTF","RDF","EPS",
+  "SSD","HDD","HDMI","VGA","DVI","PCI","SATA","TPU","LCD","OLED","IMU","DPI",
+  "PPI","RGBA","CMYK","HSV","ADC","DAC",
+  "SDK","IDE","GUI","CLI","VM","JVM","JDK","JRE","UML",
+  "IEC","ANSI","IETF","RFC","NIST","DIN","SAE","ITU","ISBN","ISSN","ORCID","APA"]);
 const ABB_DEF = /((?:[A-Z][\w-]*|of|the|for|and|in|on|to|a|an)(?:[ -](?:[A-Za-z][\w-]*|of|the|for|and|in|on|to|a|an)){0,7})\s*\(([A-Z][A-Za-z]{1,9}s?)\)/g;
 const ABB_USE = /(?<![\w\\])([A-Z]{2,9})(?:s|es)?(?![\w])/g;
 const NOT_ACRONYM = /^(?:[IVXLCDM]+|[A-Z]|\d+[A-Z]*|[A-Z]{2}\d+)$/;
@@ -2099,14 +2161,18 @@ rule({ id:"ANON001", title:"Author identity present in an anonymous submission",
 
 rule({ id:"ANON002", title:"Acknowledgements left in an anonymous submission", cat:"anonymity", sev:SEV.error,
   why:"Acknowledgements name colleagues, funders and institutions — they identify the authors as reliably as the author block.",
-  fix:"Remove for review, or guard the section so it only appears in the camera-ready version.",
+  fix:"Put them in acmart's acks environment, which the anonymous option removes for you; otherwise guard the section so it only appears in the camera-ready version.",
   run(ctx){ if (!isAnonymousStage(ctx)) return;
-    const hits = [...ctx.project.environments("acks")];
+    // acmart's own acks environment, under the anonymous option, already is
+    // the fix this rule would ask for.
+    let hits = classHidesAcks(ctx) ? [] : [...ctx.project.environments("acks")];
     for (const c of ctx.project.anyCommands(["acksname","acknowledgments","acknowledgements"], 1)) hits.push(c);
     for (const c of ctx.project.anyCommands(["section","chapter"], 1))
       if (/acknowledge?ment|danksagung/i.test(c.arg(0))) hits.push(c);
+    hits = hits.filter(h => !isSuppressed(ctx, h.start)).sort((a, b) => a.start - b.start);
     if (!hits.length) return;
-    ctx.add("ANON002", "an acknowledgements section is present", { at: hits[0].start });
+    ctx.add("ANON002", "an acknowledgements section is present", { at: hits[0].start,
+      fix: "Move it into \\begin{acks}...\\end{acks}, or remove it for review." });
   }});
 
 rule({ id:"ANON003", title:"Identifying link", cat:"anonymity", sev:SEV.error,
@@ -2116,6 +2182,7 @@ rule({ id:"ANON003", title:"Identifying link", cat:"anonymity", sev:SEV.error,
     IDENTIFYING_HOSTS.lastIndex = 0;
     let m; while ((m = IDENTIFYING_HOSTS.exec(ctx.project.text)) !== null) {
       if (m[0].toLowerCase().includes("anonymous")) continue;
+      if (isSuppressed(ctx, m.index)) continue;
       ctx.add("ANON003", `identifying link: ${m[0].slice(0, 70)}`, { at: m.index, context: ctx.project.excerpt(m.index) });
     }}});
 
@@ -2126,6 +2193,7 @@ rule({ id:"ANON004", title:"Funding statement in an anonymous submission", cat:"
     FUNDING.lastIndex = 0;
     const seen = new Set();
     let m; while ((m = FUNDING.exec(ctx.project.prose)) !== null) {
+      if (isSuppressed(ctx, m.index)) continue;
       const loc = ctx.project.locate(m.index), key = loc.file + ":" + loc.line;
       if (seen.has(key)) continue;
       seen.add(key);

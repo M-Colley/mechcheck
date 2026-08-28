@@ -227,3 +227,166 @@ def test_undecidable_headings_do_not_swing_the_majority(tmp_path):
                      "The summary of contributions")
     result = check(build(tmp_path, body), only=["STR005"])
     assert not [f for f in result.findings if "study design" in f.message.lower()]
+
+
+# --------------------------------------------------------------------------- #
+# REF008: \autoref is not appropriate for sections
+# --------------------------------------------------------------------------- #
+#
+# \autoref takes the word from the level of the thing labelled, not from the
+# word the author wrote. A \subsection prints "Subsection 3.2.1" where the
+# convention is "Section" at every depth, and a reference into the appendix
+# prints "Chapter". Demanding \autoref there would demand a change to the
+# printed text, which is a house-style decision and not a mistake.
+
+def test_a_section_reference_is_left_alone(tmp_path):
+    root = build(tmp_path, "Section~" + BS + "ref{sec:i} explains them.")
+    assert "REF008" not in fired(check(root, only=["REF008"]))
+
+
+def test_appendix_and_subsection_references_are_left_alone(tmp_path):
+    body = ("Appendix~" + BS + "ref{app:a} lists the items, and "
+            "Subsection~" + BS + "ref{sec:b} explains them.")
+    assert "REF008" not in fired(check(build(tmp_path, body), only=["REF008"]))
+
+
+def test_a_figure_reference_is_still_reported(tmp_path):
+    root = build(tmp_path, "As shown in Figure~" + BS + "ref{fig:a}, it holds.")
+    assert "REF008" in fired(check(root, only=["REF008"]))
+
+
+def test_a_doubled_word_is_reported_even_for_a_section(tmp_path):
+    # \autoref supplies the word itself, so this prints it twice whatever the
+    # house style is. That is an outright error, not a preference.
+    root = build(tmp_path, "Section~" + BS + "autoref{sec:i} prints it twice.")
+    result = check(root, only=["REF008"])
+    assert "REF008" in fired(result)
+    assert any("twice" in f.message for f in result.findings)
+
+
+def test_sections_can_be_opted_back_in(tmp_path):
+    # A document that has redefined \subsectionautorefname can ask for it.
+    root = build(tmp_path, "Section~" + BS + "ref{sec:i} explains them.")
+    result = check(root, only=["REF008"], rules={"REF008": {"sections": True}})
+    assert "REF008" in fired(result)
+
+
+def test_a_missing_tie_on_a_section_is_still_reported(tmp_path):
+    # The hole this would otherwise leave: REF004 used to stand aside entirely
+    # whenever REF008 was enabled, so with REF008 silent on sections nothing
+    # would report "Section \ref" at all.
+    root = build(tmp_path, "Section " + BS + "ref{sec:i} has no tie.")
+    assert "REF004" in fired(check(root, only=["REF004", "REF008"]))
+
+
+def test_a_missing_tie_on_a_figure_defers_to_ref008(tmp_path):
+    root = build(tmp_path, "Figure " + BS + "ref{fig:a} has no tie.")
+    result = check(root, only=["REF004", "REF008"])
+    assert "REF008" in fired(result)
+    assert "REF004" not in fired(result)
+
+
+# --------------------------------------------------------------------------- #
+# ANON002: acmart removes its own acks environment
+# --------------------------------------------------------------------------- #
+#
+# From acmart.cls:
+#
+#     \if@ACM@anonymous
+#       \excludecomment{anonsuppress}
+#       \excludecomment{acks}
+#
+# The content is not typeset at all, so a reviewer never sees it. Reporting it
+# reports the correct construct as a mistake.
+
+def _acmart(tmp_path, body, options="manuscript,screen,review,anonymous"):
+    doc = (BS + "documentclass[" + options + "]{acmart}" + chr(10)
+           + BS + "begin{document}" + chr(10) + body + chr(10)
+           + BS + "end{document}" + chr(10))
+    (tmp_path / "main.tex").write_text(doc, encoding="utf-8", newline=chr(10))
+    return str(tmp_path)
+
+
+ACKS = (BS + "begin{acks}" + chr(10)
+        + "We thank all study participants." + chr(10)
+        + BS + "end{acks}")
+
+
+def test_acks_under_the_anonymous_option_is_not_reported(tmp_path):
+    root = _acmart(tmp_path, ACKS)
+    assert "ANON002" not in fired(check(root, only=["ANON002"], profile="paper-anonymous"))
+
+
+def test_acks_without_the_anonymous_option_is_still_reported(tmp_path):
+    # The class only removes it when the option is actually set. Anonymous
+    # stage from the profile alone is not the same thing.
+    root = _acmart(tmp_path, ACKS, options="manuscript,screen,review")
+    assert "ANON002" in fired(check(root, only=["ANON002"], profile="paper-anonymous"))
+
+
+def test_an_acknowledgements_section_is_still_reported(tmp_path):
+    # Written as a plain section, acmart does not remove it, so it reaches the
+    # reviewer and the rule must say so.
+    body = BS + "section{Acknowledgements}" + chr(10) + "We thank the participants."
+    root = _acmart(tmp_path, body)
+    assert "ANON002" in fired(check(root, only=["ANON002"], profile="paper-anonymous"))
+
+
+def test_a_funder_named_inside_acks_is_not_reported(tmp_path):
+    body = (BS + "begin{acks}" + chr(10)
+            + "This work was funded by the Deutsche Forschungsgemeinschaft." + chr(10)
+            + BS + "end{acks}")
+    root = _acmart(tmp_path, body)
+    assert "ANON004" not in fired(check(root, only=["ANON004"], profile="paper-anonymous"))
+
+
+def test_a_funder_named_in_the_body_is_still_reported(tmp_path):
+    body = "This work was funded by the Deutsche Forschungsgemeinschaft."
+    root = _acmart(tmp_path, body)
+    assert "ANON004" in fired(check(root, only=["ANON004"], profile="paper-anonymous"))
+
+
+def test_a_repository_link_inside_anonsuppress_is_not_reported(tmp_path):
+    body = (BS + "begin{anonsuppress}" + chr(10)
+            + "Our code is at https://github.com/mcolley/study for review." + chr(10)
+            + BS + "end{anonsuppress}")
+    root = _acmart(tmp_path, body)
+    assert "ANON003" not in fired(check(root, only=["ANON003"], profile="paper-anonymous"))
+
+
+def test_a_repository_link_in_the_body_is_still_reported(tmp_path):
+    body = "Our code is at https://github.com/mcolley/study for review."
+    root = _acmart(tmp_path, body)
+    assert "ANON003" in fired(check(root, only=["ANON003"], profile="paper-anonymous"))
+
+
+# --------------------------------------------------------------------------- #
+# ABB004: names of technologies and standards need no expansion
+# --------------------------------------------------------------------------- #
+
+def test_protocol_and_format_names_need_no_introduction(tmp_path):
+    body = ("The client speaks TCP and UDP, exchanges JSON over HTTPS, "
+            "and stores the result as a PDF on an SSD.")
+    assert "ABB004" not in fired(check(build(tmp_path, body), only=["ABB004"]))
+
+
+def test_standards_bodies_need_no_introduction(tmp_path):
+    body = "The format follows an ISO standard, an IETF RFC and an ANSI profile."
+    assert "ABB004" not in fired(check(build(tmp_path, body), only=["ABB004"]))
+
+
+def test_domain_jargon_is_still_reported(tmp_path):
+    # The whole point of the rule: the outside examiner does not know these,
+    # so they must not be in the built-in list.
+    body = "The ADAS relies on the eHMI, and the TOR was issued by the LSTM model."
+    reported = {f.data["acronym"] for f in check(build(tmp_path, body), only=["ABB004"]).findings}
+    assert {"ADAS", "TOR", "LSTM"} <= reported
+
+
+def test_the_technology_list_holds_only_matchable_entries():
+    # Only runs of 2-9 capitals ever reach ABB004, so an entry with a digit or
+    # a lower-case letter would be dead weight that nobody would ever notice.
+    from mechcheck.rules.abbrev import _TECHNOLOGY
+    import re
+    bad = [w for w in _TECHNOLOGY if not re.fullmatch(r"[A-Z]{2,9}", w)]
+    assert not bad, bad

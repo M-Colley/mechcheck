@@ -126,13 +126,16 @@ def duplicate_label(ctx):
       fix="Write Figure~\\ref{...} with a tilde.")
 def missing_tie(ctx):
     # REF008 covers the same text and gives better advice (drop the word and
-    # use \autoref), so stand aside when it is enabled.
-    if ctx.config.enabled("REF008"):
-        return
+    # use \autoref), so stand aside -- but only for the words it actually asks
+    # about. It says nothing about "Section \ref", and a missing tie there is
+    # still a line break waiting to happen.
+    defer = ctx.config.enabled("REF008")
     pattern = re.compile(
         r"\b(Figure|Fig\.|Table|Section|Sec\.|Chapter|Chap\.|Equation|Eq\.|Algorithm|Listing|Appendix)"
         r"([ ]+)\\(ref|cref|Cref|autoref|eqref|vref)\b")
     for m in pattern.finditer(ctx.project.text):
+        if defer and _autoref_applies(ctx, m.group(1)):
+            continue
         f, line, col = ctx.project.locate(m.start(2))
         yield ctx.finding("REF004", f"use a non-breaking space: `{m.group(1)}~\\{m.group(3)}`",
                           file=f, line=line, col=col, context=ctx.project.excerpt(m.start()),
@@ -209,10 +212,26 @@ def inconsistent_ref_style(ctx):
 
 
 
-#: Words a reference command can supply for itself.
-_AUTOREF_WORDS = ("Figure", "Fig.", "Figures", "Table", "Tables", "Section", "Sec.",
-                  "Sections", "Chapter", "Chap.", "Equation", "Eq.", "Algorithm",
-                  "Listing", "Appendix", "Part", "Subsection")
+#: Words \autoref reproduces exactly, so writing them by hand is duplication.
+_AUTOREF_EXACT = ("Figure", "Fig.", "Figures", "Table", "Tables",
+                  "Chapter", "Chap.", "Equation", "Eq.", "Part")
+
+#: Words \autoref would replace with a *different* one, so writing them by
+#: hand is a decision rather than a mistake.
+#:
+#: \autoref takes the word from the level of the thing labelled, not from the
+#: word you wrote. A \subsection therefore prints "Subsection 3.2.1" where the
+#: near-universal convention is to write "Section" at every depth; a reference
+#: into the appendix prints "Chapter"; and no autoref name is defined at all
+#: for algorithm and listing environments in most setups.
+#:
+#: Demanding \autoref here would be demanding a change in the printed text.
+#: Documents that have redefined \subsectionautorefname and friends can opt
+#: back in with `rules: {REF008: {sections: true}}`.
+_AUTOREF_VARIES = ("Section", "Sec.", "Sections", "Subsection",
+                   "Appendix", "Algorithm", "Listing")
+
+_AUTOREF_WORDS = _AUTOREF_EXACT + _AUTOREF_VARIES
 
 _PREFIXED_REF = re.compile(
     r"(?<![\w])(" + "|".join(re.escape(w) for w in _AUTOREF_WORDS) + r")"
@@ -244,6 +263,19 @@ def _textual_cite_command(ctx) -> str:
     return ""
 
 
+def _autoref_applies(ctx, word: str) -> bool:
+    r"""Would \autoref print exactly the word the author wrote?
+
+    For a figure or a table, yes, so writing it out is duplication. For a
+    section it depends on the depth of the target, and for an appendix it is
+    simply a different word -- so there the written-out form is a choice, and
+    a checker has no business overriding it.
+    """
+    if word in _AUTOREF_EXACT:
+        return True
+    return bool(ctx.opt("REF008", "sections", False))
+
+
 @rule("REF008", "Prefixed cross-reference where \\autoref would do", Category.CROSSREF,
       Severity.WARN,
       rationale="Writing the word yourself means two places to keep in step, and it is the half that goes wrong: a table renumbered into a figure still reads 'Table'. \\autoref supplies the word from the label's own type.",
@@ -254,6 +286,12 @@ def prefer_autoref(ctx):
     text = ctx.project.text
     for m in _PREFIXED_REF.finditer(text):
         word, cmd = m.group(1), m.group(2)
+        # Writing the word twice is wrong whatever the house style, so the
+        # \autoref and \cref branches below apply to every word. Only the
+        # advice to *switch* to \autoref is limited to the words it would
+        # reproduce unchanged.
+        if cmd == "ref" and not _autoref_applies(ctx, word):
+            continue
         f, line, col = ctx.project.locate(m.start())
         # The argument is needed to rewrite the whole invocation, not just the
         # command name: Figure~\ref{x} becomes \autoref{x}, braces included.

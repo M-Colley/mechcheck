@@ -31,6 +31,40 @@ _FUNDING = re.compile(
     r"DFG|BMBF|European Union'?s? Horizon|ERC|NSF (?:grant|award))\b", re.IGNORECASE)
 
 
+#: Environments acmart itself removes from an anonymous build. From the class:
+#:
+#:     \if@ACM@anonymous
+#:       \excludecomment{anonsuppress}
+#:       \excludecomment{acks}
+#:
+#: So text inside them is not merely styled differently -- it is not typeset at
+#: all, and a reviewer cannot see it. Reporting it would be reporting the
+#: correct construct as a mistake, which teaches people to stop using it.
+_CLASS_SUPPRESSED_ENVS = ("acks", "anonsuppress")
+
+
+def _class_hides_acks(ctx) -> bool:
+    cls, options = ctx.project.documentclass()
+    return cls.lower() == "acmart" and "anonymous" in [o.lower() for o in options]
+
+
+def _suppressed_spans(ctx) -> list:
+    """Offset ranges the document class will not typeset in this build."""
+    if not _class_hides_acks(ctx):
+        return []
+    cached = ctx.cache.get("anon_suppressed_spans")
+    if cached is None:
+        cached = [(env.start, env.end)
+                  for name in _CLASS_SUPPRESSED_ENVS
+                  for env in ctx.project.environments(name)]
+        ctx.cache["anon_suppressed_spans"] = cached
+    return cached
+
+
+def _is_suppressed(ctx, offset: int) -> bool:
+    return any(start <= offset < end for start, end in _suppressed_spans(ctx))
+
+
 def _is_anonymous_stage(ctx) -> bool:
     if ctx.config.anonymous:
         return True
@@ -67,21 +101,25 @@ def author_block_visible(ctx):
 @rule("ANON002", "Acknowledgements left in an anonymous submission", Category.ANONYMITY,
       Severity.ERROR,
       rationale="Acknowledgements name colleagues, funders and institutions -- they identify the authors as reliably as the author block.",
-      fix="Wrap the section so it only appears in the camera-ready version.")
+      fix="Put them in acmart's acks environment, which the anonymous option removes for you; otherwise guard the section so it only appears in the camera-ready version.")
 def acknowledgements_present(ctx):
     if not _is_anonymous_stage(ctx):
         return
-    hits = list(ctx.project.environments("acks"))
+    # acmart's own acks environment, under the anonymous option, is already
+    # the fix this rule would ask for.
+    hits = [] if _class_hides_acks(ctx) else list(ctx.project.environments("acks"))
     for cmd in ctx.project.any_commands(["acksname", "acknowledgments", "acknowledgements"], 1):
         hits.append(cmd)
     for cmd in ctx.project.any_commands(["section", "section*", "chapter"], 1):
         if re.search(r"acknowledge?ment|danksagung", cmd.arg(0), re.IGNORECASE):
             hits.append(cmd)
+    hits = [h for h in hits if not _is_suppressed(ctx, h.start)]
+    hits.sort(key=lambda h: h.start)
     for hit in hits[:1]:
         f, line, col = ctx.project.locate(hit.start)
         yield ctx.finding("ANON002", "an acknowledgements section is present",
                           file=f, line=line, col=col,
-                          fix="Remove it for review, or guard it with \\ifanonymous.")
+                          fix="Move it into \\begin{acks}...\\end{acks}, or remove it for review.")
 
 
 @rule("ANON003", "Identifying link", Category.ANONYMITY, Severity.ERROR,
@@ -97,6 +135,8 @@ def identifying_link(ctx):
             continue
         if "anonymous" in url.lower():
             continue
+        if _is_suppressed(ctx, m.start()):
+            continue
         f, line, col = ctx.project.locate(m.start())
         yield ctx.finding("ANON003", f"identifying link: {url[:70]}",
                           file=f, line=line, col=col, context=ctx.project.excerpt(m.start()))
@@ -111,6 +151,8 @@ def funding_statement(ctx):
     # One finding per line: a funding sentence trips several patterns at once.
     seen_lines = set()
     for m in _FUNDING.finditer(ctx.project.prose):
+        if _is_suppressed(ctx, m.start()):
+            continue
         f, line, col = ctx.project.locate(m.start())
         if (f, line) in seen_lines:
             continue

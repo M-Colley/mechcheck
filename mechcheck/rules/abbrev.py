@@ -18,6 +18,39 @@ from collections import defaultdict
 from mechcheck.model import Category, Severity, rule
 
 #: Written out in full, these are never "abbreviations a reader must be taught".
+#: Names of technologies, formats and standards. These function as proper
+#: nouns: nobody writes "Portable Document Format (PDF)" or "User Datagram
+#: Protocol (UDP)", and a reader who does not recognise the name is not helped
+#: by the expansion either.
+#:
+#: The test for membership is deliberately narrow -- would writing it out look
+#: odd to a competent reader from another area? Domain jargon fails that test
+#: even when it is ubiquitous inside its own field: ADAS, eHMI, LSTM and TOR
+#: are exactly what an outside examiner stumbles over, which is the whole
+#: reason ABB004 exists. Keep those in your project's own ignore list, where
+#: the choice is visible.
+#:
+#: Only runs of 2--9 capitals ever reach this rule, so mixed-case and
+#: digit-bearing names -- IPv6, MP4, Wi-Fi, PCIe, NoSQL -- need no entry.
+_TECHNOLOGY = {
+    # network and protocols
+    "TCP", "UDP", "IP", "FTP", "SFTP", "SSH", "SMTP", "IMAP", "DNS", "DHCP",
+    "TLS", "SSL", "VPN", "LAN", "WAN", "WLAN", "MQTT", "REST", "SOAP", "RPC",
+    "CDN", "NAT", "OSI", "RTT", "ICMP", "ARP", "SIP", "RTP", "URI", "URN",
+    "NFC", "RFID", "BLE", "GSM", "LTE", "MAC",
+    # file formats, encodings and markup
+    "CSS", "XHTML", "TSV", "TOML", "PNG", "JPEG", "GIF", "SVG", "TIFF", "BMP",
+    "WAV", "AVI", "MOV", "MKV", "ZIP", "TAR", "ASCII", "UTF", "RDF", "EPS",
+    # hardware and interfaces
+    "SSD", "HDD", "HDMI", "VGA", "DVI", "PCI", "SATA", "TPU", "LCD", "OLED",
+    "IMU", "DPI", "PPI", "RGBA", "CMYK", "HSV", "ADC", "DAC",
+    # software platforms and tooling
+    "SDK", "IDE", "GUI", "CLI", "VM", "JVM", "JDK", "JRE", "UML",
+    # standards bodies and identifiers
+    "IEC", "ANSI", "IETF", "RFC", "NIST", "DIN", "SAE", "ITU",
+    "ISBN", "ISSN", "ORCID", "APA",
+}
+
 COMMON = {
     "AI", "API", "CPU", "GPU", "CSV", "PDF", "HTML", "HTTP", "HTTPS", "URL", "USB",
     "RAM", "ROM", "OS", "PC", "ID", "IT", "UK", "USA", "US", "EU", "GDPR", "ISO",
@@ -29,7 +62,7 @@ COMMON = {
     "TB", "KB", "HZ", "FPS", "SUS", "TLX", "IQR", "SPSS", "PDF", "DOI",
     # editing markers, reported by STY001 instead
     "TODO", "FIXME", "XXX", "TBD", "HACK", "NOTE",
-}
+} | _TECHNOLOGY
 
 #: Roman numerals, units and other all-caps sequences that are not acronyms.
 _NOT_ACRONYM = re.compile(r"^(?:[IVXLCDM]+|[A-Z]|\d+[A-Z]*|[A-Z]{2}\d+)$")

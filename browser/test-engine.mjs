@@ -138,8 +138,14 @@ console.log("\nfixture: refstyle (autoref and citet preferences)");
   const ref009 = r.findings.filter(f => f.rule === "REF009");
   check("REF008 flags a word-prefixed reference", fired.has("REF008"));
   check("REF009 flags a name written before a citation", fired.has("REF009"));
-  // Figure~ref, Table~ref, Section~ref, and Figure~autoref (the doubled word)
+  // Figure~ref, Table~ref, Figure~autoref (the doubled word) and Figure \ref.
+  // Section~ref is deliberately absent: \autoref takes the word from the level
+  // of the target, so it prints "Subsection" for a \subsection where the
+  // convention is "Section" at every depth. Writing that word out is a choice.
   check("REF008 count", ref008.length === 4, String(ref008.length));
+  check("REF008 leaves section references alone",
+        !ref008.some(f => (f.message || "").includes("Section")),
+        ref008.map(f => f.message).join(" | "));
   // "Colley et al." and "Rukzio and Colley". A lone surname is deliberately
   // not reported: on a real paper that shape produced nine wrong findings
   // ("Questionnaire~cite", "ANOVA~cite"), and it carries an auto-fix.
@@ -147,7 +153,14 @@ console.log("\nfixture: refstyle (autoref and citet preferences)");
   check("REF008 catches the doubled word", ref008.some(f => f.message.includes("twice")));
   check("REF009 suggests citet under acmart",
         ref009.every(f => (f.fix || "").includes("citet")), ref009.map(f => f.fix).join(" | "));
-  check("REF004 stands aside for REF008", !fired.has("REF004"));
+  // REF004 stands aside only where REF008 speaks. "Section \ref" is nobody
+  // else's business, and a missing tie there is still a bad line break.
+  const ref004 = r.findings.filter(f => f.rule === "REF004");
+  check("REF004 stands aside where REF008 speaks", ref004.length === 1,
+        ref004.map(f => f.message).join(" | "));
+  check("REF004 still reports a missing tie on a section",
+        ref004.every(f => (f.message || "").includes("Section")),
+        ref004.map(f => f.message).join(" | "));
 }
 
 console.log("\nfixture: selftest (the document you paste into Overleaf)");
@@ -162,7 +175,7 @@ console.log("\nfixture: selftest (the document you paste into Overleaf)");
     ABB001: 1, ACC001: 2, ACC004: 1, ANON001: 1, ANON003: 1, ANON004: 2, ANON005: 1,
     BIB006: 1, BIB008: 1, BIB009: 1, FIG003: 1, MET003: 1, MET004: 1,
     POL001: 1, POL002: 1, POL003: 1, POL004: 1, POL005: 1, POL006: 1, POL007: 1,
-    REF001: 1, REF008: 3, REF009: 2, STY001: 1, STY003: 1, STY005: 1, STY007: 1,
+    REF001: 1, REF008: 2, REF009: 2, STY001: 1, STY003: 1, STY005: 1, STY007: 1,
     VEN002: 2, VEN003: 1, VEN004: 2,
   };
   const wrong = [];
@@ -172,7 +185,7 @@ console.log("\nfixture: selftest (the document you paste into Overleaf)");
     if (!(id in EXPECTED)) wrong.push(`${id}: unexpected (${counts[id]})`);
   check("self-test document produces exactly the documented findings",
         wrong.length === 0, wrong.join("; "));
-  check("self-test totals", r.findings.length === 37, String(r.findings.length));
+  check("self-test totals", r.findings.length === 36, String(r.findings.length));
 }
 
 // --- 4. behaviour that protects the user ----------------------------------
@@ -300,6 +313,38 @@ console.log("\nreal-paper false positives");
         (await fired(doc(sections("Study Design", "Design Implications",
                                   "Summary of Contributions", "Related Work Overview",
                                   "The odd one out here")))).has("STR005"));
+
+  // ANON002: acmart removes its own acks environment under the anonymous
+  // option (\excludecomment{acks}), so the content never reaches a reviewer.
+  const acmartDoc = (body, options) => new Map([["main.tex",
+    enc.encode("\\documentclass[" + options + "]{acmart}\n\\begin{document}\n" + body + "\n\\end{document}\n")]]);
+  const ACKS = "\\begin{acks}\nWe thank all study participants.\n\\end{acks}";
+
+  check("acks under the anonymous option is not reported",
+        !(await fired(acmartDoc(ACKS, "manuscript,screen,review,anonymous"),
+                      { profile: "paper-anonymous" })).has("ANON002"));
+  check("acks without the anonymous option is still reported",
+        (await fired(acmartDoc(ACKS, "manuscript,screen,review"),
+                     { profile: "paper-anonymous" })).has("ANON002"));
+  check("a plain acknowledgements section is still reported",
+        (await fired(acmartDoc("\\section{Acknowledgements}\nWe thank the participants.",
+                               "manuscript,screen,review,anonymous"),
+                     { profile: "paper-anonymous" })).has("ANON002"));
+  check("a funder named inside acks is not reported",
+        !(await fired(acmartDoc("\\begin{acks}\nFunded by the Deutsche Forschungsgemeinschaft.\n\\end{acks}",
+                                "manuscript,screen,review,anonymous"),
+                      { profile: "paper-anonymous" })).has("ANON004"));
+  check("a link inside anonsuppress is not reported",
+        !(await fired(acmartDoc("\\begin{anonsuppress}\nCode: https://github.com/mcolley/study\n\\end{anonsuppress}",
+                                "manuscript,screen,review,anonymous"),
+                      { profile: "paper-anonymous" })).has("ANON003"));
+
+  // ABB004: names of technologies and standards work as proper nouns.
+  check("protocol and format names need no introduction",
+        !(await fired(doc("The client speaks TCP and UDP, exchanges JSON over HTTPS, " +
+                          "and stores the result as a PDF on an SSD."))).has("ABB004"));
+  check("domain jargon is still reported",
+        (await fired(doc("The ADAS relies on the eHMI, and the TOR was issued."))).has("ABB004"));
 
   // A figure is a PDF too: it must not be mistaken for the compiled output.
   const withFigure = doc("\\section{A}\nText here in the section.");

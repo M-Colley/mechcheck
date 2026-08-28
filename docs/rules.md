@@ -25,7 +25,7 @@ Every rule can be switched off for one line with a source comment:
 | id | severity | what it checks | why | how to fix |
 |---|---|---|---|---|
 | `ANON001` | error | Author identity present in an anonymous submission | Author names in a double-anonymous submission are the single most common desk reject. | Add the `anonymous` class option -- acmart then replaces the author block automatically. |
-| `ANON002` | error | Acknowledgements left in an anonymous submission | Acknowledgements name colleagues, funders and institutions -- they identify the authors as reliably as the author block. | Wrap the section so it only appears in the camera-ready version. |
+| `ANON002` | error | Acknowledgements left in an anonymous submission | Acknowledgements name colleagues, funders and institutions -- they identify the authors as reliably as the author block. | Put them in acmart's acks environment, which the anonymous option removes for you; otherwise guard the section so it only appears in the camera-ready version. |
 | `ANON003` | error | Identifying link | A repository or project URL under your own account de-anonymises the submission in one click. | Use an anonymised mirror (anonymous.4open.science, an anonymous OSF view-only link) for review. |
 | `ANON004` | warn | Funding statement in an anonymous submission | A named grant identifies the group as precisely as a name does. | Move the funding statement to the camera-ready version. |
 | `ANON005` | warn | Self-citation phrased in the first person | 'In our previous work [12]' tells the reviewer exactly who wrote this. Venues ask you to cite your own work in the third person instead. | Rewrite as 'Prior work [12] showed ...'. Note that ASSETS explicitly asks you NOT to anonymise the citation itself. |
