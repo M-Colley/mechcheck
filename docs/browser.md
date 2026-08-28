@@ -59,8 +59,7 @@ file in Overleaf, select all, paste.
 | Fixed automatically | Left to you |
 |---|---|
 | `ABB001` a second expansion of an abbreviation | `ACC001` alt text — no machine can write it |
-| `REF008` `Figure~
-ef{x}` becomes `utoref{x}` | `BIO*` whether a reference is real |
+| `REF008` `Figure~\ref{x}` becomes `\autoref{x}` | `BIO*` whether a reference is real |
 | `REF009` `Colley et al.~\cite{k}` becomes `\citet{k}` | anything needing a sentence rewritten |
 | `STY003` a repeated word | |
 | `STY005` a space before punctuation | |
