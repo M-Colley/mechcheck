@@ -134,7 +134,7 @@ So you know where the gaps are rather than re-testing what is covered:
 
 | | Verified how |
 |---|---|
-| 119 rules, Python | 253 tests |
+| 119 rules, Python | 257 tests |
 | 119 rules, browser engine | 63 checks in Node, same fixtures |
 | Both agree on this exact document | asserted in both suites, 37 findings |
 | Extension panel, zip reading, filters | 17 checks in a real browser |
