@@ -275,3 +275,86 @@ def suspicious_year(ctx):
             yield ctx.finding("BIB012", f"`{entry.key}` has year = {year}",
                               context=entry.title[:70], **_loc(ctx, entry, "year"),
                               data={"key": entry.key})
+
+
+_BOOKTITLE_IN = re.compile(
+    r"^\s*\{?\s*In[:\s]\s*(?:Proceedings|Proc\b\.?|Companion|Adjunct|Extended|Conference|"
+    r"International|Workshop|Symposium|the\b|\d|[A-Z]{2,})")
+
+
+@rule("BIB013", "Booktitle begins with 'In'", Category.BIB, Severity.WARN,
+      rationale="Every bibliography style writes 'In' before the booktitle itself, so an entry that already starts with it prints 'In In Proceedings of ...'. Google Scholar exports arrive this way.",
+      fix="Delete the leading 'In' from the booktitle.")
+def booktitle_starts_with_in(ctx):
+    for entry in entries(ctx):
+        booktitle = entry.get("booktitle")
+        if not booktitle or not _BOOKTITLE_IN.match(booktitle):
+            continue
+        yield ctx.finding("BIB013", f"`{entry.key}`: the booktitle starts with 'In', which the style adds itself",
+                          context=booktitle[:70], **_loc(ctx, entry, "booktitle"),
+                          data={"key": entry.key})
+
+
+@rule("BIB014", "Title written in capitals", Category.BIB, Severity.INFO,
+      rationale="A title typed in capitals prints in capitals: most styles do not lower-case what they are given, so the entry shouts from the reference list.",
+      fix="Retype the title in ordinary case and let the bibliography style decide the capitalisation.")
+def shouting_title(ctx):
+    for entry in entries(ctx):
+        words = re.findall(r"[A-Za-z]{2,}", entry.title)
+        if len(words) < 4:
+            continue
+        capitals = sum(1 for w in words if w.isupper())
+        if capitals < 0.8 * len(words):
+            continue
+        yield ctx.finding("BIB014", f"`{entry.key}`: the title is written in capitals",
+                          context=entry.title[:70], **_loc(ctx, entry, "title"),
+                          data={"key": entry.key})
+
+
+@rule("BIB015", "URL field repeats the DOI", Category.BIB, Severity.INFO,
+      rationale="The ACM Reference Format prints the DOI as a link and then the url field as another, so a url of https://doi.org/... prints the same address twice.",
+      fix="Delete the url field; the doi field carries the link.")
+def url_duplicates_doi(ctx):
+    for entry in entries(ctx):
+        url = entry.get("url")
+        if not url or not entry.get("doi").strip():
+            continue
+        if not re.search(r"doi\.org/", url, re.IGNORECASE):
+            continue
+        yield ctx.finding("BIB015", f"`{entry.key}` has both a doi and a url that points at doi.org",
+                          context=url[:70], **_loc(ctx, entry, "url"),
+                          data={"key": entry.key})
+
+
+@rule("BIB016", "Title ends with a period", Category.BIB, Severity.INFO,
+      rationale="The style puts its own period after the title, so one typed into the field prints as two.",
+      fix="Remove the trailing period from the title field.")
+def title_trailing_period(ctx):
+    for entry in entries(ctx):
+        raw = re.sub(r"[\s}]+$", "", entry.get("title"))
+        if not raw.endswith(".") or raw.endswith(("...", "etc.", "al.")):
+            continue
+        if re.search(r"(?<![\w])[A-Za-z]\.$", raw):
+            continue  # an initial or a roman numeral, not a stray period
+        yield ctx.finding("BIB016", f"`{entry.key}`: the title ends with a period",
+                          context=entry.title[:70], **_loc(ctx, entry, "title"),
+                          data={"key": entry.key})
+
+
+@rule("BIB017", "Duplicate citation key", Category.BIB, Severity.ERROR,
+      rationale="BibTeX stops with 'Repeated entry' and biber silently keeps one of the two; either way, half the citations point at an entry the author did not intend.",
+      fix="Rename or delete one of the two entries and update its citations.")
+def duplicate_keys(ctx):
+    seen: dict = {}
+    for entry in entries(ctx):
+        key = entry.key.strip().lower()   # BibTeX compares keys case-insensitively
+        if not key:
+            continue
+        if key in seen:
+            first = seen[key]
+            yield ctx.finding("BIB017",
+                              f"`{entry.key}` is defined twice (first at {ctx.project.rel(first.file)}:{first.line})",
+                              context=entry.title[:70], **_loc(ctx, entry),
+                              data={"key": entry.key})
+            continue
+        seen[key] = entry

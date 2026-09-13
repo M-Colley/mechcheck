@@ -4,7 +4,7 @@
  * extension and the standalone page run byte-for-byte the same checks. Edit
  * mechcheck.html and re-run the build.
  *
- * Built: 2026-08-28
+ * Built: 2026-09-12
  */
 
 
@@ -919,22 +919,11 @@ rule({ id:"FIG008", title:"Graphics file not found", cat:"floats", sev:SEV.error
   why:"A missing image compiles to a black box on Overleaf and stops the build in CI.",
   fix:"Check the path, the extension and the capitalisation — Overleaf is case-sensitive, Windows is not.",
   run(ctx){
-    const roots = [""];
-    for (const c of ctx.project.commands("graphicspath", 1))
-      for (const m of c.arg(0).matchAll(/\{([^{}]+)\}/g)) roots.push(m[1]);
-    const exts = ["", ".pdf", ".png", ".jpg", ".jpeg", ".eps", ".svg"];
-    const known = new Set([...ctx.allFiles.keys()].map(k => k.toLowerCase()));
     for (const c of ctx.project.commands("includegraphics", 1)) {
       const name = c.arg(0).trim();
-      if (!name || /[\\#]/.test(name)) continue;
-      let found = false;
-      for (const base of roots) for (const ext of exts) {
-        const cand = normalisePath((base ? base.replace(/\/$/, "") + "/" : "") + name + ext).toLowerCase();
-        if (known.has(cand)) { found = true; break; }
-        for (const k of known) if (k.endsWith("/" + cand) || k === cand) { found = true; break; }
-        if (found) break;
-      }
-      if (found) continue;
+      if (!name || /#/.test(name) || isAbsolutePath(name)) continue;  // FIG015 reports absolute paths
+      if (/\\/.test(name)) continue;                                  // built from a macro
+      if (locateGraphic(ctx, name).status !== "missing") continue;  // found, or FIG012's case-only match
       ctx.add("FIG008", `graphics file \`${name}\` not found`,
         { at: c.start, context: ctx.project.excerpt(c.start),
           fix: "Fix the path, or add the missing file to the project you dropped in." });
@@ -1834,10 +1823,11 @@ function headings(ctx) {
 rule({ id:"STR001", title:"Referenced file does not exist", cat:"structure", sev:SEV.error,
   why:"A missing \\input is a chapter that silently is not in the PDF — the failure mode nobody notices until the printed copy.",
   fix:"Fix the path, or include the file.",
-  run(ctx){ for (const mi of ctx.project.missingInputs)
+  run(ctx){ for (const mi of ctx.project.missingInputs) {
+    if (isAbsolutePath(mi.target)) continue;     // STR013 reports it, with the more useful message
     ctx.add("STR001", `\\input{${mi.target}} could not be resolved`,
       { file: mi.file, line: mi.line, fix: "Check the filename and that the file was included (Overleaf is case-sensitive)." });
-  }});
+  }}});
 
 rule({ id:"STR002", title:"Heading nesting skips a level", cat:"structure", sev:SEV.warn,
   why:"Jumping from a section straight to a subsubsection breaks the table of contents and the document's logic.",
@@ -2679,6 +2669,473 @@ rule({ id:"LOG009", title:"The document class raised a warning", cat:"compile", 
         { file: ctx.project.main, line });
       if (seen.size >= 12) return;
     }
+  }});
+
+/* ---- Added September 2026: file portability, citation shape, legacy syntax,
+        bibliography exports, and what the log says about floats. Each rule
+        mirrors its Python twin in mechcheck/rules/, and both sides are
+        asserted on the same inputs (tests/test_new_rules.py, test-engine.mjs). ---- */
+
+const GRAPHICS_EXTS = ["", ".pdf", ".png", ".jpg", ".jpeg", ".eps", ".svg", ".mps"];
+const ABSOLUTE_PATH = /^(?:[A-Za-z]:[\\/]|\/|~[\\/]|\\\\[\w.])/;
+/* A single backslash followed by letters is a macro (\figdir/plot), not a path. */
+const isAbsolutePath = name => ABSOLUTE_PATH.test(name.trim().replace(/^"|"$/g, ""));
+
+function graphicsRoots(ctx) {
+  const roots = [""];
+  for (const c of ctx.project.commands("graphicspath", 1))
+    for (const m of c.arg(0).matchAll(/\{([^{}]+)\}/g)) roots.push(m[1].replace(/\/$/, "") + "/");
+  return roots;
+}
+
+/* Where an \includegraphics argument points: {status, actual}. status is
+   "found", "case" (the file exists, but is spelt differently -- which Overleaf
+   will not forgive) or "missing". Only the stem has to match letter for
+   letter: when no extension was written, LaTeX tries the upper-case forms
+   itself. The dropped-in files carry their exact names, so this is the same
+   question the Python side asks the disk. */
+function locateGraphic(ctx, name) {
+  ctx.cache.graphics = ctx.cache.graphics || new Map();
+  if (ctx.cache.graphics.has(name)) return ctx.cache.graphics.get(name);
+  const keys = [...ctx.allFiles.keys()];
+  const typed = normalisePath(name.trim().replace(/^"|"$/g, ""));
+  let result = { status: "missing", actual: null };
+  outer: for (const base of graphicsRoots(ctx)) {
+    for (const ext of GRAPHICS_EXTS) {
+      const wanted = normalisePath(base + typed + ext);
+      const lower = wanted.toLowerCase();
+      if (keys.some(k => k === wanted || k.endsWith("/" + wanted))) { result = { status: "found", actual: wanted }; break outer; }
+      const loose = keys.find(k => k.toLowerCase() === lower || k.toLowerCase().endsWith("/" + lower));
+      if (!loose) continue;
+      const actual = loose.slice(loose.length - wanted.length);
+      const stem = s => s.slice(0, s.length - ext.length);
+      if (ext && stem(actual) === stem(wanted)) { result = { status: "found", actual }; break outer; }
+      if (result.status === "missing") result = { status: "case", actual: base ? actual.slice(base.length) : actual };
+    }
+  }
+  ctx.cache.graphics.set(name, result);
+  return result;
+}
+
+/* Regions inside a TeX \if... \fi. Only the primitives and the switches
+   declared with \newif count: etoolbox's \iftoggle{..}{..}{..} takes its
+   branches as arguments and closes with no \fi, so counting it would leave
+   the depth off by one for the rest of the document. */
+const PRIMITIVE_IFS = ["if","ifx","ifnum","ifdim","ifodd","ifvmode","ifhmode","ifmmode","ifinner",
+  "ifvoid","ifhbox","ifvbox","ifeof","iftrue","iffalse","ifcase","ifdefined","ifcsname",
+  "iffontchar","ifincsname","ifpdf","ifluatex","ifxetex","ifdraft"];
+function conditionalSpans(text) {
+  const names = new Set(PRIMITIVE_IFS);
+  for (const m of text.matchAll(/\\newif\s*\\(if[A-Za-z@]*)/g)) names.add(m[1]);
+  let depth = 0, start = null;
+  const spans = [];
+  for (const m of text.matchAll(/\\(if[A-Za-z@]*|fi)(?![A-Za-z@])/g)) {
+    if (isEscaped(text, m.index)) continue;
+    const token = m[1];
+    if (token === "fi") {
+      if (depth > 0) { depth--; if (depth === 0 && start !== null) { spans.push([start, m.index + m[0].length]); start = null; } }
+      continue;
+    }
+    if (!names.has(token)) continue;
+    if (text.slice(Math.max(0, m.index - 8), m.index).trimEnd().endsWith("\\newif")) continue;
+    if (depth === 0) start = m.index;
+    depth++;
+  }
+  if (start !== null) spans.push([start, text.length]);
+  return spans;
+}
+
+/* A period after one of these is not the end of a sentence. */
+const NOT_SENTENCE_END = ["et al.", "e.g.", "i.e.", "cf.", "vs.", "etc.", "fig.", "figs.", "eq.", "eqs.",
+  "sec.", "no.", "approx.", "resp.", "ca.", "p.", "pp.", "ed.", "eds.", "vol.", "dr.", "prof.", "mr.",
+  "ms.", "st.", "jr."];
+function sentenceStartsAt(text, pos) {
+  let i = pos - 1, newlines = 0;
+  while (i >= 0 && " \t\r\n".includes(text[i])) { if (text[i] === "\n") newlines++; i--; }
+  if (i < 0 || newlines >= 2) return true;
+  if (!".!?".includes(text[i])) return false;
+  const head = text.slice(Math.max(0, i - 12), i + 1).toLowerCase();
+  if (NOT_SENTENCE_END.some(a => head.endsWith(a))) return false;
+  return !/(?<![\w])[a-z]\.$/.test(head);
+}
+
+/* -- FIG -- */
+rule({ id:"FIG012", title:"Graphics file name differs from the file only in capitalisation", cat:"floats", sev:SEV.error,
+  why:"Windows and macOS open `Figure.png` when the file is `figure.png`; Overleaf and every Linux CI runner do not. The document compiles on the author's laptop and shows a missing-file box everywhere else.",
+  fix:"Make the name in \\includegraphics match the file on disk letter for letter.",
+  run(ctx){ for (const c of ctx.project.commands("includegraphics", 1)) {
+    const name = c.arg(0).trim();
+    if (!name || /[\\#]/.test(name) || isAbsolutePath(name)) continue;
+    const { status, actual } = locateGraphic(ctx, name);
+    if (status !== "case") continue;
+    // Suggest the spelling the disk has, keeping the author's choice of whether to write the extension.
+    const hasExt = name.split("/").pop().includes(".");
+    const suggested = hasExt ? actual : actual.replace(/\.[^.]*$/, "");
+    const span = c.spans[0];
+    ctx.add("FIG012", `\`${name}\` is stored as \`${actual}\`; Overleaf is case-sensitive and will not find it`,
+      { at: c.start, context: ctx.project.excerpt(c.start),
+        fix: `Write \\includegraphics{${suggested}}, or rename the file to match.`,
+        edit: span ? ctx.editSpan(span[0], span[1], suggested, `${name} -> ${suggested}`) : null });
+  }}});
+
+rule({ id:"FIG013", title:"center environment inside a float", cat:"floats", sev:SEV.info,
+  why:"\\begin{center} adds vertical space above and below its content, so the figure sits lower in its box than its neighbours and the caption drifts; \\centering does the same job without the gap.",
+  fix:"Delete \\begin{center} and \\end{center}; put \\centering at the top of the float.",
+  run(ctx){ for (const env of ctx.project.floats()) {
+    const inner = parseEnvironments(env.body(), "center");
+    if (!inner.length) continue;
+    const at = env.bodyStart + inner[0].start;
+    ctx.add("FIG013", `\\begin{center} inside a ${env.name}`, { at, context: ctx.project.excerpt(at), fix: "Use \\centering instead." });
+  }}});
+
+rule({ id:"FIG014", title:"Float referred to by its position", cat:"floats", sev:SEV.warn,
+  why:"Floats float: 'the figure below' is wherever LaTeX found room for it, which is frequently the next page or the previous one. Only a numbered reference stays true.",
+  fix:"Name it: \\autoref{fig:x} or Figure~\\ref{fig:x}.",
+  run(ctx){ const re = /\b(?:the|this)\s+(?:following|above|below|next|preceding)\s+(?:figure|table|graph|plot|chart|diagram|screenshot|listing)s?\b|\b(?:figure|table|graph|plot|chart|diagram|screenshot|listing)s?\s+(?:above|below|on the (?:next|previous|following|preceding|opposite) page)\b/gi;
+    let m; while ((m = re.exec(ctx.project.prose)) !== null)
+      ctx.add("FIG014", `'${m[0]}' refers to a float by where it sits on the page`, { at: m.index, context: ctx.project.excerpt(m.index) });
+  }});
+
+rule({ id:"FIG015", title:"Absolute path to a graphics file", cat:"floats", sev:SEV.error,
+  why:"A path like C:/Users/you/Desktop/plot.png exists on one computer. Overleaf, your co-authors and CI all fail to find it -- and under anonymous review the user name inside the path names the author.",
+  fix:"Move the file into the project and write a relative path: \\includegraphics{figures/plot.png}.",
+  run(ctx){ for (const c of ctx.project.commands("includegraphics", 1)) {
+    const name = c.arg(0).trim();
+    if (!name || !isAbsolutePath(name)) continue;
+    ctx.add("FIG015", `absolute path \`${name.slice(0, 60)}\` resolves on this computer only`, { at: c.start, context: ctx.project.excerpt(c.start) });
+  }}});
+
+/* -- REF -- */
+rule({ id:"REF010", title:"Adjacent citations not combined", cat:"crossref", sev:SEV.warn,
+  why:"\\cite{a}\\cite{b} prints as [1][2] or [1], [2]; one command with both keys prints [1, 2], and natbib or biblatex sort and compress the list for you.",
+  fix:"Combine them: \\cite{a,b}.",
+  run(ctx){ const text = ctx.project.text;
+    const pair = /\\(cite|citep|citet|citealp|parencite|textcite|autocite)\{([^{}]*)\}[ ~]*[,;]?[ ~]*\\\1\{([^{}]*)\}/g;
+    let m;
+    while ((m = pair.exec(text)) !== null) {
+      const cmd = m[1];
+      let keys = (m[2] + "," + m[3]).split(",");
+      let end = m.index + m[0].length;
+      // A chain of three or more is one finding and one fix, not a cascade.
+      const tail = new RegExp("[ ~]*[,;]?[ ~]*\\\\" + cmd + "\\{([^{}]*)\\}", "y");
+      for (;;) {
+        tail.lastIndex = end;
+        const t = tail.exec(text);
+        if (!t) break;
+        keys = keys.concat(t[1].split(","));
+        end = t.index + t[0].length;
+      }
+      pair.lastIndex = end;
+      keys = [...new Set(keys.map(k => k.trim()).filter(Boolean))];
+      if (keys.length < 2 || keys.some(k => /[\\#]/.test(k))) continue;
+      const merged = "\\" + cmd + "{" + keys.join(",") + "}";
+      ctx.add("REF010", `consecutive \\${cmd} commands print as separate brackets`,
+        { at: m.index, context: ctx.project.excerpt(m.index), fix: `Write ${merged}.`,
+          edit: ctx.editSpan(m.index, end, merged, `${text.slice(m.index, end)} -> ${merged}`) });
+    }}});
+
+/* Verbs that make the bracket the subject of the sentence when they follow it. */
+const CITE_VERBS = /^(?:show|found|find|propos|present|argu|report|describ|introduc|develop|demonstrat|investigat|conduct|suggest|us|explor|evaluat|compar|examin|stud|analy[sz]|observ|not|conclud|claim|defin|measur|design|implement|built|build|creat|test|extend|highlight|identif|discuss|recommend|provid|review|survey|focus|address|is|are|was|were|has|have|also|further|additionally|similarly|likewise)(?:e?[sd]|es|ies|ied|ing)?$/;
+
+rule({ id:"REF011", title:"Citation used as a noun", cat:"crossref", sev:SEV.info,
+  why:"'[12] showed that ...' makes a number the subject of the sentence. ACM and APA style both ask for the authors to carry the sentence and the bracket to support it.",
+  fix:"Name the authors: \\citet{key} showed ... (natbib/acmart) or \\textcite{key} (biblatex).",
+  run(ctx){ const text = ctx.project.text;
+    const hits = new Set();
+    for (const m of text.matchAll(/\\(?:cite|citep|citealp|parencite|autocite)\{[^{}]*\}[ ~]*([A-Za-z]+)/g))
+      if (sentenceStartsAt(text, m.index) && CITE_VERBS.test(m[1].toLowerCase())) hits.add(m.index);
+    for (const m of text.matchAll(/(?:In|According to|Following|Unlike|Similar to|Based on)\s+\\(?:cite|citep|citealp|parencite|autocite)\{/g))
+      if (sentenceStartsAt(text, m.index)) hits.add(m.index);
+    const command = textualCiteCommand(ctx) || "\\citet";
+    for (const at of [...hits].sort((a, b) => a - b))
+      ctx.add("REF011", "a citation stands in for the authors' names",
+        { at, context: ctx.project.excerpt(at),
+          fix: `Write the sentence around ${command}{key} so the names, not the bracket, are its subject.` });
+  }});
+
+/* -- STY -- */
+rule({ id:"STY015", title:"Three periods instead of an ellipsis", cat:"style", sev:SEV.info,
+  why:"Typed periods are set too tightly and can break across a line; \\dots is the ellipsis LaTeX knows how to space.",
+  fix:"Write \\dots{} -- the empty braces keep the space that follows.",
+  run(ctx){ for (const m of ctx.project.prose.matchAll(/(?<![.\\])\.\.\.(?!\.)/g))
+    ctx.add("STY015", "'...' typed as three periods", { at: m.index, context: ctx.project.excerpt(m.index),
+      edit: ctx.editSpan(m.index, m.index + 3, "\\dots{}", "... -> \\dots{}") });
+  }});
+
+/* Commands whose arguments legitimately contain a URL as-is. */
+const URL_WRAPPERS = [["url",1],["href",2],["path",1],["nolinkurl",1],["hyperref",2],["newcommand",2],
+  ["renewcommand",2],["providecommand",2],["hypersetup",1],["includegraphics",1],["lstinputlisting",1],
+  ["input",1],["include",1],["bibliography",1],["addbibresource",1],["acmDOI",1],["doi",1],["Description",1]];
+
+rule({ id:"STY016", title:"Bare URL in running text", cat:"style", sev:SEV.warn,
+  why:"A URL typed as plain text cannot be broken across lines, so it runs into the margin, and its underscores, percent signs and tildes are read as LaTeX syntax rather than as characters.",
+  fix:"Wrap it: \\url{https://...}, from hyperref or the url package.",
+  run(ctx){ const text = ctx.project.text;
+    const docs = ctx.project.environments("document");
+    const lo = docs.length ? docs[0].bodyStart : 0, hi = docs.length ? docs[0].bodyEnd : text.length;
+    const protectedSpans = [];
+    for (const [name, n] of URL_WRAPPERS) for (const c of ctx.project.commands(name, n)) protectedSpans.push([c.start, c.end]);
+    const packages = ctx.project.packages();
+    const canWrap = ["hyperref", "url", "xurl"].some(p => packages.has(p));
+    const re = /(?<![\w/@])(?:https?:\/\/|www\.)[^\s{}<>"']+/gi;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index < lo || m.index >= hi) continue;
+      if (protectedSpans.some(([a, b]) => a <= m.index && m.index < b)) continue;
+      const url = m[0].replace(/[.,;:)\]]+$/, "");
+      const end = m.index + url.length;
+      const shown = url.length <= 48 ? url : url.slice(0, 47) + "…";
+      ctx.add("STY016", `bare URL: ${shown}`,
+        { at: m.index, context: ctx.project.excerpt(m.index),
+          fix: `Write \\url{${shown}}` + (canWrap ? "" : ", and load hyperref (or url) in the preamble") + ".",
+          edit: canWrap ? ctx.editSpan(m.index, end, "\\url{" + url + "}", "wrap in \\url{}") : null });
+    }}});
+
+rule({ id:"STY017", title:"Space before \\footnote", cat:"style", sev:SEV.info,
+  why:"The footnote mark is set exactly where the command is, so a space before \\footnote prints a gap between the word and its superscript.",
+  fix:"Attach it directly to the word: word\\footnote{...}.",
+  run(ctx){ const text = ctx.project.text;
+    for (const m of text.matchAll(/(?<=[^\s\\])(\s+)\\footnote(?![A-Za-z@])/g))
+      ctx.add("STY017", "space between the word and its \\footnote", { at: m.index, context: ctx.project.excerpt(m.index),
+        edit: ctx.editSpan(m.index, m.index + m[1].length, "", "delete the space before \\footnote") });
+  }});
+
+rule({ id:"STY018", title:"Sentence begins with a numeral", cat:"style", sev:SEV.info,
+  why:"Style guides from APA to the ACM ask that a sentence not open with digits: '12 participants ...' reads as a fragment and is easily taken for a list item.",
+  fix:"Spell the number out ('Twelve participants ...') or rephrase ('A total of 12 participants ...').",
+  run(ctx){ const prose = ctx.project.prose;
+    for (const m of prose.matchAll(/(?<![\w.,:;/\-])(\d[\d,.]*)\s+([a-z]{2,})/g)) {
+      if (!sentenceStartsAt(prose, m.index)) continue;
+      ctx.add("STY018", `sentence begins with '${m[1]}'`, { at: m.index, context: ctx.project.excerpt(m.index) });
+    }}});
+
+const FONT_REPLACEMENT = { bf:"\\textbf{...} or \\bfseries", it:"\\textit{...}, \\emph{...} or \\itshape",
+  rm:"\\textrm{...} or \\rmfamily", sc:"\\textsc{...} or \\scshape", sf:"\\textsf{...} or \\sffamily",
+  tt:"\\texttt{...} or \\ttfamily", sl:"\\textsl{...} or \\slshape" };
+
+rule({ id:"STY019", title:"LaTeX 2.09 syntax", cat:"style", sev:SEV.info,
+  why:"\\bf, \\it and $$ ... $$ predate LaTeX2e. The font commands do not nest and skip the italic correction, KOMA-Script and beamer refuse them, and $$ sets display maths with the wrong vertical space.",
+  fix:"Use \\textbf{...} and \\emph{...}, and \\[ ... \\] or an equation environment.",
+  run(ctx){ const text = ctx.project.text;
+    for (const m of text.matchAll(/\\(bf|it|rm|sc|sf|tt|sl)(?![A-Za-z@])/g)) {
+      if (isEscaped(text, m.index)) continue;
+      ctx.add("STY019", `\\${m[1]} is a LaTeX 2.09 font command`,
+        { at: m.index, context: ctx.project.excerpt(m.index), fix: `Use ${FONT_REPLACEMENT[m[1]]}.` });
+    }
+    const opens = [...text.matchAll(/(?<!\\)\$\$/g)].map(m => m.index);
+    for (let i = 0; i < opens.length; i += 2)
+      ctx.add("STY019", "$$ ... $$ display maths",
+        { at: opens[i], context: ctx.project.excerpt(opens[i]), fix: "Write \\[ ... \\] or an equation environment." });
+  }});
+
+rule({ id:"STY020", title:"'et al.' mistyped", cat:"style", sev:SEV.warn,
+  why:"'et al.' abbreviates 'et alii': no period after 'et', one after 'al'. The variants are the kind of slip a reviewer notices in the first paragraph and holds against the rest.",
+  fix:"Write 'et al.' -- or let \\citet{...} produce it.",
+  run(ctx){ for (const m of ctx.project.prose.matchAll(/(?<![\w])(?:et\.\s*al\.?|et\s+al(?![.\w])|etal\.?)(?![\w])/g))
+    ctx.add("STY020", `'${m[0]}' should be 'et al.'`, { at: m.index, context: ctx.project.excerpt(m.index),
+      edit: ctx.editSpan(m.index, m.index + m[0].length, "et al.", `${m[0]} -> et al.`) });
+  }});
+
+/* -- STR -- */
+/* The l2tabu list: unmaintained, worse than their successors, or in conflict
+   with the packages everybody loads today. */
+const OBSOLETE_PACKAGES = { subfigure:"subcaption", epsfig:"graphicx", psfig:"graphicx", epsf:"graphicx",
+  times:"newtxtext and newtxmath (or mathptmx)", mathptm:"mathptmx", pslatex:"mathptmx",
+  palatino:"newpxtext and newpxmath (or mathpazo)", mathpple:"mathpazo", utopia:"fourier", euler:"eulervm",
+  ae:"lmodern", aecompl:"lmodern", zefonts:"lmodern", a4:"geometry", a4wide:"geometry", anysize:"geometry",
+  vmargin:"geometry", t1enc:"fontenc with the T1 option", isolatin:"inputenc", isolatin1:"inputenc",
+  umlaut:"inputenc", ucs:"nothing: UTF-8 input has been the default since 2018", doublespace:"setspace",
+  fancyheadings:"fancyhdr", scrpage:"scrlayer-scrpage", scrpage2:"scrlayer-scrpage", caption2:"caption",
+  glossary:"glossaries", here:"float", floatflt:"wrapfig", picinpar:"wrapfig",
+  ngerman:"babel with the ngerman option", german:"babel with the german option" };
+
+rule({ id:"STR010", title:"Obsolete package", cat:"structure", sev:SEV.warn,
+  why:"These packages are on the l2tabu list of things not to load: unmaintained, worse than their replacements, in conflict with the packages everyone uses today -- and subfigure is refused outright by ACM's production pipeline.",
+  fix:"Load the replacement named in the finding.",
+  run(ctx){ for (const c of ctx.project.commands("usepackage", 1)) {
+    const options = c.opt(0).split(",").map(o => o.trim().toLowerCase()).filter(Boolean);
+    for (const raw of c.arg(0).split(",")) {
+      const name = raw.trim(), key = name.toLowerCase();
+      if (Object.hasOwn(OBSOLETE_PACKAGES, key))
+        ctx.add("STR010", `package \`${name}\` is obsolete`,
+          { at: c.start, context: ctx.project.excerpt(c.start), fix: `Use ${OBSOLETE_PACKAGES[key]} instead.` });
+      else if (key === "inputenc" && options.includes("utf8x"))
+        ctx.add("STR010", "inputenc option `utf8x` (the ucs package) is obsolete",
+          { at: c.start, context: ctx.project.excerpt(c.start),
+            fix: "Use utf8, or delete the line: UTF-8 has been the default since 2018." });
+    }}}});
+
+rule({ id:"STR011", title:"Package loaded more than once", cat:"structure", sev:SEV.warn,
+  why:"LaTeX ignores a second \\usepackage -- unless it carries options the first did not, in which case it stops with an 'Option clash' error that names neither line.",
+  fix:"Keep one \\usepackage line per package, with all of its options on it.",
+  run(ctx){
+    // One of two option sets inside \if...\else...\fi: both are in the source, one is in the document.
+    const conditional = conditionalSpans(ctx.project.text);
+    const switched = pos => conditional.some(([a, b]) => a <= pos && pos < b);
+    const seen = new Map();
+    for (const c of ctx.project.commands("usepackage", 1)) {
+      const options = new Set(c.opt(0).split(",").map(o => o.trim().toLowerCase()).filter(Boolean));
+      for (const raw of c.arg(0).split(",")) {
+        const key = raw.trim().toLowerCase();
+        if (!key || key === "fontenc") continue;                 // fontenc is loaded once per encoding
+        if (!seen.has(key)) { seen.set(key, { c, options }); continue; }
+        const first = seen.get(key);
+        if (switched(first.c.start) || switched(c.start)) continue;
+        const clash = [...options].some(o => !first.options.has(o));
+        const where = ctx.project.locate(first.c.start);
+        ctx.add("STR011", `\`${key}\` is already loaded at ${where.file}:${where.line}`
+            + (clash ? " with different options: LaTeX will stop with an option clash" : ""),
+          { at: c.start, context: ctx.project.excerpt(c.start), severity: clash ? undefined : SEV.info,
+            fix: clash ? "Merge the options into the first \\usepackage and delete this one." : "Delete this line." });
+      }}}});
+
+rule({ id:"STR012", title:"Package loaded before hyperref that must follow it", cat:"structure", sev:SEV.warn,
+  why:"cleveref and glossaries redefine the same commands hyperref does, and only work when loaded after it; the wrong order breaks cross-references or their links without any error message.",
+  fix:"Move \\usepackage{hyperref} above it.",
+  run(ctx){ const loads = [];
+    for (const c of ctx.project.commands("usepackage", 1))
+      for (const raw of c.arg(0).split(",")) loads.push([raw.trim().toLowerCase(), c]);
+    const hyperref = loads.find(([n]) => n === "hyperref");
+    if (!hyperref) return;                // loaded by the class or a local .sty we cannot see
+    for (const [name, c] of loads) {
+      if (!["cleveref", "glossaries", "glossaries-extra"].includes(name) || c.start > hyperref[1].start) continue;
+      ctx.add("STR012", `\`${name}\` is loaded before hyperref`,
+        { at: c.start, context: ctx.project.excerpt(c.start), fix: `Load hyperref first, then ${name}.` });
+    }}});
+
+rule({ id:"STR013", title:"\\input path that will not resolve on Overleaf", cat:"structure", sev:SEV.error,
+  why:"Windows and macOS open Chapters/Intro.tex when the file is chapters/intro.tex, and an absolute path opens on exactly one computer. Overleaf and CI run Linux: the chapter silently vanishes from their PDF.",
+  fix:"Match the file name letter for letter, and keep every path relative to the project.",
+  run(ctx){ const p = ctx.project;
+    for (const line of p.lines) {
+      if (line.verbatim) continue;
+      for (const target of p._childInputs(line.code)) {
+        if (/[\\#]/.test(target)) continue;                        // built from a macro
+        if (isAbsolutePath(target)) {
+          ctx.add("STR013", `\\input{${target.slice(0, 60)}} is an absolute path`,
+            { file: line.file, line: line.lineno, context: line.raw.trim().slice(0, 96),
+              fix: "Copy the file into the project and reference it relatively." });
+          continue;
+        }
+        const typed = normalisePath(target.trim().replace(/^"|"$/g, ""));
+        const wanted = /\.tex$/i.test(typed) ? [typed] : [typed, typed + ".tex"];
+        const resolved = p._resolve(target);
+        if (!resolved || wanted.includes(resolved)) continue;
+        ctx.add("STR013", `\`${target}\` is stored as \`${resolved}\`; Overleaf is case-sensitive and will not find it`,
+          { file: line.file, line: line.lineno, context: line.raw.trim().slice(0, 96),
+            fix: `Write the name as \`${resolved}\`, or rename the file to match.` });
+      }}}});
+
+/* -- BIB -- */
+const BOOKTITLE_IN = /^\s*\{?\s*In[:\s]\s*(?:Proceedings|Proc\b\.?|Companion|Adjunct|Extended|Conference|International|Workshop|Symposium|the\b|\d|[A-Z]{2,})/;
+
+rule({ id:"BIB013", title:"Booktitle begins with 'In'", cat:"bib", sev:SEV.warn,
+  why:"Every bibliography style writes 'In' before the booktitle itself, so an entry that already starts with it prints 'In In Proceedings of ...'. Google Scholar exports arrive this way.",
+  fix:"Delete the leading 'In' from the booktitle.",
+  run(ctx){ for (const e of ctx.bib) {
+    const bt = e.get("booktitle");
+    if (!bt || !BOOKTITLE_IN.test(bt)) continue;
+    ctx.add("BIB013", `\`${e.key}\`: the booktitle starts with 'In', which the style adds itself`,
+      { file: e.file, line: e.lineOf("booktitle"), context: bt.slice(0, 70) });
+  }}});
+
+rule({ id:"BIB014", title:"Title written in capitals", cat:"bib", sev:SEV.info,
+  why:"A title typed in capitals prints in capitals: most styles do not lower-case what they are given, so the entry shouts from the reference list.",
+  fix:"Retype the title in ordinary case and let the bibliography style decide the capitalisation.",
+  run(ctx){ for (const e of ctx.bib) {
+    const words = e.title.match(/[A-Za-z]{2,}/g) || [];
+    if (words.length < 4) continue;
+    if (words.filter(w => w === w.toUpperCase()).length < 0.8 * words.length) continue;
+    ctx.add("BIB014", `\`${e.key}\`: the title is written in capitals`,
+      { file: e.file, line: e.lineOf("title"), context: e.title.slice(0, 70) });
+  }}});
+
+rule({ id:"BIB015", title:"URL field repeats the DOI", cat:"bib", sev:SEV.info,
+  why:"The ACM Reference Format prints the DOI as a link and then the url field as another, so a url of https://doi.org/... prints the same address twice.",
+  fix:"Delete the url field; the doi field carries the link.",
+  run(ctx){ for (const e of ctx.bib) {
+    const url = e.get("url");
+    if (!url || !e.get("doi").trim() || !/doi\.org\//i.test(url)) continue;
+    ctx.add("BIB015", `\`${e.key}\` has both a doi and a url that points at doi.org`,
+      { file: e.file, line: e.lineOf("url"), context: url.slice(0, 70) });
+  }}});
+
+rule({ id:"BIB016", title:"Title ends with a period", cat:"bib", sev:SEV.info,
+  why:"The style puts its own period after the title, so one typed into the field prints as two.",
+  fix:"Remove the trailing period from the title field.",
+  run(ctx){ for (const e of ctx.bib) {
+    const raw = e.get("title").replace(/[\s}]+$/, "");
+    if (!raw.endsWith(".") || /(?:\.\.\.|etc\.|al\.)$/.test(raw)) continue;
+    if (/(?<![\w])[A-Za-z]\.$/.test(raw)) continue;              // an initial or a roman numeral
+    ctx.add("BIB016", `\`${e.key}\`: the title ends with a period`,
+      { file: e.file, line: e.lineOf("title"), context: e.title.slice(0, 70) });
+  }}});
+
+rule({ id:"BIB017", title:"Duplicate citation key", cat:"bib", sev:SEV.error,
+  why:"BibTeX stops with 'Repeated entry' and biber silently keeps one of the two; either way, half the citations point at an entry the author did not intend.",
+  fix:"Rename or delete one of the two entries and update its citations.",
+  run(ctx){ const seen = new Map();
+    for (const e of ctx.bib) {
+      const key = e.key.trim().toLowerCase();               // BibTeX compares keys case-insensitively
+      if (!key) continue;
+      if (seen.has(key)) {
+        const first = seen.get(key);
+        ctx.add("BIB017", `\`${e.key}\` is defined twice (first at ${first.file}:${first.line})`,
+          { file: e.file, line: e.line, context: e.title.slice(0, 70) });
+        continue;
+      }
+      seen.set(key, e);
+    }}});
+
+/* -- LOG -- */
+rule({ id:"LOG010", title:"Float too large for the page", cat:"compile", sev:SEV.warn, needsBuild:true,
+  why:"A figure or table taller than the text block is pushed to a page of its own, drags every later float along behind it, and can leave them all stacked at the end of the chapter.",
+  fix:"Scale the figure down (height as well as width), or split the table.",
+  run(ctx){ if (!ctx.log) return;
+    const seen = new Set();
+    for (const m of ctx.log.matchAll(/LaTeX Warning: Float too large for page by ([\d.]+)pt on input line (\d+)/g)) {
+      const key = m[1] + "|" + m[2];
+      if (seen.has(key)) continue;
+      seen.add(key);
+      ctx.add("LOG010", `a float is ${Math.round(parseFloat(m[1]))}pt too tall for the page`,
+        { file: ctx.project.main, line: parseInt(m[2], 10) });
+      if (seen.size >= 10) return;
+    }}});
+
+rule({ id:"LOG011", title:"Heading text could not be used for a PDF bookmark", cat:"compile", sev:SEV.info, needsBuild:true,
+  why:"hyperref builds the PDF outline from the headings; a citation, a footnote or maths inside a heading cannot be represented there, so it is dropped and the bookmark reads wrongly.",
+  fix:"Give hyperref a plain-text version: \\section{\\texorpdfstring{$\\alpha$}{alpha} ...}, or move the citation out of the heading.",
+  run(ctx){ if (!ctx.log) return;
+    const seen = new Set();
+    for (const m of ctx.log.matchAll(/Package hyperref Warning: Token not allowed in a PDF string[^\n]*\n\(hyperref\)\s+removing `([^'\n]*)' on input line (\d+)/g)) {
+      const key = m[1] + "|" + m[2];
+      if (seen.has(key)) continue;
+      seen.add(key);
+      ctx.add("LOG011", `hyperref dropped \`${m[1]}\` from a heading's bookmark`,
+        { file: ctx.project.main, line: parseInt(m[2], 10) });
+      if (seen.size >= 8) return;
+    }}});
+
+/* -- POL -- */
+const NUMBER_WORDS = "one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|hundreds|thousand";
+/* Either the count itself, or a sentence that is plainly about it. */
+const PARTICIPANT_COUNT = new RegExp(
+  "\\b[Nn]\\s*=\\s*\\d+"
+  + "|\\b(?:number|size)\\s+of\\s+(?:the\\s+|our\\s+)?(?:sample|participants)\\b"
+  + "|\\bsample\\s+size\\b|\\bhow\\s+many\\s+(?:participants|people)\\b"
+  + "|\\b(?:\\d{1,5}|(?:" + NUMBER_WORDS + ")(?:[- ](?:" + NUMBER_WORDS + "))?)"
+  + "(?:\\s+\\w+){0,2}\\s+(?:participants|respondents|subjects|interviewees|users|students|"
+  + "drivers|passengers|pedestrians|volunteers|people|persons|individuals|informants)\\b", "i");
+
+rule({ id:"POL010", title:"Study without a stated number of participants", cat:"policy", sev:SEV.info,
+  why:"N is the first number a reviewer looks for and the one every statistic depends on; a study section that never states it reads as unfinished.",
+  fix:"State the sample size where the participants are introduced: 'We recruited 24 participants (N = 24) ...'.",
+  run(ctx){ if (!hasStudy(ctx)) return;
+    if (PARTICIPANT_COUNT.test(ctx.project.prose)) return;
+    STUDY_SIGNALS.lastIndex = 0;
+    const m = STUDY_SIGNALS.exec(ctx.project.prose);
+    ctx.add("POL010", "participants are mentioned but their number is never stated",
+      m ? { at: m.index } : { file: ctx.project.main });
   }});
 
 /* ===================== 5. Reading what the user dropped in =============== */

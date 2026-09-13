@@ -185,3 +185,33 @@ def keywords(ctx):
     if ctx.project.commands("keywords", 1):
         return
     yield ctx.finding("POL009", "no \\keywords{...} found", file=ctx.project.main)
+
+
+_NUMBER_WORDS = (r"one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|"
+                 r"fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|"
+                 r"fifty|sixty|seventy|eighty|ninety|hundred|hundreds|thousand")
+
+#: Either the count itself, or a sentence that is plainly about it.
+_PARTICIPANT_COUNT = re.compile(
+    r"\b[Nn]\s*=\s*\d+"
+    r"|\b(?:number|size)\s+of\s+(?:the\s+|our\s+)?(?:sample|participants)\b"
+    r"|\bsample\s+size\b|\bhow\s+many\s+(?:participants|people)\b"
+    r"|\b(?:\d{1,5}|(?:" + _NUMBER_WORDS + r")(?:[- ](?:" + _NUMBER_WORDS + r"))?)"
+    r"(?:\s+\w+){0,2}\s+(?:participants|respondents|subjects|interviewees|users|students|"
+    r"drivers|passengers|pedestrians|volunteers|people|persons|individuals|informants)\b",
+    re.IGNORECASE)
+
+
+@rule("POL010", "Study without a stated number of participants", Category.POLICY, Severity.INFO,
+      rationale="N is the first number a reviewer looks for and the one every statistic depends on; a study section that never states it reads as unfinished.",
+      fix="State the sample size where the participants are introduced: 'We recruited 24 participants (N = 24) ...'.")
+def participant_count(ctx):
+    if not _has_study(ctx):
+        return
+    prose = ctx.project.prose
+    if _PARTICIPANT_COUNT.search(prose):
+        return
+    m = _STUDY_SIGNALS.search(prose)
+    f, line, col = ctx.project.locate(m.start()) if m else (ctx.project.main, None, None)
+    yield ctx.finding("POL010", "participants are mentioned but their number is never stated",
+                      file=f, line=line, col=col)

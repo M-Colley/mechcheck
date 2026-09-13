@@ -362,6 +362,85 @@ def prefer_citet(ctx):
                                               f"{shown}~{BS}{cmd}{{{key}}} -> {command}{{{key}}}")
                                 if command and key else None))
 
+_ADJACENT_CITES = re.compile(
+    r"\\(?P<cmd>cite|citep|citet|citealp|parencite|textcite|autocite)"
+    r"\{(?P<a>[^{}]*)\}(?P<sep>[ ~]*[,;]?[ ~]*)"
+    r"\\(?P=cmd)\{(?P<b>[^{}]*)\}")
+
+
+@rule("REF010", "Adjacent citations not combined", Category.CROSSREF, Severity.WARN,
+      rationale="\\cite{a}\\cite{b} prints as [1][2] or [1], [2]; one command with both keys prints [1, 2], and natbib or biblatex sort and compress the list for you.",
+      fix="Combine them: \\cite{a,b}.")
+def adjacent_citations(ctx):
+    text = ctx.project.text
+    pos = 0
+    while True:
+        m = _ADJACENT_CITES.search(text, pos)
+        if not m:
+            return
+        cmd = m.group("cmd")
+        keys = (m.group("a") + "," + m.group("b")).split(",")
+        end = m.end()
+        # A chain of three or more is one finding and one fix, not a cascade.
+        tail = re.compile(r"[ ~]*[,;]?[ ~]*" + re.escape(BS) + cmd + r"\{([^{}]*)\}")
+        while True:
+            t = tail.match(text, end)
+            if not t:
+                break
+            keys += t.group(1).split(",")
+            end = t.end()
+        pos = end
+        keys = list(dict.fromkeys(k.strip() for k in keys if k.strip()))
+        if len(keys) < 2 or any(BS in k or "#" in k for k in keys):
+            continue
+        merged = BS + cmd + "{" + ",".join(keys) + "}"
+        f, line, col = ctx.project.locate(m.start())
+        yield ctx.finding("REF010",
+                          f"consecutive \\{cmd} commands print as separate brackets",
+                          file=f, line=line, col=col, context=ctx.project.excerpt(m.start()),
+                          fix=f"Write {merged}.",
+                          edit=ctx.edit_span(m.start(), end, merged, f"{text[m.start():end]} -> {merged}"))
+
+
+#: Verbs that make the bracket the subject of the sentence when they follow it.
+_CITE_VERBS = re.compile(
+    r"(?:show|found|find|propos|present|argu|report|describ|introduc|develop|demonstrat|"
+    r"investigat|conduct|suggest|us|explor|evaluat|compar|examin|stud|analy[sz]|observ|"
+    r"not|conclud|claim|defin|measur|design|implement|built|build|creat|test|extend|"
+    r"highlight|identif|discuss|recommend|provid|review|survey|focus|address|"
+    r"is|are|was|were|has|have|also|further|additionally|similarly|likewise)"
+    r"(?:e?[sd]|es|ies|ied|ing)?")
+
+_CITE_AS_SUBJECT = re.compile(
+    r"\\(?:cite|citep|citealp|parencite|autocite)\{[^{}]*\}[ ~]*(?P<next>[A-Za-z]+)")
+
+_CITE_AFTER_PREPOSITION = re.compile(
+    r"(?:In|According to|Following|Unlike|Similar to|Based on)\s+"
+    r"\\(?:cite|citep|citealp|parencite|autocite)\{")
+
+
+@rule("REF011", "Citation used as a noun", Category.CROSSREF, Severity.INFO,
+      rationale="'[12] showed that ...' makes a number the subject of the sentence. ACM and APA style both ask for the authors to carry the sentence and the bracket to support it.",
+      fix="Name the authors: \\citet{key} showed ... (natbib/acmart) or \\textcite{key} (biblatex).")
+def citation_as_noun(ctx):
+    from mechcheck.texsource import sentence_starts_at
+
+    text = ctx.project.text
+    hits = []
+    for m in _CITE_AS_SUBJECT.finditer(text):
+        if sentence_starts_at(text, m.start()) and _CITE_VERBS.fullmatch(m.group("next").lower()):
+            hits.append(m.start())
+    for m in _CITE_AFTER_PREPOSITION.finditer(text):
+        if sentence_starts_at(text, m.start()):
+            hits.append(m.start())
+    command = _textual_cite_command(ctx) or BS + "citet"
+    for offset in sorted(set(hits)):
+        f, line, col = ctx.project.locate(offset)
+        yield ctx.finding("REF011", "a citation stands in for the authors' names",
+                          file=f, line=line, col=col, context=ctx.project.excerpt(offset),
+                          fix=f"Write the sentence around {command}{{key}} so the names, not the bracket, are its subject.")
+
+
 def _closest(key: str, candidates, cutoff: float = 0.82):
     from difflib import get_close_matches
 

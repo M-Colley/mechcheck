@@ -176,7 +176,7 @@ console.log("\nfixture: selftest (the document you paste into Overleaf)");
     BIB006: 1, BIB008: 1, BIB009: 1, FIG003: 1, MET003: 1, MET004: 1,
     POL001: 1, POL002: 1, POL003: 1, POL004: 1, POL005: 1, POL006: 1, POL007: 1,
     REF001: 1, REF008: 2, REF009: 2, STY001: 1, STY003: 1, STY005: 1, STY007: 1,
-    VEN002: 2, VEN003: 1, VEN004: 2,
+    STY016: 1, VEN002: 2, VEN003: 1, VEN004: 2,
   };
   const wrong = [];
   for (const [id, n] of Object.entries(EXPECTED))
@@ -185,7 +185,7 @@ console.log("\nfixture: selftest (the document you paste into Overleaf)");
     if (!(id in EXPECTED)) wrong.push(`${id}: unexpected (${counts[id]})`);
   check("self-test document produces exactly the documented findings",
         wrong.length === 0, wrong.join("; "));
-  check("self-test totals", r.findings.length === 36, String(r.findings.length));
+  check("self-test totals", r.findings.length === 37, String(r.findings.length));
 }
 
 // --- 4. behaviour that protects the user ----------------------------------
@@ -427,6 +427,147 @@ console.log("\nzip reading");
     check("a zipped project checks end to end", r.stats.main === "main.tex", r.stats.main);
     check("bib inside the zip is read", r.stats.references === 1, String(r.stats.references));
   }
+}
+
+console.log("\nrules added in September 2026 (the same cases as tests/test_new_rules.py)");
+{
+  const enc = new TextEncoder();
+  const doc = (body, preamble = "", cls = "article") => new Map([["main.tex",
+    enc.encode("\\documentclass{" + cls + "}\n" + preamble + "\\begin{document}\n" + body + "\n\\end{document}\n")]]);
+  const opts = { profile: "all", verify: false, maxPerRule: 0 };
+  const firedIn = async (files, o) => new Set((await runChecks(files, { ...opts, ...o })).findings.map(f => f.rule));
+  const findingsOf = async (files, id, o) => (await runChecks(files, { ...opts, ...o })).findings.filter(f => f.rule === id);
+  const fixedText = async files => applyFixes(await runChecks(files, opts)).files.get("main.tex") || "";
+  const FIGURE = p => String.raw`\begin{figure}\includegraphics{` + p + String.raw`}\caption{A}\label{fig:a}\end{figure} See \autoref{fig:a}.`;
+  let files, f, r;
+
+  // FIG012 / FIG008 / FIG015: where the graphics really are
+  files = doc(FIGURE("Figures/Plot.png")); files.set("figures/plot.png", enc.encode("png"));
+  f = await firedIn(files);
+  check("FIG012 a case mismatch is FIG012, not FIG008", f.has("FIG012") && !f.has("FIG008"), [...f].join(","));
+  check("FIG012 the fix is the disk spelling", (await findingsOf(files, "FIG012"))[0].edit.replacement === "figures/plot.png");
+  files = doc(FIGURE("figures/plot.png")); files.set("figures/plot.png", enc.encode("png"));
+  f = await firedIn(files);
+  check("FIG012 the exact spelling passes", !f.has("FIG012") && !f.has("FIG008"), [...f].join(","));
+  files = doc(FIGURE("figures/plot")); files.set("figures/plot.PNG", enc.encode("png"));
+  f = await firedIn(files);
+  check("FIG012 an upper-case extension is fine when none is written", !f.has("FIG012") && !f.has("FIG008"), [...f].join(","));
+  files = doc(FIGURE("figures/nothing.png")); files.set("figures/plot.png", enc.encode("png"));
+  check("FIG008 a genuinely missing graphic is still FIG008", (await firedIn(files)).has("FIG008"));
+  f = await firedIn(doc(FIGURE("C:/Users/mark/Desktop/plot.png")));
+  check("FIG015 an absolute path", f.has("FIG015") && !f.has("FIG008"), [...f].join(","));
+  f = await firedIn(doc(FIGURE(String.raw`\figdir/plot`)));
+  check("FIG015 a macro-built path is neither missing nor absolute", !f.has("FIG015") && !f.has("FIG008"), [...f].join(","));
+
+  // FIG013, FIG014
+  check("FIG013 center inside a float",
+        (await firedIn(doc(String.raw`\begin{figure}\begin{center}x\end{center}\caption{A}\label{fig:a}\end{figure} See \autoref{fig:a}.`))).has("FIG013"));
+  check("FIG013 centering is fine",
+        !(await firedIn(doc(String.raw`\begin{figure}\centering x\caption{A}\label{fig:a}\end{figure} See \autoref{fig:a}.`))).has("FIG013"));
+  check("FIG014 a float referred to by position",
+        (await findingsOf(doc("Shown in the figure below, and the table above lists them."), "FIG014")).length === 2);
+  check("FIG014 a numbered reference is fine",
+        !(await firedIn(doc(String.raw`Shown in Figure~\ref{fig:a} and \autoref{tab:b}.`))).has("FIG014"));
+
+  // REF010, REF011
+  r = await findingsOf(doc(String.raw`Prior work~\cite{a}\cite{b} agrees.`), "REF010");
+  check("REF010 adjacent citations", r.length === 1 && r[0].edit.replacement === String.raw`\cite{a,b}`);
+  check("REF010 the fix merges them",
+        (await fixedText(doc(String.raw`Prior work~\cite{a}\cite{b} agrees.`))).includes(String.raw`\cite{a,b} agrees`));
+  r = await findingsOf(doc(String.raw`Prior work~\cite{a}, \cite{b} \cite{c} agrees.`), "REF010");
+  check("REF010 a chain of three is one finding", r.length === 1 && r[0].edit.replacement === String.raw`\cite{a,b,c}`,
+        r.map(x => x.edit && x.edit.replacement).join(" | "));
+  check("REF010 'and' between citations is left alone", !(await firedIn(doc(String.raw`Both \cite{a} and \cite{b} agree.`))).has("REF010"));
+  check("REF010 different commands are not merged", !(await firedIn(doc(String.raw`See \citep{a}\citet{b} here.`, "", "acmart"))).has("REF010"));
+  check("REF011 a citation as the subject", (await firedIn(doc(String.raw`Some text here. \cite{a} showed that this works.`))).has("REF011"));
+  check("REF011 'In [12], the authors'", (await firedIn(doc(String.raw`Some text here. In \cite{a}, the authors argue this.`))).has("REF011"));
+  check("REF011 a citation after a name is not a noun", !(await firedIn(doc(String.raw`Colley et al. \cite{a} showed that this works.`))).has("REF011"));
+  check("REF011 mid-sentence is fine", !(await firedIn(doc(String.raw`This was shown earlier \cite{a} and confirmed since.`))).has("REF011"));
+
+  // STY015 - STY020
+  check("STY015 a typed ellipsis is fixed",
+        (await fixedText(doc("Wait for it... and then it happens."))).includes(String.raw`Wait for it\dots{} and then`));
+  check("STY015 \\dots is fine", !(await firedIn(doc(String.raw`Wait for it\dots{} and then.`))).has("STY015"));
+  r = await findingsOf(doc("The code is at https://github.com/x/y for review."), "STY016");
+  check("STY016 a bare URL, with no fix when nothing can wrap it", r.length === 1 && r[0].edit === null);
+  check("STY016 wrapped URLs are fine",
+        !(await firedIn(doc(String.raw`See \url{https://github.com/x/y} and \href{https://example.org/a_b}{the page}.`, "\\usepackage{hyperref}\n"))).has("STY016"));
+  check("STY016 a preamble macro is fine",
+        !(await firedIn(doc(String.raw`See \repo.`, String.raw`\newcommand{\repo}{https://github.com/x/y}` + "\n"))).has("STY016"));
+  check("STY016 the fix wraps when hyperref is loaded",
+        (await fixedText(doc("The code is at https://github.com/x/y.", "\\usepackage{hyperref}\n"))).includes(String.raw`\url{https://github.com/x/y}.`));
+  check("STY017 a space before footnote is closed",
+        (await fixedText(doc(String.raw`A claim \footnote{Source.} here.`))).includes(String.raw`A claim\footnote{Source.} here.`));
+  check("STY017 an attached footnote is fine", !(await firedIn(doc(String.raw`A claim\footnote{Source.} here.`))).has("STY017"));
+  check("STY018 a sentence starting with a numeral", (await firedIn(doc("We ran a study. 12 participants took part in it."))).has("STY018"));
+  check("STY018 numbers inside a sentence are fine", !(await firedIn(doc("We recruited 12 participants, and Table 3 lists the values."))).has("STY018"));
+  check("STY019 \\bf and $$", (await findingsOf(doc(String.raw`{\bf Bold} text and $$x = 1$$ here.`), "STY019")).length === 2);
+  check("STY019 modern syntax is fine",
+        !(await firedIn(doc(String.raw`\textbf{Bold} and \begin{itemize}\item one\end{itemize} and \[ x = 1 \] and \ttfamily.`))).has("STY019"));
+  check("STY020 a mistyped et al. is fixed",
+        (await fixedText(doc("Colley et. al. showed it. Rukzio et al showed it too."))).includes("Colley et al. showed it. Rukzio et al. showed it too."));
+  check("STY020 a correct et al. is fine", !(await firedIn(doc(String.raw`Colley et al.~\cite{a} showed it, and they also agree.`))).has("STY020"));
+
+  // STR010 - STR013
+  r = await findingsOf(doc("Text.", "\\usepackage{subfigure}\n"), "STR010");
+  check("STR010 an obsolete package names its replacement", r.length === 1 && r[0].fix.includes("subcaption"));
+  check("STR010 utf8x is obsolete", (await firedIn(doc("Text.", "\\usepackage[utf8x]{inputenc}\n"))).has("STR010"));
+  check("STR010 current packages are fine", !(await firedIn(doc("Text.", "\\usepackage{subcaption}\n\\usepackage[utf8]{inputenc}\n"))).has("STR010"));
+  r = await findingsOf(doc("Text.", "\\usepackage{graphicx}\n\\usepackage{graphicx}\n"), "STR011");
+  check("STR011 loaded twice is a note", r.length === 1 && r[0].severity === SEV.info);
+  r = await findingsOf(doc("Text.", "\\usepackage[table]{xcolor}\n\\usepackage[dvipsnames]{xcolor}\n"), "STR011");
+  check("STR011 an option clash is a warning", r.length === 1 && r[0].severity === SEV.warn && r[0].message.includes("option clash"));
+  check("STR011 one branch of a switch is not a duplicate",
+        !(await firedIn(doc("Text.", String.raw`\def\draftmode{}` + "\n" + String.raw`\ifdefined\draftmode` + "\n"
+                                    + String.raw`  \usepackage[draft]{thesis}` + "\n" + String.raw`\else` + "\n"
+                                    + String.raw`  \usepackage[final]{thesis}` + "\n" + String.raw`\fi` + "\n"))).has("STR011"));
+  check("STR011 fontenc per encoding is fine", !(await firedIn(doc("Text.", "\\usepackage[T1]{fontenc}\n\\usepackage[T2A]{fontenc}\n"))).has("STR011"));
+  check("STR012 cleveref before hyperref", (await firedIn(doc("Text.", "\\usepackage{cleveref}\n\\usepackage{hyperref}\n"))).has("STR012"));
+  check("STR012 cleveref after hyperref is fine", !(await firedIn(doc("Text.", "\\usepackage{hyperref}\n\\usepackage{cleveref}\n"))).has("STR012"));
+  check("STR012 hyperref out of sight is not assumed missing", !(await firedIn(doc("Text.", "\\usepackage{cleveref}\n"))).has("STR012"));
+  files = doc(String.raw`\input{Chapters/Intro}`); files.set("chapters/intro.tex", enc.encode("Intro text here."));
+  f = await firedIn(files);
+  check("STR013 an input with the wrong case is STR013, not STR001", f.has("STR013") && !f.has("STR001"), [...f].join(","));
+  files = doc(String.raw`\input{chapters/intro}`); files.set("chapters/intro.tex", enc.encode("Intro text here."));
+  f = await firedIn(files);
+  check("STR013 an exact input is fine", !f.has("STR013") && !f.has("STR001"), [...f].join(","));
+  f = await firedIn(doc(String.raw`\input{C:/Users/mark/thesis/intro.tex}`));
+  check("STR013 an absolute input is STR013, not STR001", f.has("STR013") && !f.has("STR001"), [...f].join(","));
+  files = doc(String.raw`\input{chapters/nowhere}`); files.set("chapters/intro.tex", enc.encode("Intro."));
+  f = await firedIn(files);
+  check("STR001 a missing input is still STR001", f.has("STR001") && !f.has("STR013"), [...f].join(","));
+
+  // BIB013 - BIB017
+  const bibdoc = bib => { const m = doc(String.raw`Cited~\cite{k1}.` + "\n" + String.raw`\bibliography{refs}`); m.set("refs.bib", enc.encode(bib)); return m; };
+  const entry = (key, fields) => "@inproceedings{" + key + ",\n"
+    + Object.entries({ author: "Doe, Jane", title: "A Quiet Title", year: "2020", ...fields }).map(([k, v]) => `  ${k} = {${v}},`).join("\n") + "\n}\n";
+  check("BIB013 a booktitle starting with In", (await firedIn(bibdoc(entry("k1", { booktitle: "In Proceedings of the CHI Conference" })))).has("BIB013"));
+  check("BIB013 a booktitle that merely starts with the letters is fine", !(await firedIn(bibdoc(entry("k1", { booktitle: "Interaction Design and Children" })))).has("BIB013"));
+  check("BIB014 a title in capitals", (await firedIn(bibdoc(entry("k1", { title: "A STUDY OF VERY LOUD TITLES", booktitle: "CHI" })))).has("BIB014"));
+  check("BIB014 an ordinary title is fine", !(await firedIn(bibdoc(entry("k1", { title: "A Study of the ACM and IEEE Styles", booktitle: "CHI" })))).has("BIB014"));
+  check("BIB015 a url that repeats the doi", (await firedIn(bibdoc(entry("k1", { booktitle: "CHI", doi: "10.1145/1.2", url: "https://doi.org/10.1145/1.2" })))).has("BIB015"));
+  check("BIB015 a url to somewhere else is fine", !(await firedIn(bibdoc(entry("k1", { booktitle: "CHI", doi: "10.1145/1.2", url: "https://example.org/paper" })))).has("BIB015"));
+  check("BIB016 a title ending with a period", (await firedIn(bibdoc(entry("k1", { title: "A Quiet Title.", booktitle: "CHI" })))).has("BIB016"));
+  check("BIB016 a title ending in an initial is fine", !(await firedIn(bibdoc(entry("k1", { title: "Proceedings of Part A.", booktitle: "CHI" })))).has("BIB016"));
+  r = await findingsOf(bibdoc(entry("k1", { booktitle: "CHI" }) + entry("K1", { booktitle: "UIST" })), "BIB017");
+  check("BIB017 a duplicate key", r.length === 1 && r[0].severity === SEV.error);
+  check("BIB017 distinct keys are fine", !(await firedIn(bibdoc(entry("k1", { booktitle: "CHI" }) + entry("k2", { booktitle: "UIST" })))).has("BIB017"));
+
+  // LOG010, LOG011
+  const withLog = body => { const m = doc("Text here."); m.set("main.log", enc.encode("This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026)\n" + body)); return m; };
+  r = await findingsOf(withLog("LaTeX Warning: Float too large for page by 31.5pt on input line 88.\n"), "LOG010");
+  check("LOG010 a float too large for the page", r.length === 1 && r[0].line === 88);
+  r = await findingsOf(withLog("Package hyperref Warning: Token not allowed in a PDF string (Unicode):\n(hyperref)                removing `\\cite' on input line 12.\n"), "LOG011");
+  check("LOG011 a token hyperref dropped from a bookmark", r.length === 1 && r[0].line === 12 && r[0].message.includes("cite"));
+  f = await firedIn(withLog("Output written on main.pdf (3 pages).\n"));
+  check("LOG010/LOG011 a clean log reports neither", !f.has("LOG010") && !f.has("LOG011"));
+
+  // POL010
+  const STUDY = "Participants completed a questionnaire during the user study, and each participant was thanked afterwards.";
+  check("POL010 a study that never states N", (await firedIn(doc(STUDY + " We report the results below in prose."))).has("POL010"));
+  for (const s of [" We recruited 24 participants.", " The sample (N = 24) was balanced.",
+                   " Twenty-four participants took part.", " Report how many people took part."])
+    check("POL010 satisfied by:" + s, !(await firedIn(doc(STUDY + s))).has("POL010"));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

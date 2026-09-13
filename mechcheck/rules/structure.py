@@ -33,10 +33,168 @@ def headings(ctx) -> list:
       rationale="A missing \\input is a chapter that silently is not in the PDF -- the failure mode nobody notices until the printed copy.",
       fix="Fix the path, or commit the file.")
 def missing_input(ctx):
+    from mechcheck.texsource import is_absolute_path
+
     for path, line, target in ctx.project.missing_inputs:
+        # A file that exists under another capitalisation, or an absolute
+        # path, is STR013's finding, with the more useful message.
+        if is_absolute_path(target) or _case_variant(ctx, target):
+            continue
         yield ctx.finding("STR001", f"\\input{{{target}}} could not be resolved",
                           file=path, line=line,
                           fix="Check the filename and that the file is committed (Overleaf is case-sensitive).")
+
+
+def _input_candidates(target: str) -> list:
+    from mechcheck.texsource import normalise_relpath
+
+    typed = normalise_relpath(target)
+    return [typed] if typed.lower().endswith(".tex") else [typed, typed + ".tex"]
+
+
+def _case_variant(ctx, target: str):
+    """The on-disk spelling of an \\input target when it differs only in case."""
+    from mechcheck.texsource import find_case_insensitive
+
+    for cand in _input_candidates(target):
+        actual = find_case_insensitive(ctx.root, cand)
+        if actual is None:
+            continue
+        return None if actual == cand else actual
+    return None
+
+
+#: The l2tabu list: packages that are unmaintained, produce worse output than
+#: their successors, or clash with the packages everybody loads today.
+_OBSOLETE_PACKAGES = {
+    "subfigure": "subcaption",
+    "epsfig": "graphicx", "psfig": "graphicx", "epsf": "graphicx",
+    "times": "newtxtext and newtxmath (or mathptmx)", "mathptm": "mathptmx", "pslatex": "mathptmx",
+    "palatino": "newpxtext and newpxmath (or mathpazo)", "mathpple": "mathpazo",
+    "utopia": "fourier", "euler": "eulervm", "ae": "lmodern", "aecompl": "lmodern",
+    "zefonts": "lmodern",
+    "a4": "geometry", "a4wide": "geometry", "anysize": "geometry", "vmargin": "geometry",
+    "t1enc": "fontenc with the T1 option", "isolatin": "inputenc", "isolatin1": "inputenc",
+    "umlaut": "inputenc", "ucs": "nothing: UTF-8 input has been the default since 2018",
+    "doublespace": "setspace", "fancyheadings": "fancyhdr",
+    "scrpage": "scrlayer-scrpage", "scrpage2": "scrlayer-scrpage",
+    "caption2": "caption", "glossary": "glossaries", "here": "float",
+    "floatflt": "wrapfig", "picinpar": "wrapfig",
+    "ngerman": "babel with the ngerman option", "german": "babel with the german option",
+}
+
+
+@rule("STR010", "Obsolete package", Category.STRUCTURE, Severity.WARN,
+      rationale="These packages are on the l2tabu list of things not to load: unmaintained, worse than their replacements, in conflict with the packages everyone uses today -- and subfigure is refused outright by ACM's production pipeline.",
+      fix="Load the replacement named in the finding.")
+def obsolete_package(ctx):
+    for c in ctx.project.commands("usepackage", 1):
+        options = [o.strip().lower() for o in c.opt(0).split(",") if o.strip()]
+        f, line, col = ctx.project.locate(c.start)
+        for name in c.arg(0).split(","):
+            name = name.strip()
+            key = name.lower()
+            if key in _OBSOLETE_PACKAGES:
+                yield ctx.finding("STR010", f"package `{name}` is obsolete",
+                                  file=f, line=line, col=col, context=ctx.project.excerpt(c.start),
+                                  fix=f"Use {_OBSOLETE_PACKAGES[key]} instead.",
+                                  data={"package": name})
+            elif key == "inputenc" and "utf8x" in options:
+                yield ctx.finding("STR010", "inputenc option `utf8x` (the ucs package) is obsolete",
+                                  file=f, line=line, col=col, context=ctx.project.excerpt(c.start),
+                                  fix="Use utf8, or delete the line: UTF-8 has been the default since 2018.",
+                                  data={"package": "inputenc"})
+
+
+@rule("STR011", "Package loaded more than once", Category.STRUCTURE, Severity.WARN,
+      rationale="LaTeX ignores a second \\usepackage -- unless it carries options the first did not, in which case it stops with an 'Option clash' error that names neither line.",
+      fix="Keep one \\usepackage line per package, with all of its options on it.")
+def duplicate_package(ctx):
+    from mechcheck.texsource import conditional_spans
+
+    # A preamble that loads one of two option sets inside \if...\else...\fi
+    # only ever loads one of them. Both branches are in the source; only one
+    # is in the document.
+    conditional = conditional_spans(ctx.project.text)
+
+    def switched(pos: int) -> bool:
+        return any(a <= pos < b for a, b in conditional)
+
+    seen: dict = {}
+    for c in ctx.project.commands("usepackage", 1):
+        options = frozenset(o.strip().lower() for o in c.opt(0).split(",") if o.strip())
+        for name in c.arg(0).split(","):
+            key = name.strip().lower()
+            if not key or key == "fontenc":
+                continue  # fontenc is loaded once per encoding, legitimately
+            if key not in seen:
+                seen[key] = (c, options)
+                continue
+            first, first_options = seen[key]
+            if switched(first.start) or switched(c.start):
+                continue
+            clash = bool(options - first_options)
+            first_f, first_line, _ = ctx.project.locate(first.start)
+            f, line, col = ctx.project.locate(c.start)
+            yield ctx.finding("STR011",
+                              f"`{key}` is already loaded at {first_f}:{first_line}"
+                              + (" with different options: LaTeX will stop with an option clash" if clash else ""),
+                              file=f, line=line, col=col, context=ctx.project.excerpt(c.start),
+                              severity=ctx.config.severity_for("STR011") if clash else Severity.INFO,
+                              fix=("Merge the options into the first \\usepackage and delete this one."
+                                   if clash else "Delete this line."))
+
+
+#: Packages that patch what hyperref patches, and only work loaded after it.
+_AFTER_HYPERREF = ("cleveref", "glossaries", "glossaries-extra")
+
+
+@rule("STR012", "Package loaded before hyperref that must follow it", Category.STRUCTURE,
+      Severity.WARN,
+      rationale="cleveref and glossaries redefine the same commands hyperref does, and only work when loaded after it; the wrong order breaks cross-references or their links without any error message.",
+      fix="Move \\usepackage{hyperref} above it.")
+def hyperref_order(ctx):
+    loads = []
+    for c in ctx.project.commands("usepackage", 1):
+        for name in c.arg(0).split(","):
+            loads.append((name.strip().lower(), c))
+    hyperref = next((c for name, c in loads if name == "hyperref"), None)
+    if hyperref is None:
+        return  # loaded by the class or a local .sty we cannot see: say nothing
+    for name, c in loads:
+        if name not in _AFTER_HYPERREF or c.start > hyperref.start:
+            continue
+        f, line, col = ctx.project.locate(c.start)
+        yield ctx.finding("STR012", f"`{name}` is loaded before hyperref",
+                          file=f, line=line, col=col, context=ctx.project.excerpt(c.start),
+                          fix=f"Load hyperref first, then {name}.")
+
+
+@rule("STR013", "\\input path that will not resolve on Overleaf", Category.STRUCTURE, Severity.ERROR,
+      rationale="Windows and macOS open Chapters/Intro.tex when the file is chapters/intro.tex, and an absolute path opens on exactly one computer. Overleaf and CI run Linux: the chapter silently vanishes from their PDF.",
+      fix="Match the file name letter for letter, and keep every path relative to the project.")
+def unportable_input(ctx):
+    from mechcheck.texsource import TexProject, is_absolute_path
+
+    for line in ctx.project.lines:
+        if line.verbatim:
+            continue
+        for target in TexProject._child_inputs(line.code):
+            if "\\" in target or "#" in target:
+                continue  # built from a macro
+            if is_absolute_path(target):
+                yield ctx.finding("STR013", f"\\input{{{target[:60]}}} is an absolute path",
+                                  file=line.file, line=line.lineno, context=line.raw.strip()[:90],
+                                  fix="Copy the file into the project and reference it relatively.")
+                continue
+            actual = _case_variant(ctx, target)
+            if not actual:
+                continue
+            yield ctx.finding("STR013",
+                              f"`{target}` is stored as `{actual}`; Overleaf is case-sensitive and will not find it",
+                              file=line.file, line=line.lineno, context=line.raw.strip()[:90],
+                              fix=f"Write the name as `{actual}`, or rename the file to match.",
+                              data={"typed": target, "actual": actual})
 
 
 @rule("STR002", "Heading nesting skips a level", Category.STRUCTURE, Severity.WARN,

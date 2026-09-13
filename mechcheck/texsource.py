@@ -612,3 +612,146 @@ def find_main_document(root: str):
         return None
     candidates.sort()
     return candidates[0][3]
+
+
+# --------------------------------------------------------------------------- #
+# portability of file names
+# --------------------------------------------------------------------------- #
+
+_ABSOLUTE_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|/|~[\\/]|\\\\[\w.])")
+
+
+def is_absolute_path(name: str) -> bool:
+    r"""True for ``C:\Users\...``, ``/home/...``, ``~/...`` and UNC paths.
+
+    A single backslash followed by letters is a macro (``\figdir/plot``), not
+    a path, and is deliberately not matched.
+    """
+    return bool(_ABSOLUTE_PATH.match(name.strip().strip('"')))
+
+
+def normalise_relpath(name: str) -> str:
+    """Forward slashes, no ``./`` segments, no surrounding quotes."""
+    parts = [p for p in name.strip().strip('"').replace("\\", "/").split("/") if p and p != "."]
+    return "/".join(parts)
+
+
+def find_case_insensitive(base: str, relpath: str):
+    """The on-disk spelling of ``relpath`` under ``base``, or ``None``.
+
+    Each path component is matched exactly first and case-insensitively
+    second, so the result tells a caller both whether the file exists and
+    whether the author spelt it the way the disk does. Windows and macOS open
+    ``Figures/Plot.PNG`` when the file is ``figures/plot.png``; Overleaf and
+    every Linux CI runner do not, and the difference is invisible until the
+    build moves.
+    """
+    current = base
+    spelled = []
+    for part in normalise_relpath(relpath).split("/"):
+        if not part:
+            continue
+        if part == "..":
+            spelled.append(part)
+            current = os.path.join(current, part)
+            continue
+        try:
+            names = os.listdir(current)
+        except OSError:
+            return None
+        if part in names:
+            chosen = part
+        else:
+            matches = [n for n in names if n.lower() == part.lower()]
+            if not matches:
+                return None
+            chosen = sorted(matches)[0]
+        spelled.append(chosen)
+        current = os.path.join(current, chosen)
+    if not spelled or not os.path.isfile(current):
+        return None
+    return "/".join(spelled)
+
+
+# --------------------------------------------------------------------------- #
+# sentence boundaries
+# --------------------------------------------------------------------------- #
+
+#: A period after one of these is not the end of a sentence.
+_NOT_SENTENCE_END = ("et al.", "e.g.", "i.e.", "cf.", "vs.", "etc.", "fig.", "figs.",
+                     "eq.", "eqs.", "sec.", "no.", "approx.", "resp.", "ca.", "p.", "pp.",
+                     "ed.", "eds.", "vol.", "dr.", "prof.", "mr.", "ms.", "st.", "jr.")
+
+
+def sentence_starts_at(text: str, pos: int) -> bool:
+    """Does a new sentence begin at ``pos``?
+
+    True at the start of the text, after a blank line, or after a
+    sentence-final mark -- unless that mark belongs to an abbreviation such
+    as "et al." or "e.g.", or to an initial, which a checker must not mistake
+    for the end of a sentence.
+    """
+    i = pos - 1
+    newlines = 0
+    while i >= 0 and text[i] in " \t\r\n":
+        if text[i] == "\n":
+            newlines += 1
+        i -= 1
+    if i < 0 or newlines >= 2:
+        return True
+    if text[i] not in ".!?":
+        return False
+    head = text[max(0, i - 12):i + 1].lower()
+    if head.endswith(_NOT_SENTENCE_END):
+        return False
+    return re.search(r"(?<![\w])[a-z]\.$", head) is None
+
+
+# --------------------------------------------------------------------------- #
+# TeX conditionals
+# --------------------------------------------------------------------------- #
+
+_PRIMITIVE_IFS = {
+    "if", "ifx", "ifnum", "ifdim", "ifodd", "ifvmode", "ifhmode", "ifmmode", "ifinner",
+    "ifvoid", "ifhbox", "ifvbox", "ifeof", "iftrue", "iffalse", "ifcase", "ifdefined",
+    "ifcsname", "iffontchar", "ifincsname", "ifpdf", "ifluatex", "ifxetex", "ifdraft",
+}
+
+
+def conditional_spans(text: str) -> list:
+    r"""Regions of ``text`` inside a TeX ``\if... \fi`` conditional.
+
+    Only the primitives and the switches declared with ``\newif`` count:
+    etoolbox's ``\iftoggle{..}{..}{..}`` and friends take their branches as
+    arguments and close with no ``\fi``, so counting them would leave the depth
+    off by one for the rest of the document. A preamble that loads one of two
+    option sets depending on a switch is ordinary practice, and a rule that
+    reads both branches as one document has to know it is doing so.
+    """
+    names = set(_PRIMITIVE_IFS)
+    for m in re.finditer(r"\\newif\s*\\(if[A-Za-z@]*)", text):
+        names.add(m.group(1))
+    depth = 0
+    start = None
+    spans = []
+    for m in re.finditer(r"\\(if[A-Za-z@]*|fi)(?![A-Za-z@])", text):
+        if _is_escaped(text, m.start()):
+            continue
+        token = m.group(1)
+        if token == "fi":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    spans.append((start, m.end()))
+                    start = None
+            continue
+        if token not in names:
+            continue
+        if text[max(0, m.start() - 8):m.start()].rstrip().endswith("\\newif"):
+            continue  # the declaration, not a test
+        if depth == 0:
+            start = m.start()
+        depth += 1
+    if start is not None:
+        spans.append((start, len(text)))
+    return spans

@@ -109,13 +109,15 @@ script) in any browser. It reports 22 checks.
 
 ## What is verified, and what is not
 
-Verified: the engine (99 Node checks), the zip reading, the panel rendering,
+Verified: the engine (177 Node checks), the zip reading, the panel rendering,
 filtering and fixing in a real browser (22 harness checks), the manifest, and
 the icons.
 
 **Verified against a live Overleaf project** on 2026-08-28: the extension
-injected, read the project, and reported exactly the 37 findings the self-test
-document is documented to produce — every rule, every count.
+injected, read the project, and reported exactly the findings the self-test
+document was documented to produce at the time — every rule, every count.
+(The documented figure has since grown with the rule set; see
+[testing.md](testing.md) for the current one.)
 
 The one thing outside anyone's control is that `/project/<id>/download/zip` is
 Overleaf's own download URL rather than a public API, so a future change could

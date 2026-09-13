@@ -286,3 +286,141 @@ def unescaped_percent(ctx):
         yield ctx.finding("STY014", "a number followed by an unescaped % -- the rest of the line is a comment",
                           file=line.file, line=line.lineno, col=m.start() + 1,
                           context=line.raw.strip()[:90], fix="Write \\%.")
+
+
+#: A LaTeX control sequence starts with this. Named, so replacement strings
+#: that must contain a backslash are built from something no escaping can eat.
+BS = chr(92)
+
+_ELLIPSIS = re.compile(r"(?<![.\\])\.\.\.(?!\.)")
+
+
+@rule("STY015", "Three periods instead of an ellipsis", Category.STYLE, Severity.INFO,
+      rationale="Typed periods are set too tightly and can break across a line; \\dots is the ellipsis LaTeX knows how to space.",
+      fix="Write \\dots{} -- the empty braces keep the space that follows.")
+def typed_ellipsis(ctx):
+    for m in _ELLIPSIS.finditer(ctx.project.prose):
+        f, line, col = ctx.project.locate(m.start())
+        yield ctx.finding("STY015", "'...' typed as three periods",
+                          file=f, line=line, col=col, context=ctx.project.excerpt(m.start()),
+                          edit=ctx.edit_span(m.start(), m.end(), BS + "dots{}",
+                                             "... -> " + BS + "dots{}"))
+
+
+_BARE_URL = re.compile(r"(?<![\w/@])(?:https?://|www\.)[^\s{}<>\"']+", re.IGNORECASE)
+
+#: Commands whose arguments legitimately contain a URL as-is.
+_URL_WRAPPERS = (("url", 1), ("href", 2), ("path", 1), ("nolinkurl", 1), ("hyperref", 2),
+                 ("newcommand", 2), ("renewcommand", 2), ("providecommand", 2),
+                 ("hypersetup", 1), ("includegraphics", 1), ("lstinputlisting", 1),
+                 ("input", 1), ("include", 1), ("bibliography", 1), ("addbibresource", 1),
+                 ("acmDOI", 1), ("doi", 1), ("Description", 1))
+
+
+@rule("STY016", "Bare URL in running text", Category.STYLE, Severity.WARN,
+      rationale="A URL typed as plain text cannot be broken across lines, so it runs into the margin, and its underscores, percent signs and tildes are read as LaTeX syntax rather than as characters.",
+      fix="Wrap it: \\url{https://...}, from hyperref or the url package.")
+def bare_url(ctx):
+    text = ctx.project.text
+    docs = ctx.project.environments("document")
+    lo, hi = (docs[0].body_start, docs[0].body_end) if docs else (0, len(text))
+    protected = []
+    for name, nargs in _URL_WRAPPERS:
+        for c in ctx.project.commands(name, nargs):
+            protected.append((c.start, c.end))
+    packages = ctx.project.packages()
+    can_wrap = any(p in packages for p in ("hyperref", "url", "xurl"))
+    for m in _BARE_URL.finditer(text, lo, hi):
+        if any(a <= m.start() < b for a, b in protected):
+            continue
+        url = m.group(0).rstrip(".,;:)]")
+        end = m.start() + len(url)
+        shown = url if len(url) <= 48 else url[:47] + "\u2026"
+        f, line, col = ctx.project.locate(m.start())
+        yield ctx.finding("STY016", f"bare URL: {shown}",
+                          file=f, line=line, col=col, context=ctx.project.excerpt(m.start()),
+                          fix=("Write " + BS + "url{" + shown + "}"
+                               + ("" if can_wrap else ", and load hyperref (or url) in the preamble") + "."),
+                          edit=(ctx.edit_span(m.start(), end, BS + "url{" + url + "}",
+                                              "wrap in " + BS + "url{}") if can_wrap else None))
+
+
+_SPACE_BEFORE_FOOTNOTE = re.compile(r"(?<=[^\s\\])(\s+)\\footnote(?![A-Za-z@])")
+
+
+@rule("STY017", "Space before \\footnote", Category.STYLE, Severity.INFO,
+      rationale="The footnote mark is set exactly where the command is, so a space before \\footnote prints a gap between the word and its superscript.",
+      fix="Attach it directly to the word: word\\footnote{...}.")
+def space_before_footnote(ctx):
+    text = ctx.project.text
+    for m in _SPACE_BEFORE_FOOTNOTE.finditer(text):
+        f, line, col = ctx.project.locate(m.start(1))
+        yield ctx.finding("STY017", "space between the word and its \\footnote",
+                          file=f, line=line, col=col, context=ctx.project.excerpt(m.start()),
+                          edit=ctx.edit_span(m.start(1), m.end(1), "",
+                                             "delete the space before " + BS + "footnote"))
+
+
+_NUMERAL_SENTENCE = re.compile(r"(?<![\w.,:;/\-])(\d[\d,.]*)\s+([a-z]{2,})")
+
+
+@rule("STY018", "Sentence begins with a numeral", Category.STYLE, Severity.INFO,
+      rationale="Style guides from APA to the ACM ask that a sentence not open with digits: '12 participants ...' reads as a fragment and is easily taken for a list item.",
+      fix="Spell the number out ('Twelve participants ...') or rephrase ('A total of 12 participants ...').")
+def numeral_starts_sentence(ctx):
+    from mechcheck.texsource import sentence_starts_at
+
+    prose = ctx.project.prose
+    for m in _NUMERAL_SENTENCE.finditer(prose):
+        if not sentence_starts_at(prose, m.start()):
+            continue
+        f, line, col = ctx.project.locate(m.start())
+        yield ctx.finding("STY018", f"sentence begins with '{m.group(1)}'",
+                          file=f, line=line, col=col, context=ctx.project.excerpt(m.start()))
+
+
+_LEGACY_FONT = re.compile(r"\\(bf|it|rm|sc|sf|tt|sl)(?![A-Za-z@])")
+_DISPLAY_DOLLARS = re.compile(r"(?<!\\)\$\$")
+_FONT_REPLACEMENT = {
+    "bf": "\\textbf{...} or \\bfseries", "it": "\\textit{...}, \\emph{...} or \\itshape",
+    "rm": "\\textrm{...} or \\rmfamily", "sc": "\\textsc{...} or \\scshape",
+    "sf": "\\textsf{...} or \\sffamily", "tt": "\\texttt{...} or \\ttfamily",
+    "sl": "\\textsl{...} or \\slshape",
+}
+
+
+@rule("STY019", "LaTeX 2.09 syntax", Category.STYLE, Severity.INFO,
+      rationale="\\bf, \\it and $$ ... $$ predate LaTeX2e. The font commands do not nest and skip the italic correction, KOMA-Script and beamer refuse them, and $$ sets display maths with the wrong vertical space.",
+      fix="Use \\textbf{...} and \\emph{...}, and \\[ ... \\] or an equation environment.")
+def legacy_syntax(ctx):
+    from mechcheck.texsource import _is_escaped
+
+    text = ctx.project.text
+    for m in _LEGACY_FONT.finditer(text):
+        if _is_escaped(text, m.start()):
+            continue
+        name = m.group(1)
+        f, line, col = ctx.project.locate(m.start())
+        yield ctx.finding("STY019", f"\\{name} is a LaTeX 2.09 font command",
+                          file=f, line=line, col=col, context=ctx.project.excerpt(m.start()),
+                          fix=f"Use {_FONT_REPLACEMENT[name]}.")
+    opens = [m.start() for m in _DISPLAY_DOLLARS.finditer(text)]
+    for start in opens[::2]:
+        f, line, col = ctx.project.locate(start)
+        yield ctx.finding("STY019", "$$ ... $$ display maths",
+                          file=f, line=line, col=col, context=ctx.project.excerpt(start),
+                          fix="Write \\[ ... \\] or an equation environment.")
+
+
+_ET_AL = re.compile(r"(?<![\w])(?:et\.\s*al\.?|et\s+al(?![.\w])|etal\.?)(?![\w])")
+
+
+@rule("STY020", "'et al.' mistyped", Category.STYLE, Severity.WARN,
+      rationale="'et al.' abbreviates 'et alii': no period after 'et', one after 'al'. The variants are the kind of slip a reviewer notices in the first paragraph and holds against the rest.",
+      fix="Write 'et al.' -- or let \\citet{...} produce it.")
+def malformed_et_al(ctx):
+    for m in _ET_AL.finditer(ctx.project.prose):
+        f, line, col = ctx.project.locate(m.start())
+        yield ctx.finding("STY020", f"'{m.group(0)}' should be 'et al.'",
+                          file=f, line=line, col=col, context=ctx.project.excerpt(m.start()),
+                          edit=ctx.edit_span(m.start(), m.end(), "et al.", f"{m.group(0)} -> et al."))

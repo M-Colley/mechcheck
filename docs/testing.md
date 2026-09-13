@@ -4,7 +4,7 @@ Three tests, about fifteen minutes. Each one has an unambiguous pass condition,
 so you never have to judge whether it "looks right".
 
 The fixture for all three is [`latex/overleaf-selftest.tex`](../latex/overleaf-selftest.tex):
-a deliberately awful paper with 36 planted faults. It is not an example of good
+a deliberately awful paper with 37 planted faults. It is not an example of good
 writing — it exists so the answer is known in advance.
 
 ---
@@ -38,7 +38,7 @@ That does not matter for tests 1 and 2, which read the source, not the PDF.
 
 ---
 
-## Test 1 — the Chrome extension (the one that is unverified)
+## Test 1 — the Chrome extension
 
 1. `chrome://extensions` → **Developer mode** on → **Load unpacked** → pick the
    `extension/` folder.
@@ -47,7 +47,7 @@ That does not matter for tests 1 and 2, which read the source, not the PDF.
    *ACM AutomotiveUI*, **Stage** = *Submission*.
 4. Press **Check**.
 
-**Pass:** the panel shows **12 errors, 14 warnings, 10 notes** — 36 findings.
+**Pass:** the panel shows **12 errors, 15 warnings, 10 notes** — 37 findings.
 
 That figure is for a check with no compiled output. When the extension can
 also reach the `.log` and `.pdf`, more rules become eligible (overfull boxes,
@@ -65,6 +65,7 @@ part of the chain is alive:
 | `REF008` ×2 | your `\autoref` preference — `Figure~\ref` and `Table~\ref`. `Section~\ref` is left alone on purpose: `\autoref` takes the word from the target's level, so it prints "Subsection" where the convention is "Section" at every depth |
 | `REF009` ×2 | your `\citet` preference — "Colley et al." and "Rukzio and Colley" |
 | `ABB001` | it read the whole document, not just the visible part (ADS defined twice, far apart) |
+| `STY016` | the bare GitHub URL on line 49. The same line also trips `ANON003`, which is about *whose* link it is; `STY016` is about how it is typeset |
 | `BIB006` | it read `refs.bib` out of the project zip |
 
 **Then test verification:** tick **verify refs** and press Check again. It takes
@@ -80,7 +81,7 @@ and re-check: `BIO001` should appear, saying the DOI does not resolve.
 | "Overleaf refused the download (HTTP 4xx)" | the download endpoint moved or the session is not shared — this is the thing I could not verify from here |
 | Header still says "no .log" | hover the header line — it now lists every URL tried and the status each returned; send me that |
 | Findings appear but `verify refs` finds nothing | the service worker relay is not working; check the extension's *service worker* console |
-| Counts differ from 12/14/10 | send me the numbers — that is a real disagreement between us |
+| Counts differ from 12/15/10 | send me the numbers — that is a real disagreement between us |
 
 ---
 
@@ -90,7 +91,7 @@ and re-check: `BIO001` should appear, saying the DOI does not resolve.
 2. Open `browser/mechcheck.html` by double-clicking it.
 3. Set the same three controls, drop the `.zip` on the page.
 
-**Pass:** the same **12 / 14 / 10**. If test 1 and test 2 disagree, that is a
+**Pass:** the same **12 / 15 / 10**. If test 1 and test 2 disagree, that is a
 bug and I want to know.
 
 Reference verification works here too *because you opened the file locally*. From
@@ -141,12 +142,12 @@ So you know where the gaps are rather than re-testing what is covered:
 
 | | Verified how |
 |---|---|
-| 120 rules, Python | 359 tests |
-| 120 rules, browser engine | 111 checks in Node, same fixtures |
-| Both agree on this exact document | asserted in both suites, 36 findings |
-| Extension panel, zip reading, filters | 17 checks in a real browser |
+| 144 rules, Python | 453 tests |
+| 144 rules, browser engine | 177 checks in Node, same fixtures |
+| Both agree on this exact document | asserted in both suites, 37 findings |
+| Extension panel, zip reading, filters | 22 checks in a real browser |
 | `mechcheck.sty` | 14 checks against TeX Live 2026 |
-| **Extension in Chrome on live Overleaf** | **not verified — that is test 1** |
+| **Extension in Chrome on live Overleaf** | verified once, on 2026-08-28 — re-run test 1 after updating |
 | **`mechcheck.sty` inside Overleaf** | **not verified — that is test 3** |
 
 Test 2 is a sanity check; tests 1 and 3 are the ones that cover genuinely
@@ -176,17 +177,17 @@ this is the difference between 73 findings and 1,708.
 Nothing here is needed to *use* the tool, only to change it.
 
 ```bash
-node browser/test-engine.mjs      # the browser engine, no dependencies
-python -m pytest -q               # the Python checker
-bash latex/verify-sty.sh          # the LaTeX package, needs TeX on PATH
+python -m pytest -q               # the Python checker (pip install -e ".[dev]" first)
+node browser/test-engine.mjs      # the browser engine, no dependencies beyond Node
+bash latex/verify-sty.sh          # the LaTeX package, needs a TeX installation
+node browser/build-extension.mjs  # regenerates extension/engine.js and the harness after editing the page
 ```
 
-The extension harness is a file you open:
-`extension/test-harness.built.html`.
+The LaTeX script looks for TeX Live in its usual install locations when
+`latexmk` is not on PATH — on Windows the installer often leaves it off. If it
+still reports `latexmk not found`, add the `bin` directory to PATH.
 
-On this machine TeX is at `C:\texlive\2026\bin\windows`, which is not on PATH —
-prefix with:
-
-```bash
-export PATH="/c/texlive/2026/bin/windows:$PATH"
-```
+The extension harness is a file you open in a browser:
+`extension/test-harness.built.html`, which the build script writes. It fakes
+the `chrome.*` APIs, serves a small project from a mocked `fetch`, and drives
+the real content script; the page reports how many of its checks passed.

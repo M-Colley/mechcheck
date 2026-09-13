@@ -204,6 +204,50 @@ def class_warnings(ctx):
         if len(seen) >= 12:
             return
 
+_FLOAT_TOO_LARGE = re.compile(r"LaTeX Warning: Float too large for page by ([\d.]+)pt on input line (\d+)")
+
+
+@rule("LOG010", "Float too large for the page", Category.COMPILE, Severity.WARN,
+      needs_build=True,
+      rationale="A figure or table taller than the text block is pushed to a page of its own, drags every later float along behind it, and can leave them all stacked at the end of the chapter.",
+      fix="Scale the figure down (height as well as width), or split the table.")
+def float_too_large(ctx):
+    if not ctx.log_text:
+        return
+    seen = set()
+    for size, line in _FLOAT_TOO_LARGE.findall(ctx.log_text):
+        if (size, line) in seen:
+            continue
+        seen.add((size, line))
+        yield ctx.finding("LOG010", f"a float is {float(size):.0f}pt too tall for the page",
+                          file=ctx.project.main, line=int(line), data={"points": float(size)})
+        if len(seen) >= 10:
+            return
+
+
+_PDF_STRING_TOKEN = re.compile(
+    r"Package hyperref Warning: Token not allowed in a PDF string[^\n]*\n"
+    r"\(hyperref\)\s+removing `([^'\n]*)' on input line (\d+)")
+
+
+@rule("LOG011", "Heading text could not be used for a PDF bookmark", Category.COMPILE,
+      Severity.INFO, needs_build=True,
+      rationale="hyperref builds the PDF outline from the headings; a citation, a footnote or maths inside a heading cannot be represented there, so it is dropped and the bookmark reads wrongly.",
+      fix="Give hyperref a plain-text version: \\section{\\texorpdfstring{$\\alpha$}{alpha} ...}, or move the citation out of the heading.")
+def pdf_string_tokens(ctx):
+    if not ctx.log_text:
+        return
+    seen = set()
+    for token, line in _PDF_STRING_TOKEN.findall(ctx.log_text):
+        if (token, line) in seen:
+            continue
+        seen.add((token, line))
+        yield ctx.finding("LOG011", f"hyperref dropped `{token}` from a heading's bookmark",
+                          file=ctx.project.main, line=int(line), data={"token": token})
+        if len(seen) >= 8:
+            return
+
+
 def _nearest_source(log: str, position: int):
     """Best guess at the source file and line a log message refers to."""
     window = log[max(0, position - 2000):position + 400]

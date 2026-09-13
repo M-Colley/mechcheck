@@ -179,30 +179,146 @@ def graphic_without_width(ctx):
       rationale="A missing image compiles to a black box on Overleaf and stops the build in CI.",
       fix="Check the path, the extension and the capitalisation -- Overleaf is case-sensitive, Windows is not.")
 def missing_graphic(ctx):
-    roots = [ctx.root]
-    for cmd in ctx.project.commands("graphicspath", 1):
-        for m in re.finditer(r"\{([^{}]+)\}", cmd.arg(0)):
-            roots.append(os.path.join(ctx.root, m.group(1)))
+    from mechcheck.texsource import is_absolute_path
 
-    extensions = ["", ".pdf", ".png", ".jpg", ".jpeg", ".eps", ".svg", ".PDF", ".PNG", ".JPG"]
     for cmd in ctx.project.commands("includegraphics", 1):
         name = cmd.arg(0).strip()
-        if not name or "\\" in name or "#" in name:
+        if not name or "#" in name or is_absolute_path(name):
+            continue  # FIG015 reports absolute paths, with the better message
+        if "\\" in name:
             continue  # built from a macro; we cannot resolve it statically
-        found = False
-        for base in roots:
-            for ext in extensions:
-                if os.path.isfile(os.path.normpath(os.path.join(base, name + ext))):
-                    found = True
-                    break
-            if found:
-                break
-        if found:
-            continue
+        if _locate_graphic(ctx, name)[0] != "missing":
+            continue  # found -- or spelt differently on disk, which is FIG012's
         f, line, col = ctx.project.locate(cmd.start)
         yield ctx.finding("FIG008", f"graphics file `{name}` not found",
                           file=f, line=line, col=col, context=ctx.project.excerpt(cmd.start),
                           fix="Fix the path, or commit the missing file.")
+
+
+def _graphics_roots(ctx) -> list:
+    roots = [ctx.root]
+    for cmd in ctx.project.commands("graphicspath", 1):
+        for m in re.finditer(r"\{([^{}]+)\}", cmd.arg(0)):
+            roots.append(os.path.join(ctx.root, m.group(1)))
+    return roots
+
+
+#: What pdflatex tries when no extension is written, in its own order. Their
+#: capitalisation is irrelevant here: the driver tries the upper-case forms too.
+_GRAPHICS_EXTENSIONS = ("", ".pdf", ".png", ".jpg", ".jpeg", ".eps", ".svg", ".mps")
+
+
+def _locate_graphic(ctx, name: str):
+    """Where an \\includegraphics argument points: ``(status, spelling)``.
+
+    ``status`` is ``"found"``, ``"case"`` (the file exists, but is spelt
+    differently on disk, which Overleaf will not forgive) or ``"missing"``.
+    Only the stem has to match letter for letter: when the author wrote no
+    extension, LaTeX itself tries the upper-case variants.
+    """
+    from mechcheck.texsource import find_case_insensitive, normalise_relpath
+
+    cached = ctx.cache.setdefault("graphic_locations", {})
+    if name in cached:
+        return cached[name]
+    typed = normalise_relpath(name)
+    result = ("missing", None)
+    for base in _graphics_roots(ctx):
+        for ext in _GRAPHICS_EXTENSIONS:
+            wanted = typed + ext
+            actual = find_case_insensitive(base, wanted)
+            if actual is None:
+                continue
+            stem_ok = bool(ext) and actual[:-len(ext)] == typed and actual[-len(ext):].lower() == ext
+            if actual == wanted or stem_ok:
+                result = ("found", actual)
+                break
+            if result[0] == "missing":
+                result = ("case", actual)
+        if result[0] == "found":
+            break
+    cached[name] = result
+    return result
+
+
+@rule("FIG012", "Graphics file name differs from the file only in capitalisation", Category.FLOATS,
+      Severity.ERROR,
+      rationale="Windows and macOS open `Figure.png` when the file is `figure.png`; Overleaf and every Linux CI runner do not. The document compiles on the author's laptop and shows a missing-file box everywhere else.",
+      fix="Make the name in \\includegraphics match the file on disk letter for letter.")
+def graphic_case_mismatch(ctx):
+    from mechcheck.texsource import is_absolute_path
+
+    for cmd in ctx.project.commands("includegraphics", 1):
+        name = cmd.arg(0).strip()
+        if not name or "\\" in name or "#" in name or is_absolute_path(name):
+            continue
+        status, actual = _locate_graphic(ctx, name)
+        if status != "case":
+            continue
+        # Suggest the spelling the disk has, keeping the author's choice of
+        # whether to write the extension.
+        has_ext = "." in name.rsplit("/", 1)[-1]
+        suggested = actual if has_ext else actual.rsplit(".", 1)[0]
+        span = cmd.arg_spans[0] if cmd.arg_spans else None
+        f, line, col = ctx.project.locate(cmd.start)
+        yield ctx.finding("FIG012",
+                          f"`{name}` is stored as `{actual}`; Overleaf is case-sensitive and will not find it",
+                          file=f, line=line, col=col, context=ctx.project.excerpt(cmd.start),
+                          fix=f"Write \\includegraphics{{{suggested}}}, or rename the file to match.",
+                          edit=(ctx.edit_span(span[0], span[1], suggested, f"{name} -> {suggested}")
+                                if span else None),
+                          data={"typed": name, "actual": actual})
+
+
+@rule("FIG013", "center environment inside a float", Category.FLOATS, Severity.INFO,
+      rationale="\\begin{center} adds vertical space above and below its content, so the figure sits lower in its box than its neighbours and the caption drifts; \\centering does the same job without the gap.",
+      fix="Delete \\begin{center} and \\end{center}; put \\centering at the top of the float.")
+def center_in_float(ctx):
+    from mechcheck.texsource import parse_environments
+
+    text = ctx.project.text
+    for env in ctx.project.floats():
+        inner = parse_environments(env.body(text), "center")
+        if not inner:
+            continue
+        offset = env.body_start + inner[0].start
+        f, line, col = ctx.project.locate(offset)
+        yield ctx.finding("FIG013", f"\\begin{{center}} inside a {env.name}",
+                          file=f, line=line, col=col, context=ctx.project.excerpt(offset),
+                          fix="Use \\centering instead.")
+
+
+_POSITIONAL_REF = re.compile(
+    r"\b(?:the|this)\s+(?:following|above|below|next|preceding)\s+"
+    r"(?:figure|table|graph|plot|chart|diagram|screenshot|listing)s?\b"
+    r"|\b(?:figure|table|graph|plot|chart|diagram|screenshot|listing)s?\s+"
+    r"(?:above|below|on the (?:next|previous|following|preceding|opposite) page)\b",
+    re.IGNORECASE)
+
+
+@rule("FIG014", "Float referred to by its position", Category.FLOATS, Severity.WARN,
+      rationale="Floats float: 'the figure below' is wherever LaTeX found room for it, which is frequently the next page or the previous one. Only a numbered reference stays true.",
+      fix="Name it: \\autoref{fig:x} or Figure~\\ref{fig:x}.")
+def positional_float_reference(ctx):
+    for m in _POSITIONAL_REF.finditer(ctx.project.prose):
+        f, line, col = ctx.project.locate(m.start())
+        yield ctx.finding("FIG014", f"'{m.group(0)}' refers to a float by where it sits on the page",
+                          file=f, line=line, col=col, context=ctx.project.excerpt(m.start()))
+
+
+@rule("FIG015", "Absolute path to a graphics file", Category.FLOATS, Severity.ERROR,
+      rationale="A path like C:/Users/you/Desktop/plot.png exists on one computer. Overleaf, your co-authors and CI all fail to find it -- and under anonymous review the user name inside the path names the author.",
+      fix="Move the file into the project and write a relative path: \\includegraphics{figures/plot.png}.")
+def absolute_graphic_path(ctx):
+    from mechcheck.texsource import is_absolute_path
+
+    for cmd in ctx.project.commands("includegraphics", 1):
+        name = cmd.arg(0).strip()
+        if not name or not is_absolute_path(name):
+            continue
+        f, line, col = ctx.project.locate(cmd.start)
+        yield ctx.finding("FIG015", f"absolute path `{name[:60]}` resolves on this computer only",
+                          file=f, line=line, col=col, context=ctx.project.excerpt(cmd.start))
 
 
 @rule("FIG009", "Two floats share a caption", Category.FLOATS, Severity.INFO,
