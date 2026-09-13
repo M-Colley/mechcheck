@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mechcheck"
-version = "0.1.0"
+version = "0.2.0"
 description = "Mechanical checks for LaTeX theses and papers: the boring layer, automated."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "Mark Colley" }]
 dependencies = []
