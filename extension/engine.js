@@ -3,8 +3,6 @@
  * Built from browser/mechcheck.html by browser/build-extension.mjs, so the
  * extension and the standalone page run byte-for-byte the same checks. Edit
  * mechcheck.html and re-run the build.
- *
- * Built: 2026-09-12
  */
 
 
