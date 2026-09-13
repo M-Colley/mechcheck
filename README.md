@@ -6,10 +6,11 @@
 Mechanical checks for LaTeX theses and papers: the boring layer of review,
 automated, so supervision time goes to the argument instead of the formatting.
 
-117 rules across figures, cross-references, abbreviations, prose mechanics,
+144 rules across figures, cross-references, abbreviations, prose mechanics,
 bibliography hygiene, **bibliography verification against Crossref/OpenAlex/DBLP**,
-compile-log analysis, accessibility, anonymity, reporting conventions, and
-per-venue submission requirements for CHI, ASSETS, AutomotiveUI, IMWUT and
+compile-log analysis, accessibility, anonymity, reporting conventions, the
+things that compile on your laptop but not on Overleaf, and per-venue
+submission requirements for CHI, ASSETS, AutomotiveUI, IMWUT and
 Transportation Research Part F.
 
 **Nothing to install.** Save
@@ -20,7 +21,7 @@ and get a button inside Overleaf itself.
 If you would rather have a command line:
 
 ```bash
-pip install -e .
+pip install "git+https://github.com/M-Colley/mechcheck"
 mechcheck check .                       # a thesis
 mechcheck check . --venue chi           # + CHI's submission requirements
 mechcheck check . --venue autoui --profile paper-anonymous --stage final
@@ -29,7 +30,129 @@ mechcheck fix .                         # apply the unambiguous corrections
 
 ---
 
-## Four ways to run it
+## Installation
+
+Pick the row that matches how you work. Each is spelt out below the table.
+
+| You want | You need | Do this |
+|---|---|---|
+| a page to drop a zip on | any browser | save `browser/mechcheck.html`, double-click it |
+| a button inside Overleaf | Chrome, Edge or Brave | load `extension/` unpacked — two minutes, no store account |
+| checks on every Overleaf compile | nothing; works on the free plan | upload `latex/mechcheck.sty`, add `\usepackage{mechcheck}` |
+| a command line, and CI | Python 3.10 or newer | `pip install "git+https://github.com/M-Colley/mechcheck"` |
+
+### The page and the extension
+
+Neither needs Python, and nothing leaves your machine except the reference
+lookups you switch on. Setup: [docs/browser.md](docs/browser.md) and
+[docs/chrome-extension.md](docs/chrome-extension.md).
+
+### The command line
+
+mechcheck is not on PyPI yet, so pip installs it from this repository. You
+need Python 3.10 or newer and git. There are no other dependencies: the
+standard library does the parsing, the configuration and the network.
+
+```bash
+pip install "git+https://github.com/M-Colley/mechcheck"
+```
+
+To work on it instead, install a clone in editable mode:
+
+```bash
+git clone https://github.com/M-Colley/mechcheck
+cd mechcheck
+pip install -e ".[dev]"      # adds pytest and PyYAML
+```
+
+Confirm it landed:
+
+```bash
+mechcheck rules | tail -1
+```
+
+prints `144 rules`. Then run it on the self-test document, whose answer is
+known in advance:
+
+```bash
+mechcheck check tests/fixtures/selftest --profile paper-anonymous --venue autoui --offline
+```
+
+Expect `12 error(s), 15 warning(s), 10 note(s)`. If you see that line, the
+whole chain works.
+
+**If `mechcheck` is not recognised** — the normal state of a fresh Python on
+Windows, where pip's `Scripts` directory is not on PATH — every command also
+works as
+
+```bash
+python -m mechcheck check .
+```
+
+**Optional: PyYAML.** `mechcheck.yaml` is read by a built-in parser that
+understands the small YAML subset the documentation uses. With PyYAML
+installed (`pip install PyYAML`) the full language is accepted. Nothing that
+ships here needs it.
+
+**Network.** The seven `BIO*` rules ask Crossref, OpenAlex and DBLP whether
+the works you cite exist. They need internet access, cache every answer for
+30 days under `~/.cache/mechcheck`, and are skipped with `--offline`. Put your
+e-mail address under `mailto:` in `mechcheck.yaml` (or in the `MECHCHECK_MAILTO`
+environment variable) to join Crossref's polite pool: it is faster, and it is
+the courteous thing to do.
+
+**Upgrading and removing.** Re-run the `pip install` line with `--upgrade`;
+an editable install follows `git pull`. `pip uninstall mechcheck` removes it.
+
+### Inside Overleaf
+
+`latex/mechcheck.sty` runs the checks LaTeX itself can make — floats,
+captions, alt text, and with `[crossref]` labels and references — inside every
+compile, on any Overleaf plan. Upload it to the project and add
+`\usepackage{mechcheck}` to the preamble. Findings appear as package warnings
+in the log panel and in `mechcheck-report.txt` under *Other logs & files*.
+[docs/overleaf-setup.md](docs/overleaf-setup.md) has the details, and the
+GitHub mirror that brings the full rule set to an Overleaf project.
+
+### In a project's CI
+
+```bash
+mechcheck init . --with-ci --with-sty
+```
+
+writes a `mechcheck.yaml`, a GitHub Actions workflow that installs mechcheck
+from this repository and posts findings as annotations and a job summary, and
+a copy of the `.sty`.
+
+### For working on mechcheck itself
+
+| To run | You need | Command |
+|---|---|---|
+| the Python suite | `pip install -e ".[dev]"` | `python -m pytest -q` |
+| the browser engine | Node 18 or newer | `node browser/test-engine.mjs` |
+| the extension harness | any browser | `node browser/build-extension.mjs`, then open `extension/test-harness.built.html` |
+| the LaTeX package | TeX Live, or any TeX with `latexmk` | `bash latex/verify-sty.sh` |
+
+The LaTeX script looks for TeX Live in its usual install locations when
+`latexmk` is not on PATH, which on Windows it usually is not. After editing
+`browser/mechcheck.html`, run the build script: `extension/engine.js` is
+generated from the page, and CI fails if the two drift apart. After adding or
+changing a rule, regenerate the reference: `mechcheck rules --markdown > docs/rules.md`.
+
+### When something does not work
+
+| Symptom | Cause, and what to do |
+|---|---|
+| `mechcheck` is not recognised or not found | pip's script directory is not on PATH. Use `python -m mechcheck ...`, or add the directory pip named during installation. |
+| `No module named mechcheck` | A different Python than the one you installed into. Run `python -m pip install ...` with the same `python` you use to run it. |
+| `N rule(s) did not run` at the end of a report | Each skipped rule has a reason: `--offline`, no compiled `.log`/`.pdf` to read, or disabled by the profile. `mechcheck check . --show-skipped` lists them. |
+| `latexmk not found` from `verify-sty.sh` | Install TeX Live, or add its `bin` directory to PATH. The script tries the standard locations first. |
+| `docs/rules.md is stale` in CI | A rule changed. Run `mechcheck rules --markdown > docs/rules.md` and commit the result. |
+| The `.sty` reports every figure as missing its caption | It could not attach to your document class; the report file says so. Use the command line for those checks. |
+
+---
+
+## Five ways to run it
 
 Overleaf's Git integration is premium and its GitHub sync is **manual** — there
 is no webhook, so nothing can fire on a student's edit. That constraint produced
@@ -73,7 +196,7 @@ main.tex
   i info  POL007:11  'p < .05' is reported with no effect size nearby
 ```
 
-And against a bibliography drafted with LLM help:
+Against a bibliography drafted with LLM help:
 
 ```
 refs.bib
@@ -84,6 +207,23 @@ refs.bib
                      Closest match: "The calibration of trust in an automated system" (0.43)
   x error BIB006:30  `etal` has 'et al.' in the author field
 ```
+
+And against a project that compiles on the author's laptop and nowhere else:
+
+```
+main.tex
+  ! warn  STR010:3   package `subfigure` is obsolete
+  x error STR013:6   `Chapters/Intro` is stored as `chapters/intro.tex`; Overleaf is case-sensitive and will not find it
+  ! warn  STY020:7   'et. al.' should be 'et al.'
+  ! warn  REF010:8   consecutive \cite commands print as separate brackets
+  ! warn  STY016:8   bare URL: https://osf.io/abcde
+  x error FIG012:10  `Figures/Plot.PNG` is stored as `figures/plot.png`; Overleaf is case-sensitive and will not find it
+```
+
+Windows and macOS open `Figures/Plot.PNG` when the file is `figures/plot.png`;
+Linux, and therefore Overleaf and every CI runner, do not. `mechcheck fix`
+rewrites the path, merges the citations, wraps the URL and corrects the
+"et al." — the corrections with exactly one right answer.
 
 The full list is in **[docs/rules.md](docs/rules.md)** — generated from the code,
 so it cannot drift.
@@ -105,7 +245,9 @@ embarrassing is left", not "this is good work".
 ignored, and then the real findings go with it. Where a rule cannot be sure, it
 reports INFO, or nothing. `BIO005` (reference not found anywhere) is a warning,
 never an error, because German-language theses, standards and older workshop
-papers are genuinely missing from the indexes.
+papers are genuinely missing from the indexes. Every rule is tested in both
+directions, and every false positive reported from real use becomes a
+regression test.
 
 **Never accuse.** The reference checks state facts — "this DOI does not
 resolve", "the DOI resolves to a different title" — and leave the conclusion to
@@ -151,9 +293,9 @@ preventive half is a document where the mistake is harder to make.
 **[M-Colley/thesis-template](https://github.com/M-Colley/thesis-template)** is a
 LaTeX thesis wired up for all of this — `mechcheck.sty` already loaded, the
 house style already applied, each section a prompt that turns into a
-compilation error if it survives to the final version. A fresh copy reports
-zero findings from this checker, online checks included, so the first finding a
-student sees is genuinely theirs.
+compilation error if it survives to the final version. The template is kept
+at zero findings from this checker, online checks included, so the first
+finding a student sees is genuinely theirs.
 
 ---
 
@@ -194,6 +336,7 @@ mechcheck check . --stage draft            # report everything, fail nothing
 mechcheck check . --venue assets           # + ASSETS accessibility requirements
 mechcheck check . --offline                # skip the network lookups
 mechcheck check . --build-dir build        # also read the compiled PDF and log
+mechcheck check . --show-skipped           # which rules did not run, and why
 mechcheck explain FIG003                   # what one rule means, and why
 mechcheck rules --category accessibility   # what exists
 mechcheck baseline .                       # adopt mid-project
@@ -214,43 +357,43 @@ mechcheck/            the checker
   texsource.py        the LaTeX parser everything else reads through
   bibtex.py           a tolerant .bib reader
   net.py              Crossref / OpenAlex / DBLP, cached and polite
-extension/          the Chrome extension (engine.js is generated)
+extension/            the Chrome extension (engine.js is generated)
 browser/
   mechcheck.html      the entire checker in one file, no install
   test-engine.mjs     runs that engine in Node against the Python fixtures
   build-extension.mjs regenerates the extension's copy of the engine
 latex/
   mechcheck.sty       the in-Overleaf layer
+  verify-sty.sh       compiles the demo against a real TeX and checks the report
   demo/               a deliberately flawed document CI compiles to prove it works
 .github/workflows/
   mechcheck.yml       tests + compiles the .sty against a real LaTeX install
   overleaf-mirror.yml pulls from Overleaf on a schedule
   supervisor-digest.yml  the Monday table
 scripts/digest.py     the multi-repository digest
-docs/                 setup, rule reference, workflow design
-tests/                194 tests
+docs/                 setup, rule reference, workflow design, the self-test procedure
+tests/                the Python suite, and the fixtures both engines are checked against
 ```
 
 ## Status
 
-Python side: 207 tests passing, and the bibliography verification has been run
+Python side: 453 tests passing, and the bibliography verification has been run
 against the live Crossref, OpenAlex and DBLP APIs.
 
-Browser side: 54 checks passing (`node browser/test-engine.mjs`), and the page
-itself was driven in a real browser — zip reading, filtering, export, and both
-colour themes.
+Browser side: 177 checks passing (`node browser/test-engine.mjs`) against the
+same fixtures as the Python suite — including the assertion that both engines
+produce exactly the same findings on the self-test document.
 
-Extension: 17 checks passing in a real browser via `extension/test-harness.html`
-— panel rendering, project-zip reading, filtering, export, error path. Not yet
-loaded in Chrome against a live Overleaf session; see the end of
-[docs/chrome-extension.md](docs/chrome-extension.md).
+Extension: 22 checks passing in a real browser via `extension/test-harness.html`
+— panel rendering, project-zip reading, filtering, export, error path — and
+loaded against a live Overleaf project once, on 2026-08-28. Re-run
+[docs/testing.md](docs/testing.md) test 1 after updating.
 
-`latex/mechcheck.sty` has **not** been compile-tested yet — there is no TeX
-installation on the machine it was written on. The `latex` job in
-`.github/workflows/mechcheck.yml` exists precisely to close that gap: it installs
-TeX Live, compiles `latex/demo/demo.tex`, and asserts both that the planted
-faults are detected and that the well-formed figure is not. Run it before giving
-the `.sty` to students.
+`latex/mechcheck.sty`: 14 checks passing against TeX Live 2026
+(`bash latex/verify-sty.sh`), the same script CI runs: it compiles the flawed
+demo and asserts both that the planted faults are reported and that the
+well-formed figure is not. It has not yet been verified inside Overleaf
+itself; that is test 3 in [docs/testing.md](docs/testing.md).
 
 ---
 
