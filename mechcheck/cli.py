@@ -56,6 +56,8 @@ def build_parser() -> argparse.ArgumentParser:
                        help="show at most N findings per rule (0 = all; default 10)")
     check.add_argument("--fail-on", choices=["error", "warn", "info", "never"],
                        help="exit non-zero at this severity (default: error)")
+    check.add_argument("--show-skipped", action="store_true",
+                       help="list the rules that did not run in this check, and why")
 
     rules = sub.add_parser("rules", help="list the rules")
     rules.add_argument("--markdown", action="store_true", help="emit docs/rules.md")
@@ -126,6 +128,8 @@ def cmd_check(args) -> int:
         _write(args.output, text)
     else:
         print(text)
+    if getattr(args, "show_skipped", False) and result.skipped:
+        print(reporters.render_skipped(result))
 
     for spec in args.also:
         fmt, _, path = spec.partition("=")

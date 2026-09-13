@@ -19,9 +19,23 @@ fail=0
 ok()   { echo "  ok    $1"; pass=$((pass+1)); }
 bad()  { echo "  FAIL  $1"; fail=$((fail+1)); }
 
+# TeX Live's installer only updates PATH for shells opened afterwards, and on
+# Windows frequently not at all. Before giving up, look where it installs
+# itself -- newest year first.
 if ! command -v latexmk >/dev/null 2>&1; then
-  echo "latexmk not found on PATH."
-  echo "If TeX Live is installed, open a new shell so PATH is picked up."
+  while IFS= read -r d; do
+    if [ -x "$d/latexmk" ] || [ -x "$d/latexmk.exe" ]; then
+      PATH="$d:$PATH"; export PATH
+      echo "Using TeX Live from $d (it was not on PATH)"
+      break
+    fi
+  done < <(ls -d /c/texlive/*/bin/windows /c/texlive/*/bin/win32 \
+                 /usr/local/texlive/*/bin/* /opt/texlive/*/bin/* \
+                 "$HOME"/texlive/*/bin/* /Library/TeX/texbin 2>/dev/null | sort -r)
+fi
+if ! command -v latexmk >/dev/null 2>&1; then
+  echo "latexmk not found on PATH, and no TeX Live installation in the usual places."
+  echo "Install TeX Live (https://tug.org/texlive/) or add its bin directory to PATH, then re-run."
   exit 2
 fi
 

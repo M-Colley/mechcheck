@@ -75,9 +75,21 @@ def render_text(result, color: bool | None = None, show_fix: bool = True) -> str
         summary += f"; {len(result.suppressed)} suppressed"
     out.append(summary)
     if result.skipped:
-        out.append(f"{len(result.skipped)} rule(s) skipped — run `mechcheck rules --skipped` to see why")
+        out.append(f"{len(result.skipped)} rule(s) did not run — add --show-skipped to see which, and why")
     if not result.findings:
         out.append("Nothing mechanical left to fix. The remaining work is the thinking.")
+    return "\n".join(out)
+
+
+def render_skipped(result) -> str:
+    """Which rules did not run in this check, grouped by the reason (``--show-skipped``)."""
+    by_reason = defaultdict(list)
+    for rule_id, why in result.skipped.items():
+        by_reason[why].append(rule_id)
+    out = ["", f"{len(result.skipped)} rule(s) did not run:"]
+    for why, ids in sorted(by_reason.items()):
+        out.append(f"  {why}")
+        out.append("    " + ", ".join(sorted(ids)))
     return "\n".join(out)
 
 
@@ -219,7 +231,7 @@ def render_sarif(result) -> str:
         "runs": [{
             "tool": {"driver": {
                 "name": "mechcheck",
-                "informationUri": "https://github.com/",
+                "informationUri": "https://github.com/M-Colley/mechcheck",
                 "rules": list(rules_used.values()),
             }},
             "results": results,

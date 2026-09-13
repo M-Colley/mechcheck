@@ -70,8 +70,9 @@ jobs:
         with:
           python-version: '3.12'
 
+      # mechcheck is not on PyPI: install it straight from its repository.
       - name: Install mechcheck
-        run: pip install -e . || pip install mechcheck
+        run: pip install "git+https://github.com/M-Colley/mechcheck"
 
       # Bibliographic metadata barely changes, so caching the API responses
       # keeps the reference checks close to free on repeat runs.

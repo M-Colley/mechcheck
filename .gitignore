@@ -17,6 +17,9 @@ mechcheck-report.txt
 digest.md
 extension/test-harness.built.html
 
+# Compiled demo output. CI attaches it as a run artifact; it is not source.
+latex/demo/*.pdf
+
 # Fixtures are inputs, not build output. The real Overleaf log under
 # tests/fixtures/ is the whole point of those tests, and *.log above hid it
 # until a fresh clone in CI failed.
