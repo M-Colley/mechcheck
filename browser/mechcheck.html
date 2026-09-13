@@ -3802,18 +3802,30 @@ function populateVenues() {
 
 function setDropState(loaded, label) {
   const drop = $("#drop");
+  const inputs = [...drop.querySelectorAll('input[type="file"]')];
+
   drop.classList.toggle("slim", loaded);
-  drop.innerHTML = "";
+  drop.replaceChildren();
+
   if (!loaded) {
     drop.append(
       el("h2", { text: "Drop your Overleaf project here" }),
-      el("p", { html: 'The <b>.zip</b> from Overleaf’s <span class="mono">Menu → Download → Source</span>, or a folder, or just the <span class="mono">.tex</span> and <span class="mono">.bib</span> files.' }),
-      el("p", { class: "hint", html: 'Add the <span class="mono">.log</span> and <span class="mono">.pdf</span> too and the compile, page-count and PDF checks switch on as well.' }));
+      el("p", {
+        html: 'The <b>.zip</b> from Overleaf’s <span class="mono">Menu → Download → Source</span>, or a folder, or just the <span class="mono">.tex</span> and <span class="mono">.bib</span> files.'
+      }),
+      el("p", {
+        class: "hint",
+        html: 'Add the <span class="mono">.log</span> and <span class="mono">.pdf</span> too and the compile, page-count and PDF checks switch on as well.'
+      })
+    );
   } else {
     drop.append(
       el("span", { class: "loaded mono", text: label }),
-      el("span", { class: "hint", text: "Drop another project to replace it" }));
+      el("span", { class: "hint", text: "Drop another project to replace it" })
+    );
   }
+
+  drop.append(...inputs);
 }
 
 function severityName(sev) { return SEV_NAME[sev] || "info"; }
@@ -4138,15 +4150,29 @@ function wireUp() {
     e.preventDefault(); drop.classList.remove("over");
   }));
   drop.addEventListener("drop", async e => {
-    const items = e.dataTransfer.items;
-    const files = [];
-    if (items && items.length && items[0].webkitGetAsEntry) {
-      const entries = [...items].map(i => i.webkitGetAsEntry()).filter(Boolean);
-      for (const entry of entries) await walkEntry(entry, "", files);
-    } else {
-      files.push(...e.dataTransfer.files);
+    try {
+      const files = [];
+
+      for (const item of e.dataTransfer.items || []) {
+        const entry = item.webkitGetAsEntry?.();
+
+        if (entry?.isDirectory) {
+          await walkEntry(entry, "", files);
+        } else {
+          const file = item.getAsFile();
+          if (file) files.push(file);
+        }
+      }
+
+      if (!files.length) {
+        files.push(...e.dataTransfer.files);
+      }
+
+      await handleFiles(files);
+    } catch (err) {
+      console.error("Could not read dropped files:", err);
+      showNotice(`<b>Could not read dropped files.</b> ${err.message}`, "warnish");
     }
-    handleFiles(files);
   });
 
   $("#filepick").addEventListener("change", e => handleFiles(e.target.files));
