@@ -17,8 +17,8 @@ jobs:
       matrix:
         python: ['3.12', '3.14']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
       - run: pip install -e ".[dev]"
@@ -42,8 +42,8 @@ jobs:
   browser:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
 
@@ -61,7 +61,7 @@ jobs:
   latex:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # apt rather than a setup action: this repository cannot pull third-party
       # actions ("Repository access blocked"), and the demo deliberately needs
@@ -76,7 +76,7 @@ jobs:
       - name: Verify mechcheck.sty against a real LaTeX
         run: bash latex/verify-sty.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: latex-output
