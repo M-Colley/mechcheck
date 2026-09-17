@@ -192,7 +192,7 @@ def test_disabled_rules_do_not_run(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# reference style: prefer utoref and \citet
+# reference style: prefer \autoref and \citet
 # --------------------------------------------------------------------------- #
 
 def test_prefixed_ref_suggests_autoref(tmp_path):
