@@ -6,12 +6,12 @@
 Mechanical checks for LaTeX theses and papers: the boring layer of review,
 automated, so supervision time goes to the argument instead of the formatting.
 
-144 rules across figures, cross-references, abbreviations, prose mechanics,
+149 rules across figures, cross-references, abbreviations, prose mechanics,
 bibliography hygiene, **bibliography verification against Crossref/OpenAlex/DBLP**,
-compile-log analysis, accessibility, anonymity, reporting conventions, the
-things that compile on your laptop but not on Overleaf, and per-venue
-submission requirements for CHI, ASSETS, AutomotiveUI, IMWUT and
-Transportation Research Part F.
+compile-log analysis, accessibility, anonymity, reporting conventions,
+**one name per concept**, the things that compile on your laptop but not on
+Overleaf, and per-venue submission requirements for CHI, ASSETS, AutomotiveUI,
+IMWUT and Transportation Research Part F.
 
 **Nothing to install.** Save
 [`browser/mechcheck.html`](browser/mechcheck.html), double-click it, and drop
@@ -71,7 +71,7 @@ Confirm it landed:
 mechcheck rules | tail -1
 ```
 
-prints `144 rules`. Then run it on the self-test document, whose answer is
+prints `149 rules`. Then run it on the self-test document, whose answer is
 known in advance:
 
 ```bash
@@ -230,6 +230,53 @@ so it cannot drift.
 
 ---
 
+## One name per concept
+
+A reader who meets "self-driving car" on page 12 and "automated vehicle" on
+page 13 has to decide whether they are the same thing. Usually they are, and
+the decision costs attention that belonged to the argument.
+
+**What the document does is a fact,** so four rules report it and name the
+majority without prescribing anything: two names for one concept (`TRM001`),
+one term spelled two ways (`TRM003`, "eye-tracking" against "eye tracking"),
+one term capitalised inconsistently (`TRM004`), and an abbreviation whose
+expansion keeps being written out anyway (`TRM005`). All four are notes, and
+all four keep quiet wherever English itself explains the difference — "a
+real-time system" beside "runs in real time" is correct twice over.
+
+**Which name to use is a judgement,** so that one lives in the project, not in
+this tool. Write it down once:
+
+```yaml
+# mechcheck.yaml
+terminology:
+  - prefer: automated vehicle
+    over: [self-driving car, autonomous vehicle, driverless car]
+  - variants: [participant, test person, test subject]
+```
+
+`prefer`/`over` is a house rule: `TRM002` reports every use of the other
+names, and `mechcheck fix .` rewrites them — carrying the capital, the plural
+and the article, so "A self-driving car" becomes "An automated vehicle".
+`variants` only asks for consistency and prescribes nothing.
+
+You do not have to invent the list. Run it on a finished thesis:
+
+```bash
+mechcheck terms .
+```
+
+It prints what that document calls things, and ends with the `terminology:`
+block ready to paste into your group's configuration.
+
+**Where this applies.** `mechcheck.yaml` is now read by every layer — the
+command line, the standalone page and the Chrome extension all honour the same
+file, so a student who drops a project on the page gets the same answer CI
+does. Before, the page ignored it, and a rule a supervisor had switched off
+kept firing for the student.
+
+---
+
 ## Design commitments
 
 These are the properties that decide whether a mandatory checker is a help or a
@@ -337,6 +384,7 @@ mechcheck check . --venue assets           # + ASSETS accessibility requirements
 mechcheck check . --offline                # skip the network lookups
 mechcheck check . --build-dir build        # also read the compiled PDF and log
 mechcheck check . --show-skipped           # which rules did not run, and why
+mechcheck terms .                          # what this document calls things
 mechcheck explain FIG003                   # what one rule means, and why
 mechcheck rules --category accessibility   # what exists
 mechcheck baseline .                       # adopt mid-project
@@ -377,12 +425,13 @@ tests/                the Python suite, and the fixtures both engines are checke
 
 ## Status
 
-Python side: 453 tests passing, and the bibliography verification has been run
+Python side: 629 tests passing, and the bibliography verification has been run
 against the live Crossref, OpenAlex and DBLP APIs.
 
-Browser side: 177 checks passing (`node browser/test-engine.mjs`) against the
+Browser side: 226 checks passing (`node browser/test-engine.mjs`) against the
 same fixtures as the Python suite — including the assertion that both engines
-produce exactly the same findings on the self-test document.
+produce exactly the same findings on the self-test document, and that both
+readers of `mechcheck.yaml` agree on this repository's own configuration.
 
 Extension: 22 checks passing in a real browser via `extension/test-harness.html`
 — panel rendering, project-zip reading, filtering, export, error path — and

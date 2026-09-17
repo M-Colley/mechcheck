@@ -1,6 +1,6 @@
 # The browser version — no Python, no GitHub, no server
 
-`browser/mechcheck.html` is the whole checker in one file: all 144 rules, the
+`browser/mechcheck.html` is the whole checker in one file: all 149 rules, the
 five venue packs, and the reference verification. It runs in the browser, on
 the machine in front of you. Nothing is uploaded, and there is nothing to
 install.
@@ -46,6 +46,15 @@ bibliography is instant and costs the APIs nothing.
 
 The settings are remembered in the browser, so each student sets them once.
 
+**The project's own `mechcheck.yaml` is read too.** If the zip you drop in
+contains one, the page applies it: rules it disables stay quiet, severities it
+changes apply, per-rule options and the project's own vocabulary
+(`terminology:`) are used, and its `profile`, `stage` and `venue` are adopted
+into the three controls above — which the page says in a line under them, and
+which you can still change afterwards. This is the same file the command line
+and CI read, so a student checking here and a supervisor checking in CI now
+see the same findings.
+
 Findings can be filtered by severity, by category, or by a text search, and
 exported with **Copy as Markdown** / **Download report** — which is what to
 paste into an email or a supervision issue.
@@ -64,6 +73,9 @@ file in Overleaf, select all, paste.
 | `STY003` a repeated word | |
 | `STY005` a space before punctuation | |
 | `STY007` `10-20` becomes `10--20` | |
+| `STY016` a bare URL becomes `\url{...}` | |
+| `STY020` `et. al.` becomes `et al.` | |
+| `TRM002` the project's own term, from `terminology:` | `TRM001` which of two names to prefer — that is your choice to make |
 
 A page cannot write into an Overleaf project, which is why it gives you the
 file rather than editing it. Two things make that safe to paste:
@@ -110,7 +122,7 @@ fixtures as the Python test-suite and asserts the same rules fire.
 node browser/test-engine.mjs
 ```
 
-177 checks, no dependencies beyond Node. If the two implementations ever
+226 checks, no dependencies beyond Node. If the two implementations ever
 disagree, that suite is what tells you.
 
 ## What it cannot do

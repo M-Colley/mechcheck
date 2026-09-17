@@ -93,6 +93,13 @@ def build_parser() -> argparse.ArgumentParser:
     base.add_argument("--offline", action="store_true")
     base.add_argument("--out", default=".mechcheck-baseline.json")
 
+    terms = sub.add_parser("terms", help="the concepts this document has more than one name for")
+    terms.add_argument("path", nargs="?", default=".")
+    terms.add_argument("--config")
+    terms.add_argument("--main")
+    terms.add_argument("--profile", choices=sorted(PROFILES))
+    terms.add_argument("--venue")
+
     sub.add_parser("venues", help="list the installed venue packs")
     return p
 
@@ -242,6 +249,21 @@ def cmd_fix(args) -> int:
     return EXIT_OK if report.ok else EXIT_FINDINGS
 
 
+def cmd_terms(args) -> int:
+    """Survey the vocabulary, so a group can write its own from a real thesis."""
+    from mechcheck.rules.terminology import render_survey
+
+    root = os.path.abspath(args.path)
+    if not os.path.isdir(root):
+        print(f"mechcheck: not a directory: {root}", file=sys.stderr)
+        return EXIT_USAGE
+    config = Config.load(root, explicit=args.config, overrides=_overrides(args))
+    # One rule is enough to build the project; the survey does its own reading.
+    result = run(root, config, only=["TRM001"], offline=True, baseline=None, main=args.main)
+    print(render_survey(result))
+    return EXIT_OK
+
+
 def cmd_baseline(args) -> int:
     root = os.path.abspath(args.path)
     config = Config.load(root, explicit=args.config, overrides=_overrides(args))
@@ -276,6 +298,7 @@ def main(argv=None) -> int:
         "init": cmd_init,
         "fix": cmd_fix,
         "baseline": cmd_baseline,
+        "terms": cmd_terms,
         "venues": cmd_venues,
     }
     try:

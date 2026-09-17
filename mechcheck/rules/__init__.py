@@ -6,6 +6,7 @@ Rule id prefixes, one per module, so ids never collide:
     FIG  floats.py         figures, tables, captions
     REF  crossref.py       labels, references, citations
     ABB  abbrev.py         abbreviations and acronyms
+    TRM  terminology.py    one name per concept, one spelling per name
     STY  style.py          source-level writing mechanics
     BIB  bib.py            bibliography hygiene (offline)
     BIO  bibonline.py      bibliography verification (Crossref/OpenAlex/DBLP)
@@ -32,6 +33,7 @@ from mechcheck.rules import (  # noqa: F401
     policy,
     structure,
     style,
+    terminology,
     thesis,
     venue,
 )

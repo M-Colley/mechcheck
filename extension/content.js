@@ -21,6 +21,7 @@
   let host = null, root = null, panel = null;
   let lastResult = null, running = false;
   let lastOutputAttempts = [];
+  let lastAdopted = [], lastConfigPath = null;
 
   const DEFAULTS = { profile: "thesis", stage: "submission", venue: "", verify: false, autorun: false };
 
@@ -121,6 +122,28 @@
     }
   };
 
+  /* A project that carries a mechcheck.yaml has already decided its profile,
+     stage and venue. Adopt them rather than making the student match three
+     controls to a file they may not know is there; the rest of the file
+     (disabled rules, ignore lists, the project's own vocabulary) the engine
+     reads for itself. */
+  function adoptProjectConfig(files, settings) {
+    lastAdopted = [];
+    const project = M.readProjectConfig(files);
+    lastConfigPath = project ? project.path : null;
+    if (!project || !root) return;
+    for (const key of ["profile", "stage", "venue"]) {
+      const value = project.data[key];
+      if (value === undefined || value === null) continue;
+      const node = root.querySelector("." + key);
+      const wanted = String(value);
+      if (!node || ![...node.options].some(o => o.value === wanted) || settings[key] === wanted) continue;
+      node.value = wanted;
+      settings[key] = wanted;
+      lastAdopted.push(`${key} = ${wanted}`);
+    }
+  }
+
   async function run() {
     if (running) return;
     running = true;
@@ -130,6 +153,7 @@
       const files = await fetchProjectZip();
       setStatus("Reading the compiled output…");
       await fetchOutputs(files);
+      adoptProjectConfig(files, settings);
       setStatus(`Checking ${files.size} file${files.size === 1 ? "" : "s"}…`);
 
       const result = await M.runChecks(files, {
@@ -362,13 +386,17 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
       ("Tried:\n" + (lastOutputAttempts.join("\n") || "nothing — the editor had not "
        + "fetched the output yet in this page load. Recompile, then check again."));
 
+    const config = s.configPath
+      ? `Using this project's ${s.configPath}`
+        + (lastAdopted.length ? `, which set ${lastAdopted.join(" · ")}. ` : ". ")
+      : "";
     if (s.mainGuessed)
-      setNote(`Guessed ${s.main} as the main file — no file had both \\documentclass and \\begin{document}.`, true);
+      setNote(config + `Guessed ${s.main} as the main file — no file had both \\documentclass and \\begin{document}.`, true);
     else if (settings.verify && s.netBlocked)
-      setNote("Reference lookups could not reach the internet. Everything else ran.", true);
+      setNote(config + "Reference lookups could not reach the internet. Everything else ran.", true);
     else if (!settings.verify)
-      setNote("Reference verification is off. Turn on “verify refs” to check that your citations exist.");
-    else setNote("");
+      setNote(config + "Reference verification is off. Turn on “verify refs” to check that your citations exist.");
+    else setNote(config);
 
     const body = q(".body");
     body.innerHTML = "";

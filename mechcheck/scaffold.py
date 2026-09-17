@@ -38,6 +38,16 @@ enable: []
 
 severity: {{}}
 
+# One name per concept. mechcheck reports a document that uses two of them
+# (TRM001); naming the one this project uses makes it a rule, and one that
+# `mechcheck fix .` applies for you. `mechcheck terms .` prints what your
+# document actually calls things, ready to paste in here.
+#
+# terminology:
+#   - prefer: automated vehicle
+#     over: [self-driving car, autonomous vehicle, driverless car]
+#   - variants: [participant, test person]
+
 rules:
   ABB004:
     # Abbreviations that need no expansion in your field.

@@ -940,6 +940,172 @@ const VENUES = {
   },
 };
 
+/* ---- the project's own mechcheck.yaml -----------------------------------
+   The same file the command line reads, parsed by the same restricted
+   subset: two-space indent, `key: value`, `- item` lists, flow lists and
+   the empty flow map. A project that disables a rule, silences an acronym
+   or names its own vocabulary gets the same answer here as it does in CI --
+   which was not true before, and a student who is told one thing by the
+   page and another by CI stops believing both. */
+const CONFIG_NAMES = ["mechcheck.yaml", "mechcheck.yml", ".mechcheck.yaml", ".mechcheck.yml"];
+
+function yamlSplitFlow(inner) {
+  const out = [];
+  let buf = "", quote = null;
+  for (const ch of inner) {
+    if (quote) { buf += ch; if (ch === quote) quote = null; continue; }
+    if (ch === "'" || ch === '"') { quote = ch; buf += ch; continue; }
+    if (ch === ",") { out.push(buf); buf = ""; continue; }
+    buf += ch;
+  }
+  if (buf) out.push(buf);
+  return out.map(p => p.trim()).filter(p => p !== "");
+}
+
+function yamlScalar(raw) {
+  const s = String(raw).trim();
+  if (!s) return "";
+  if (s.length >= 2 && s[0] === s[s.length - 1] && (s[0] === "'" || s[0] === '"')) return s.slice(1, -1);
+  if (s.startsWith("[") && s.endsWith("]")) {
+    const inner = s.slice(1, -1).trim();
+    return inner ? yamlSplitFlow(inner).map(yamlScalar) : [];
+  }
+  if (s.startsWith("{") && s.endsWith("}")) {
+    const inner = s.slice(1, -1).trim();
+    const out = {};
+    for (const part of inner ? yamlSplitFlow(inner) : []) {
+      const at = part.indexOf(":");
+      if (at !== -1) out[part.slice(0, at).trim().replace(/^['"]|['"]$/g, "")] = yamlScalar(part.slice(at + 1));
+    }
+    return out;
+  }
+  const low = s.toLowerCase();
+  if (low === "true" || low === "yes" || low === "on") return true;
+  if (low === "false" || low === "no" || low === "off") return false;
+  if (low === "null" || low === "~" || low === "none") return null;
+  if (/^[+-]?\d+$/.test(s)) return parseInt(s, 10);
+  if (/^[+-]?\d+\.\d+$/.test(s)) return parseFloat(s);
+  return s;
+}
+
+function yamlStripComment(line) {
+  let out = "", quote = null;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (quote) { out += ch; if (ch === quote) quote = null; continue; }
+    if (ch === "'" || ch === '"') { quote = ch; out += ch; continue; }
+    if (ch === "#" && (i === 0 || line[i - 1] === " " || line[i - 1] === "\t")) break;
+    out += ch;
+  }
+  return out.replace(/\s+$/, "");
+}
+
+/** Split `key: value` outside quotes. The colon must end the line or be followed by a space. */
+function yamlSplitKey(body) {
+  let quote = null;
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (quote) { if (ch === quote) quote = null; continue; }
+    if (ch === "'" || ch === '"') { quote = ch; continue; }
+    if (ch === ":" && (i + 1 === body.length || body[i + 1] === " " || body[i + 1] === "\t"))
+      return [body.slice(0, i).trim().replace(/^['"]|['"]$/g, ""), body.slice(i + 1).trim()];
+  }
+  return null;
+}
+
+function yamlRows(text) {
+  const rows = [];
+  for (const raw of text.replace(/\r\n/g, "\n").split("\n")) {
+    const line = yamlStripComment(raw.replace(/\t/g, "  "));
+    if (!line.trim()) continue;
+    rows.push([line.length - line.replace(/^ +/, "").length, line.trim()]);
+  }
+  return rows;
+}
+
+function yamlBlock(rows, i, indent) {
+  if (i >= rows.length) return [{}, i];
+  return rows[i][1].startsWith("- ") ? yamlSeq(rows, i, indent) : yamlMap(rows, i, indent);
+}
+
+function yamlMap(rows, i, indent) {
+  const out = {};
+  while (i < rows.length) {
+    const [ind, body] = rows[i];
+    if (ind < indent) break;
+    if (ind > indent) { i++; continue; }         // stray over-indent: skip, never fail
+    const kv = yamlSplitKey(body);
+    if (!kv) { i++; continue; }
+    const [key, value] = kv;
+    if (value === "") {
+      const child = i + 1;
+      if (child < rows.length && rows[child][0] > ind) {
+        const [parsed, next] = yamlBlock(rows, child, rows[child][0]);
+        out[key] = parsed; i = next;
+      } else { out[key] = {}; i++; }
+    } else { out[key] = yamlScalar(value); i++; }
+  }
+  return [out, i];
+}
+
+function yamlSeq(rows, i, indent) {
+  const out = [];
+  while (i < rows.length) {
+    const [ind, body] = rows[i];
+    if (ind < indent || !body.startsWith("- ")) break;
+    if (ind > indent) { i++; continue; }
+    const item = body.slice(2).trim();
+    const kv = /^['"[]/.test(item) ? null : yamlSplitKey(item);
+    if (kv) {
+      const entry = {};
+      entry[kv[0]] = kv[1] ? yamlScalar(kv[1]) : {};
+      i++;
+      // further keys of the same mapping item, indented past the dash
+      while (i < rows.length && rows[i][0] > indent && !rows[i][1].startsWith("- ")) {
+        const sub = yamlSplitKey(rows[i][1]);
+        if (sub) entry[sub[0]] = yamlScalar(sub[1]);
+        i++;
+      }
+      out.push(entry);
+    } else { out.push(yamlScalar(item)); i++; }
+  }
+  return [out, i];
+}
+
+/** Parse the subset. Never throws on malformed input; bad lines are skipped. */
+function parseYamlSubset(text) {
+  const rows = yamlRows(text);
+  if (!rows.length) return {};
+  const [value] = yamlBlock(rows, 0, rows[0][0]);
+  return (value && typeof value === "object" && !Array.isArray(value)) ? value : {};
+}
+
+/** The project's configuration file among the dropped files, if it has one. */
+function readProjectConfig(files) {
+  const candidates = [];
+  for (const [path] of files)
+    if (CONFIG_NAMES.some(name => path === name || path.endsWith("/" + name))) candidates.push(path);
+  if (!candidates.length) return null;
+  // The one nearest the root: a project may carry another in a subdirectory.
+  candidates.sort((a, b) => (a.match(/\//g) || []).length - (b.match(/\//g) || []).length
+                            || a.length - b.length);
+  const path = candidates[0];
+  try {
+    return { path, data: parseYamlSubset(decodeText(files.get(path))) };
+  } catch (err) {
+    return { path, data: {}, error: String(err && err.message || err) };
+  }
+}
+
+/** A key that must be a list, however the file spelled it. */
+function asConfigList(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string" && value.trim() && value.trim() !== "[]") return [value.trim()];
+  return [];
+}
+
+const isPlainObject = v => !!v && typeof v === "object" && !Array.isArray(v);
+
 function globMatch(value, pattern) {
   if (value === pattern) return true;
   const re = new RegExp("^" + pattern.split("*").map(escapeRe).join(".*") + "$");
@@ -947,20 +1113,41 @@ function globMatch(value, pattern) {
 }
 
 class Config {
-  constructor({ profile = "thesis", stage = "submission", venue = "", language = "en" } = {}) {
+  /** ``options`` is what the person in front of the page chose; ``file`` is
+      the project's mechcheck.yaml. An explicit choice wins over the file, so
+      the page's own controls always mean what they say; everything the
+      controls do not cover comes from the file. */
+  constructor(options = {}, file = {}) {
+    const pick = (key, fallback) =>
+      (Object.prototype.hasOwnProperty.call(options, key) && options[key] !== undefined)
+        ? options[key] : (file[key] !== undefined && file[key] !== null ? file[key] : fallback);
+    const profile = pick("profile", "thesis");
     const prof = PROFILES[profile] || {};
+    this.file = isPlainObject(file) ? file : {};
     this.profile = profile;
-    this.stage = prof.stage || stage;
-    this.venueKey = venue;
-    this.venue = venue ? (VENUES[venue] || {}) : {};
-    this.language = language;
+    this.stage = prof.stage || pick("stage", "submission");
+    this.venueKey = pick("venue", "") || "";
+    this.venue = this.venueKey ? (VENUES[this.venueKey] || {}) : {};
+    this.language = pick("language", "en");
     this.anonymous = !!prof.anonymous;
-    this.disable = prof.disable || [];
+    this.disable = (prof.disable || []).concat(asConfigList(this.file.disable));
+    this.enable = asConfigList(this.file.enable);
+    this.severityOverrides = isPlainObject(this.file.severity) ? this.file.severity : {};
+    this.ruleOptions = isPlainObject(this.file.rules) ? this.file.rules : {};
+    this.terminology = asConfigList(this.file.terminology);
   }
-  enabled(id) { return !this.disable.some(p => globMatch(id, p)); }
+  enabled(id) {
+    if (this.enable.some(p => globMatch(id, p))) return true;
+    return !this.disable.some(p => globMatch(id, p));
+  }
   severityFor(id) {
     const rule = RULES_BY_ID[id];
     let base = rule ? rule.sev : SEV.warn;
+    // An exact rule id beats a pattern, whatever order the file lists them in.
+    if (this.severityOverrides[id] !== undefined)
+      return SEV[String(this.severityOverrides[id]).toLowerCase()] || base;
+    for (const [pattern, value] of Object.entries(this.severityOverrides))
+      if (globMatch(id, String(pattern))) return SEV[String(value).toLowerCase()] || base;
     const vsev = (this.venue.severity || {})[id];
     if (vsev) base = SEV[vsev] || base;
     const stage = STAGES[this.stage] || STAGES.submission;
@@ -969,6 +1156,8 @@ class Config {
     return base;
   }
   option(id, key, fallback) {
+    const mine = (this.ruleOptions[id] || {})[key];
+    if (mine !== undefined) return mine;
     const v = ((this.venue.rules || {})[id] || {})[key];
     return v === undefined ? fallback : v;
   }
@@ -3002,13 +3191,17 @@ function conditionalSpans(text) {
 const NOT_SENTENCE_END = ["et al.", "e.g.", "i.e.", "cf.", "vs.", "etc.", "fig.", "figs.", "eq.", "eqs.",
   "sec.", "no.", "approx.", "resp.", "ca.", "p.", "pp.", "ed.", "eds.", "vol.", "dr.", "prof.", "mr.",
   "ms.", "st.", "jr."];
+/* The abbreviation has to be a word of its own. Matching the bare ending
+   instead made every past-tense verb an abbreviation -- "arrived." ends with
+   "ed." -- so no sentence that ended in one was seen to end at all. */
+const ABBREVIATION_END = new RegExp("(?<![\\w])(?:" + NOT_SENTENCE_END.map(escapeRe).join("|") + ")$");
 function sentenceStartsAt(text, pos) {
   let i = pos - 1, newlines = 0;
   while (i >= 0 && " \t\r\n".includes(text[i])) { if (text[i] === "\n") newlines++; i--; }
   if (i < 0 || newlines >= 2) return true;
   if (!".!?".includes(text[i])) return false;
-  const head = text.slice(Math.max(0, i - 12), i + 1).toLowerCase();
-  if (NOT_SENTENCE_END.some(a => head.endsWith(a))) return false;
+  const head = text.slice(Math.max(0, i - 24), i + 1).toLowerCase();
+  if (ABBREVIATION_END.test(head)) return false;
   return !/(?<![\w])[a-z]\.$/.test(head);
 }
 
@@ -3391,6 +3584,335 @@ rule({ id:"POL010", title:"Study without a stated number of participants", cat:"
       m ? { at: m.index } : { file: ctx.project.main });
   }});
 
+/* ---- TRM: one name per concept, one spelling per name -------------------
+   What the document does -- two names, two spellings, two capitalisations --
+   is a fact, so TRM001/003/004/005 report it and name the majority without
+   prescribing. Which name to use is a judgement, so TRM002 fires only where
+   a project has written that judgement into mechcheck.yaml, and only there
+   is there an automatic correction. Mirrors mechcheck/rules/terminology.py. */
+
+/* Deliberately short: a synonym list is a claim about a field, and the useful
+   ones are local to a group. A project's own `terminology:` block takes any
+   variant it names out of these. */
+const DEFAULT_TERM_GROUPS = [
+  // The popular-press names for one vehicle, plus the two the HCI literature
+  // argues about. Authors who separate "automated" from "autonomous" on
+  // purpose will want their own group -- which is why this is INFO.
+  ["automated vehicle", "autonomous vehicle", "self-driving car", "self-driving vehicle",
+   "driverless car", "driverless vehicle", "autonomous car", "automated car", "robot car"],
+  // "subject" alone is left out: "the subject of this thesis" is not a person.
+  ["participant", "test person", "test subject", "study participant"],
+  ["mobile phone", "cell phone", "cellular phone"],
+];
+
+/* What may separate two words of one phrase: a hyphen, a space or two, or a
+   line wrap. Not "any whitespace": the prose view masks markup to spaces, so
+   an unbounded gap let "study" in one caption and "Participant" in the next
+   one six lines later match as the phrase "study participant". */
+const TERM_GAP = "(?:-|[ \\t]{1,2}|[ \\t]*\\n[ \\t]*)";
+const normaliseTerm = s => String(s).trim().toLowerCase().replace(/[-\s]+/g, " ");
+const termPattern = v =>
+  v.trim().split(/[-\s]+/).filter(Boolean).map(escapeRe).join(TERM_GAP) + "(?:e?s)?";
+
+function termRegex(variants) {
+  // Longest first: alternation is greedy in order, not by length.
+  const body = [...variants].sort((a, b) => b.length - a.length).map(termPattern).join("|");
+  return new RegExp("(?<![\\w-])(?:" + body + ")(?![\\w-])", "gi");
+}
+
+function configuredTermGroups(ctx) {
+  const out = [];
+  for (const entry of ctx.config.terminology || []) {
+    let variants = [], prefer = null;
+    if (Array.isArray(entry)) variants = entry.map(String);
+    else if (entry && typeof entry === "object") {
+      prefer = entry.prefer ? String(entry.prefer).trim() : null;
+      let over = entry.over || entry.variants || [];
+      if (typeof over === "string") over = [over];
+      variants = (Array.isArray(over) ? over : []).map(v => String(v).trim()).filter(Boolean);
+      if (prefer && !variants.includes(prefer)) variants = [prefer].concat(variants);
+    }
+    variants = variants.filter(Boolean);
+    if (variants.length >= 2) out.push({ variants, prefer });
+  }
+  return out;
+}
+
+function termGroups(ctx) {
+  if (ctx.cache.termGroups) return ctx.cache.termGroups;
+  const configured = configuredTermGroups(ctx);
+  const claimed = new Set(configured.flatMap(g => g.variants.map(normaliseTerm)));
+  const out = configured.slice();
+  if (ctx.config.option("TRM001", "use_defaults", true)) {
+    for (const variants of DEFAULT_TERM_GROUPS) {
+      const kept = variants.filter(v => !claimed.has(normaliseTerm(v)));
+      if (kept.length >= 2) out.push({ variants: kept, prefer: null });
+    }
+  }
+  ctx.cache.termGroups = out;
+  return out;
+}
+
+function termOccurrences(ctx) {
+  if (ctx.cache.termHits) return ctx.cache.termHits;
+  const prose = ctx.project.prose;
+  const out = [];
+  for (const group of termGroups(ctx)) {
+    const canonical = new Map(group.variants.map(v => [normaliseTerm(v), v]));
+    const hits = new Map();
+    for (const m of prose.matchAll(termRegex(group.variants))) {
+      const key = normaliseTerm(m[0]);
+      // The match may be a plural: fall back to the singular spelling.
+      const name = canonical.get(key) || canonical.get(key.replace(/e?s$/, ""));
+      if (!name) continue;
+      if (!hits.has(name)) hits.set(name, []);
+      hits.get(name).push({ start: m.index, end: m.index + m[0].length, text: m[0] });
+    }
+    out.push({ ...group, hits });
+  }
+  ctx.cache.termHits = out;
+  return out;
+}
+
+/** The most frequent variant, ties broken by which appears first. */
+function termMajority(hits) {
+  let best = null;
+  for (const [name, spots] of hits) {
+    if (!best) { best = name; continue; }
+    const mine = hits.get(best);
+    if (spots.length > mine.length || (spots.length === mine.length && spots[0].start < mine[0].start))
+      best = name;
+  }
+  return best;
+}
+
+rule({ id:"TRM001", title:"Two names for one concept", cat:"terminology", sev:SEV.info,
+  why:"A reader who meets two names for one thing has to work out whether they are the same thing, and an examiner who decides they are not has found an inconsistency you did not intend.",
+  fix:"Pick one name and use it throughout. Writing it into mechcheck.yaml under `terminology: prefer/over` turns this into a checked -- and automatically corrected -- house rule.",
+  run(ctx){ for (const group of termOccurrences(ctx)) {
+    // A group with a preferred term is TRM002's: it can say which is wrong.
+    if (group.prefer || group.hits.size < 2) continue;
+    const best = termMajority(group.hits);
+    for (const name of [...group.hits.keys()].sort()) {
+      if (name === best) continue;
+      const found = group.hits.get(name);
+      for (const hit of found)
+        ctx.add("TRM001", `'${hit.text}' and '${best}' are two names for one concept `
+                + `(${found.length}x and ${group.hits.get(best).length}x)`,
+          { at: hit.start, context: ctx.project.excerpt(hit.start) });
+    }
+  }}});
+
+/* Vowels pronounced as consonants, and consonants not pronounced at all:
+   the article follows the sound, and these are where sound and spelling part. */
+const SOUNDS_CONSONANT = /^(?:uni|use|usu|usa|uti|ubi|eu|one|once|ewe)/i;
+const SOUNDS_VOWEL = /^(?:hour|honest|hono|heir)/i;
+const articleFor = phrase =>
+  SOUNDS_VOWEL.test(phrase) ? "an"
+    : SOUNDS_CONSONANT.test(phrase) ? "a"
+    : ("aeiou".includes((phrase[0] || "").toLowerCase()) ? "an" : "a");
+
+function recaseTerm(matched, replacement) {
+  if (matched === matched.toUpperCase() && matched.length > 3) return null;   // shouted: not ours to guess
+  return /^[A-Z]/.test(matched) ? replacement[0].toUpperCase() + replacement.slice(1) : replacement;
+}
+
+function pluraliseTerm(matched, variant, replacement) {
+  const m = normaliseTerm(matched);
+  return (m !== normaliseTerm(variant) && m.endsWith("s")) ? replacement + "s" : replacement;
+}
+
+/* Replacing "a self-driving car" with "automated vehicle" would leave "a
+   automated vehicle": the article agrees with the word that follows it, and
+   that word is about to change. Only a bare article separated by ordinary
+   spaces is taken in -- `a \emph{self-driving car}` is left alone rather
+   than rewritten blind. */
+function carryTheArticle(text, start, replacement) {
+  const before = /(?<![\w-])(a|an|A|An)([ \t]+)$/.exec(text.slice(Math.max(0, start - 24), start));
+  if (!before) return { start, replacement };
+  let wanted = articleFor(replacement);
+  if (wanted.toLowerCase() === before[1].toLowerCase()) return { start, replacement };
+  if (/^[A-Z]/.test(before[1])) wanted = wanted[0].toUpperCase() + wanted.slice(1);
+  return { start: start - before[0].length, replacement: wanted + before[2] + replacement };
+}
+
+rule({ id:"TRM002", title:"Term is not the one this project uses", cat:"terminology", sev:SEV.warn,
+  why:"Once a group has settled on a word, a document that uses a different one costs every later reader the same moment of doubt -- and unlike a house style nobody wrote down, this one is written down.",
+  fix:"Use the term named in mechcheck.yaml. `mechcheck fix .` makes the substitution for you.",
+  run(ctx){ for (const group of termOccurrences(ctx)) {
+    if (!group.prefer) continue;
+    for (const name of [...group.hits.keys()].sort()) {
+      if (normaliseTerm(name) === normaliseTerm(group.prefer)) continue;
+      for (const hit of group.hits.get(name)) {
+        const replacement = recaseTerm(hit.text, pluraliseTerm(hit.text, name, group.prefer));
+        let edit = null;
+        if (replacement) {
+          const widened = carryTheArticle(ctx.project.text, hit.start, replacement);
+          edit = ctx.editSpan(widened.start, hit.end, widened.replacement, `${hit.text} -> ${replacement}`);
+        }
+        ctx.add("TRM002", `'${hit.text}' -- this project's term is '${group.prefer}'`,
+          { at: hit.start, context: ctx.project.excerpt(hit.start),
+            fix: `Write '${replacement || group.prefer}'.`, edit });
+      }
+    }
+  }}});
+
+const TERM_WORD = /(?<![\w-])([A-Za-z]{2,})(?![\w-])/g;
+const TERM_HYPHENATED = /(?<![\w-])([A-Za-z]{3,})-([A-Za-z]{3,})(?![\w-])/g;
+
+/* English hyphenates a compound that modifies the following noun and leaves
+   it open otherwise, so "a real-time system" and "runs in real time" are both
+   correct. Only occurrences in the same position can be compared. */
+const attributive = (prose, end) => /^[A-Za-z]{2,}/.test(prose.slice(end, end + 40).replace(/^[ \n]+/, ""));
+
+rule({ id:"TRM003", title:"One term spelled two ways", cat:"terminology", sev:SEV.info,
+  why:"'eye-tracking' and 'eye tracking' in one document is the commonest inconsistency in a thesis and the easiest to miss, because both readings are correct English and the eye supplies whichever it expects.",
+  fix:"Choose one spelling. Hyphenate it consistently, or close it up consistently.",
+  run(ctx){ const prose = ctx.project.prose;
+    const words = [...prose.matchAll(TERM_WORD)]
+      .map(m => ({ start: m.index, end: m.index + m[1].length, text: m[1].toLowerCase() }));
+    const positions = new Map();
+    for (const w of words) {
+      if (!positions.has(w.text)) positions.set(w.text, []);
+      positions.get(w.text).push([w.start, w.end]);
+    }
+    const hyphen = new Map();
+    for (const m of prose.matchAll(TERM_HYPHENATED)) {
+      const key = m[1].toLowerCase() + " " + m[2].toLowerCase();
+      if (!hyphen.has(key)) hyphen.set(key, []);
+      hyphen.get(key).push([m.index, m.index + m[0].length]);
+    }
+    // Adjacent words with nothing but an ordinary gap between them, bounded
+    // for the same reason the phrase gap is: masked markup is spaces.
+    const gap = new RegExp("^(?:[ \\t]{1,2}|[ \\t]*\\n[ \\t]*)$");
+    const open = new Map();
+    for (let i = 0; i + 1 < words.length; i++) {
+      const a = words[i], b = words[i + 1];
+      if (a.text.length < 3 || b.text.length < 3 || !gap.test(prose.slice(a.end, b.start))) continue;
+      const key = a.text + " " + b.text;
+      if (!open.has(key)) open.set(key, []);
+      open.get(key).push([a.start, b.end]);
+    }
+    // Only pairs the document itself joins somewhere are candidates; every
+    // other bigram is just two words next to each other.
+    const candidates = new Set(hyphen.keys());
+    for (const key of open.keys()) {
+      const [a, b] = key.split(" ");
+      if (positions.has(a + b)) candidates.add(key);
+    }
+    const minimum = Number(ctx.config.option("TRM003", "min_occurrences", 1)) || 1;
+    for (const key of [...candidates].sort()) {
+      const [a, b] = key.split(" ");
+      const closed = positions.get(a + b) || [];
+      let forms = { [`${a}-${b}`]: hyphen.get(key) || [], [`${a} ${b}`]: open.get(key) || [], [a + b]: closed };
+      let present = Object.fromEntries(Object.entries(forms).filter(([, s]) => s.length >= minimum));
+      if (Object.keys(present).length < 2) continue;
+      // Hyphen against open, with no closed form in play, is the one case
+      // English grammar can explain. Compare only like positions.
+      if (!closed.length) {
+        const h = forms[`${a}-${b}`].filter(s => attributive(prose, s[1]));
+        const o = forms[`${a} ${b}`].filter(s => attributive(prose, s[1]));
+        if (!h.length || !o.length) continue;
+        present = { [`${a}-${b}`]: h, [`${a} ${b}`]: o };
+      }
+      const entries = Object.entries(present).sort(([x], [y]) => x < y ? -1 : x > y ? 1 : 0);
+      let best = entries[0][0];
+      for (const [name, spots] of entries)
+        if (spots.length > present[best].length) best = name;
+      const tally = entries.map(([name, spots]) => `'${name}' (${spots.length}x)`).join(", ");
+      const loser = entries.find(([name]) => name !== best);
+      if (!loser) continue;
+      ctx.add("TRM003", `one term, two spellings: ${tally}`,
+        { at: loser[1][0][0], context: ctx.project.excerpt(loser[1][0][0]),
+          fix: `The document mostly writes '${best}'.` });
+    }
+  }});
+
+const TERM_CAPITALISED = /(?<![\w-])([A-Z][a-z]{3,})(?![\w-])/g;
+const TERM_LOWERCASE = /(?<![\w-])([a-z]{4,})(?![\w-])/g;
+
+/* "Automated Driving System" is a name the author gave something, not three
+   words whose capitalisation slipped, and its middle word must not be
+   compared against the ordinary adjective "automated" elsewhere. A word that
+   merely opens the sentence is no evidence of a run. */
+function inCapitalisedRun(prose, start, end) {
+  const at = Math.max(0, start - 60);
+  const before = /([A-Za-z][A-Za-z-]*)[ \t]+$/.exec(prose.slice(at, start));
+  if (before && /^[A-Z]/.test(before[1]) && !sentenceStartsAt(prose, at + before.index)) return true;
+  const after = /^[ \t]+([A-Za-z][A-Za-z-]*)/.exec(prose.slice(end, end + 60));
+  return !!(after && /^[A-Z]/.test(after[1]));
+}
+
+rule({ id:"TRM004", title:"One term, capitalised in some places and not others", cat:"terminology", sev:SEV.info,
+  why:"'the Participants completed' and 'the participants completed' in one document reads as two different decisions, and in a table of contents or a list of figures the inconsistency is on show.",
+  fix:"Capitalise a term mid-sentence only if it is a proper noun. Pick one and apply it throughout.",
+  run(ctx){
+    // German capitalises every noun, so the comparison means nothing there.
+    if (!String(ctx.config.language || "en").toLowerCase().startsWith("en")) return;
+    const prose = ctx.project.prose;
+    const titles = [];
+    for (const name of ["section","subsection","subsubsection","chapter","part","paragraph",
+                        "title","caption","subcaption","Description","keywords","author",
+                        "institution","affiliation"])
+      for (const c of ctx.project.commands(name, 1)) titles.push([c.start, c.end]);
+    const eligible = start =>
+      !titles.some(([a, b]) => a <= start && start < b) && !sentenceStartsAt(prose, start);
+
+    const upper = new Map(), lower = new Map();
+    for (const m of prose.matchAll(TERM_CAPITALISED)) {
+      if (!eligible(m.index) || inCapitalisedRun(prose, m.index, m.index + m[1].length)) continue;
+      const key = m[1].toLowerCase();
+      upper.set(key, (upper.get(key) || []).concat(m.index));
+    }
+    for (const m of prose.matchAll(TERM_LOWERCASE)) {
+      if (!eligible(m.index)) continue;
+      lower.set(m[1], (lower.get(m[1]) || []).concat(m.index));
+    }
+    const minimum = Number(ctx.config.option("TRM004", "min_occurrences", 2)) || 2;
+    for (const word of [...upper.keys()].sort()) {
+      const ups = upper.get(word), lows = lower.get(word) || [];
+      if (ups.length < minimum || lows.length < minimum) continue;
+      const capital = word[0].toUpperCase() + word.slice(1);
+      const lowerWins = ups.length <= lows.length;
+      const at = (lowerWins ? ups : lows)[0];
+      ctx.add("TRM004", `'${lowerWins ? capital : word}' is written both '${word}' (${lows.length}x) `
+              + `and '${capital}' (${ups.length}x) mid-sentence`,
+        { at, context: ctx.project.excerpt(at),
+          fix: `The document mostly writes '${lowerWins ? word : capital}'.` });
+    }
+  }});
+
+rule({ id:"TRM005", title:"Expansion still written out after the abbreviation was introduced",
+  cat:"terminology", sev:SEV.info,
+  why:"Introducing an abbreviation is a promise to use it. Writing 'Automated Driving System' out a dozen more times makes the reader carry both forms and leaves the definition looking pointless.",
+  fix:"Use the abbreviation after the first definition, or drop the abbreviation and keep writing the term in full.",
+  run(ctx){ if (abbManaged(ctx)) return;
+    const prose = ctx.project.prose;
+    const threshold = Number(ctx.config.option("TRM005", "min_repeats", 3)) || 3;
+    for (const [acronym, occ] of abbDefinitions(ctx)) {
+      const definedAt = Math.min(...occ.map(o => o.end));
+      const expansion = occ[0].expansion;
+      if (expansion.length < 10) continue;
+      // An abbreviation nobody ever uses is ABB003's finding, not this one.
+      const used = new RegExp("(?<![\\w\\\\])" + escapeRe(acronym) + "(?:e?s)?(?![\\w])", "g");
+      let usedLater = false;
+      for (const u of prose.matchAll(used)) if (u.index > definedAt) { usedLater = true; break; }
+      if (!usedLater) continue;
+      const repeats = [];
+      for (const m of prose.matchAll(new RegExp("(?<![\\w-])" + termPattern(expansion) + "(?![\\w-])", "gi"))) {
+        if (m.index < definedAt) continue;
+        // "Automated Driving System (ADS)" again is ABB001's territory.
+        if (/^\s*\(/.test(prose.slice(m.index + m[0].length, m.index + m[0].length + 4))) continue;
+        repeats.push(m.index);
+      }
+      if (repeats.length < threshold) continue;
+      ctx.add("TRM005", `'${expansion}' is written out ${repeats.length} more times after `
+              + `\`${acronym}\` was introduced`,
+        { at: repeats[0], context: ctx.project.excerpt(repeats[0]),
+          fix: `Write \`${acronym}\` from the definition onwards.` });
+    }
+  }});
+
 /* ===================== 5. Reading what the user dropped in =============== */
 
 /** Minimal ZIP reader: central directory + DecompressionStream. No library. */
@@ -3614,7 +4136,11 @@ async function runChecks(files, options) {
   }
 
   const project = new TexProject(sources, mainPath);
-  const config = new Config(options);
+  // The project's own mechcheck.yaml, unless the caller supplied one (or
+  // passed null to say "check this as it stands, ignore the file").
+  const projectConfig = options.projectConfig !== undefined
+    ? options.projectConfig : readProjectConfig(files);
+  const config = new Config(options, (projectConfig && projectConfig.data) || {});
 
   const bib = [];
   for (const [path, bytes] of files) if (/\.bib$/i.test(path)) bib.push(...parseBib(decodeText(bytes), path));
@@ -3622,8 +4148,11 @@ async function runChecks(files, options) {
   const findings = [];
   const ctx = {
     project, config, bib, log, pdfBytes, pdfName, allFiles,
-    cache: {}, ignoreAcronyms: options.ignoreAcronyms || [],
-    ...makeFetchers(options.mailto, options.fetchJson),
+    cache: {},
+    ignoreAcronyms: (options.ignoreAcronyms || [])
+      .concat(asList(config.option("ABB001", "ignore", [])))
+      .concat(asList(config.option("ABB004", "ignore", []))),
+    ...makeFetchers(options.mailto || config.file.mailto, options.fetchJson),
     /* Build an edit from a span of project.text. Returns null when the span
        is not safely rewritable, so a rule can pass the result straight on. */
     editSpan(start, end, replacement, describe) {
@@ -3687,7 +4216,9 @@ async function runChecks(files, options) {
      1,708 findings here, one rule accounting for 1,062 of them; nobody reads
      that, they close it, and the twelve that mattered go with the rest. The
      counts stay truthful -- `truncated` is held, never dropped. */
-  const maxPerRule = options.maxPerRule === undefined ? 10 : Math.max(0, options.maxPerRule);
+  const fromFile = Number(config.file.max_per_rule);
+  const maxPerRule = options.maxPerRule !== undefined ? Math.max(0, options.maxPerRule)
+    : (Number.isFinite(fromFile) ? Math.max(0, fromFile) : 10);
   let shown = kept, truncated = [];
   if (maxPerRule) {
     const seen = new Map();
@@ -3707,6 +4238,7 @@ async function runChecks(files, options) {
       files: project.files.length, words: wordCount(ctx), floats: project.floats().length,
       references: bib.length, pages: pageCount(ctx), hasLog: !!log, hasPdf: !!pdfBytes,
       main: mainPath, mainGuessed, netBlocked,
+      configPath: projectConfig ? projectConfig.path : null,
     },
   };
 }
@@ -3763,7 +4295,8 @@ const el = (tag, props = {}, children = []) => {
   return node;
 };
 
-const state = { files: null, result: null, filters: { error: true, warn: true, info: true }, query: "", category: "" };
+const state = { files: null, result: null, adopted: [],
+                filters: { error: true, warn: true, info: true }, query: "", category: "" };
 
 function settings() {
   return {
@@ -4091,19 +4624,29 @@ async function rerun() {
     renderSummary(result);
     renderFilters(result);
     renderResults(result);
-    if (result.stats.mainGuessed) {
-      showNotice(`<b>Guessed the main file:</b> <span class="mono">${result.stats.mainGuessed && result.stats.main}</span>. `
-        + "No file had both \documentclass and \begin{document}, so this is the largest .tex. "
-        + "If that is wrong, the findings will be too.", "warnish");
-    } else if (opts.verify && netBlocked) {
-      showNotice("<b>Reference verification could not reach the internet.</b> Everything else ran. "
-        + "This page blocks outside requests when it is opened from a shared link — save the file and open it "
-        + "locally (double-click it) and the Crossref, OpenAlex and DBLP checks work.", "warnish");
-    } else if (opts.verify) {
-      showNotice("Reference verification is on. Results are cached in this browser, so re-running is instant.");
-    } else {
-      showNotice("");
+    // The project's own configuration is worth saying out loud: a student who
+    // cannot see that a rule was switched off has no way to know why the page
+    // and their supervisor disagree.
+    const notes = [];
+    if (result.stats.configPath) {
+      notes.push(`Using this project's <span class="mono">${result.stats.configPath}</span>`
+        + (state.adopted.length ? `, which set ${state.adopted.join(" · ")}.` : "."));
     }
+    let kind = "";
+    if (result.stats.mainGuessed) {
+      kind = "warnish";
+      notes.push(`<b>Guessed the main file:</b> <span class="mono">${result.stats.main}</span>. `
+        + String.raw`No file had both \documentclass and \begin{document}, so this is the largest .tex. `
+        + "If that is wrong, the findings will be too.");
+    } else if (opts.verify && netBlocked) {
+      kind = "warnish";
+      notes.push("<b>Reference verification could not reach the internet.</b> Everything else ran. "
+        + "This page blocks outside requests when it is opened from a shared link — save the file and open it "
+        + "locally (double-click it) and the Crossref, OpenAlex and DBLP checks work.");
+    } else if (opts.verify) {
+      notes.push("Reference verification is on. Results are cached in this browser, so re-running is instant.");
+    }
+    showNotice(notes.join("<br>"), kind);
   } catch (err) {
     $("#results").innerHTML = "";
     $("#results").appendChild(el("div", { class: "empty" }, [
@@ -4111,6 +4654,27 @@ async function rerun() {
       el("div", { text: err.message }),
     ]));
   }
+}
+
+/* A project that carries a mechcheck.yaml has already decided its profile,
+   stage and venue, so adopt them when it is dropped in rather than making the
+   student set three controls to match a file they may not know is there. Only
+   at load: once they are on screen, changing one is the person's decision and
+   the next check uses it. */
+function adoptProjectConfig(files) {
+  state.adopted = [];
+  const project = readProjectConfig(files);
+  if (!project) return;
+  for (const key of ["profile", "stage", "venue"]) {
+    const value = project.data[key];
+    if (value === undefined || value === null) continue;
+    const node = $("#" + key);
+    const wanted = String(value);
+    if (![...node.options].some(o => o.value === wanted) || node.value === wanted) continue;
+    node.value = wanted;
+    state.adopted.push(`${key} = ${wanted}`);
+  }
+  if (state.adopted.length) saveSettings();
 }
 
 async function handleFiles(fileList) {
@@ -4121,6 +4685,7 @@ async function handleFiles(fileList) {
     const texCount = [...files.keys()].filter(k => /\.tex$/i.test(k)).length;
     if (!texCount) throw new Error("No .tex files in what you dropped.");
     state.files = files;
+    adoptProjectConfig(files);
     const bibCount = [...files.keys()].filter(k => /\.bib$/i.test(k)).length;
     const extras = [];
     if ([...files.keys()].some(k => /\.log$/i.test(k))) extras.push("log");

@@ -40,6 +40,7 @@ const footer = `
    with the other scripts on its list, so plain globals are enough. */
 globalThis.mechcheck = {
   runChecks, applyFixes, collectFiles, readZip, normalisePath, findMainDocument,
+  parseYamlSubset, readProjectConfig,
   RULES, RULES_BY_ID, SEV, SEV_NAME, VENUES, PROFILES, STAGES, Config,
 };
 `;

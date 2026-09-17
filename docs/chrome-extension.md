@@ -77,6 +77,12 @@ Chrome profiles.
 | Verify refs | turns on the seven `BIO*` rules |
 | Check automatically | run as soon as a project opens |
 
+If the Overleaf project contains a `mechcheck.yaml`, it is read as well: rules
+it disables stay quiet, severities and per-rule options apply, the project's
+own vocabulary (`terminology:`) is enforced, and its profile, stage and venue
+are adopted into the panel's controls. The panel says which file it used. It
+is the same file the command line and CI read, so the extension and CI agree.
+
 ## Giving it to students
 
 Unpacked installation is fine for a research group: send them the folder and
@@ -109,7 +115,7 @@ script) in any browser. It reports 22 checks.
 
 ## What is verified, and what is not
 
-Verified: the engine (177 Node checks), the zip reading, the panel rendering,
+Verified: the engine (226 Node checks), the zip reading, the panel rendering,
 filtering and fixing in a real browser (22 harness checks), the manifest, and
 the icons.
 

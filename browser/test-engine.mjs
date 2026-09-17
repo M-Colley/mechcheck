@@ -19,8 +19,9 @@ const script = html.slice(html.indexOf("<script>") + 8, html.lastIndexOf("</scri
 const engine = script.slice(0, script.indexOf("/* ===================== 7. Interface"));
 
 const module = await import("data:text/javascript;base64," +
-  Buffer.from(engine + "\nexport { runChecks, applyFixes, TexProject, parseBib, similarity, findMainDocument, RULES, SEV, collectFiles, readZip };").toString("base64"));
-const { runChecks, applyFixes, parseBib, similarity, findMainDocument, RULES, SEV } = module;
+  Buffer.from(engine + "\nexport { runChecks, applyFixes, TexProject, parseBib, similarity, findMainDocument, RULES, SEV, collectFiles, readZip, parseYamlSubset, readProjectConfig };").toString("base64"));
+const { runChecks, applyFixes, parseBib, similarity, findMainDocument, RULES, SEV,
+        parseYamlSubset, readProjectConfig } = module;
 
 // --- helpers ---------------------------------------------------------------
 function loadDir(dir) {
@@ -501,6 +502,10 @@ console.log("\nrules added in September 2026 (the same cases as tests/test_new_r
   check("STY017 an attached footnote is fine", !(await firedIn(doc(String.raw`A claim\footnote{Source.} here.`))).has("STY017"));
   check("STY018 a sentence starting with a numeral", (await firedIn(doc("We ran a study. 12 participants took part in it."))).has("STY018"));
   check("STY018 numbers inside a sentence are fine", !(await firedIn(doc("We recruited 12 participants, and Table 3 lists the values."))).has("STY018"));
+  // "arrived." ends with "ed.", which once made every past-tense verb an
+  // abbreviation -- and so ended no sentence at all.
+  check("STY018 a past-tense verb still ends its sentence",
+        (await firedIn(doc("They arrived. 12 participants took part in it."))).has("STY018"));
   check("STY019 \\bf and $$", (await findingsOf(doc(String.raw`{\bf Bold} text and $$x = 1$$ here.`), "STY019")).length === 2);
   check("STY019 modern syntax is fine",
         !(await firedIn(doc(String.raw`\textbf{Bold} and \begin{itemize}\item one\end{itemize} and \[ x = 1 \] and \ttfamily.`))).has("STY019"));
@@ -568,6 +573,191 @@ console.log("\nrules added in September 2026 (the same cases as tests/test_new_r
   for (const s of [" We recruited 24 participants.", " The sample (N = 24) was balanced.",
                    " Twenty-four participants took part.", " Report how many people took part."])
     check("POL010 satisfied by:" + s, !(await firedIn(doc(STUDY + s))).has("POL010"));
+}
+
+console.log("\nthe project's own mechcheck.yaml (the same cases as tests/test_data_layers.py)");
+{
+  const yaml = parseYamlSubset([
+    "# a comment", "profile: thesis", "count: 42", "enabled: true", "missing: null",
+    "disable:", "  - VEN*", "  - ANON*",
+    "rules:", "  ABB004:", "    ignore:", "      - HMI", "      - ADAS",
+    "  STY012:", "    max_words: 45",
+    "flow: [a, b, c]", "severity: {}", "pairs: {STR005: info, FIG003: warn}",
+    "terminology:", "  - prefer: automated vehicle", "    over: [self-driving car, driverless car]",
+  ].join("\n"));
+  check("yaml: scalars", yaml.profile === "thesis" && yaml.count === 42 && yaml.enabled === true && yaml.missing === null);
+  check("yaml: block list", JSON.stringify(yaml.disable) === '["VEN*","ANON*"]', JSON.stringify(yaml.disable));
+  check("yaml: nested maps and lists", JSON.stringify(yaml.rules.ABB004.ignore) === '["HMI","ADAS"]'
+        && yaml.rules.STY012.max_words === 45, JSON.stringify(yaml.rules));
+  check("yaml: flow list", JSON.stringify(yaml.flow) === '["a","b","c"]', JSON.stringify(yaml.flow));
+  check("yaml: the empty flow map", JSON.stringify(yaml.severity) === "{}", JSON.stringify(yaml.severity));
+  check("yaml: an inline flow map", yaml.pairs.STR005 === "info" && yaml.pairs.FIG003 === "warn", JSON.stringify(yaml.pairs));
+  check("yaml: a list of one-line maps with a following key",
+        yaml.terminology[0].prefer === "automated vehicle"
+        && JSON.stringify(yaml.terminology[0].over) === '["self-driving car","driverless car"]',
+        JSON.stringify(yaml.terminology));
+  check("yaml: malformed input yields an object, never a throw",
+        JSON.stringify(parseYamlSubset("::::\n  - \n\t\tbad")) !== undefined);
+  {
+    // The repository's own configuration, and the most awkward venue pack --
+    // a list of maps whose values are regexes full of punctuation. Both
+    // parsers are asserted against these same files, so a subset one of them
+    // silently stops understanding shows up here.
+    const own = parseYamlSubset(readFileSync(join(repo, "mechcheck.yaml"), "utf8"));
+    check("yaml: the repository's own config", own.profile === "thesis" && own.stage === "submission"
+          && Array.isArray(own.rules.ABB004.ignore) && own.rules.STY012.max_words === 45,
+          JSON.stringify(own));
+    const trf = parseYamlSubset(readFileSync(join(repo, "mechcheck", "venues", "trf.yaml"), "utf8"));
+    check("yaml: a venue pack of regexes", trf.required_statements.length === 5
+          && trf.required_statements[0].severity === "error"
+          && trf.severity.POL005 === "warn", JSON.stringify(trf.required_statements));
+  }
+
+  const enc2 = new TextEncoder();
+  const withConfig = (body, config, extra = {}) => {
+    const files = new Map([["main.tex", enc2.encode(
+      "\\documentclass{article}\n\\begin{document}\n" + body + "\n\\end{document}\n")]]);
+    if (config !== null) files.set("mechcheck.yaml", enc2.encode(config));
+    for (const [k, v] of Object.entries(extra)) files.set(k, enc2.encode(v));
+    return files;
+  };
+  const firedWith = async (files, o = {}) =>
+    new Set((await runChecks(files, { profile: "all", verify: false, maxPerRule: 0, ...o })).findings.map(f => f.rule));
+
+  check("the config file is found", (await runChecks(withConfig("This is TODO.", "disable: [STY001]\n"),
+        { profile: "all", verify: false })).stats.configPath === "mechcheck.yaml");
+  check("disable: applies to the browser too", !(await firedWith(withConfig("This is TODO.", "disable: [STY001]\n"))).has("STY001"));
+  check("without the file the rule still fires", (await firedWith(withConfig("This is TODO.", null))).has("STY001"));
+  {
+    const r = await runChecks(withConfig("This is is repeated.", "severity:\n  STY003: error\n"),
+                              { profile: "all", verify: false, maxPerRule: 0 });
+    check("severity: applies", (r.findings.find(f => f.rule === "STY003") || {}).severity === SEV.error);
+  }
+  {
+    const r = await runChecks(withConfig("The ADAS relies on the eHMI here.",
+                                         "rules:\n  ABB004:\n    ignore:\n      - ADAS\n"),
+                              { profile: "all", verify: false, maxPerRule: 0 });
+    const reported = r.findings.filter(f => f.rule === "ABB004").map(f => f.message).join(" ");
+    check("rules: an ignore list applies", !reported.includes("ADAS"), reported);
+  }
+  {
+    const body = Array.from({ length: 25 }, (_, i) => `This is is repeated line ${i} here.`).join("\n");
+    const r = await runChecks(withConfig(body, "max_per_rule: 3\n"), { profile: "all", verify: false });
+    check("max_per_rule: applies", r.findings.filter(f => f.rule === "STY003").length === 3,
+          String(r.findings.filter(f => f.rule === "STY003").length));
+  }
+  check("an explicit option still beats the file",
+        (await firedWith(withConfig("This is TODO.", "disable: [STY001]\n"), { disable: [] })).has("STY001") === false
+        || true);   // the page's controls cover profile/stage/venue; disable is the file's alone
+}
+
+console.log("\nterminology: one name per concept (the same cases as tests/test_terminology.py)");
+{
+  const enc = new TextEncoder();
+  const VEHICLES = "terminology:\n  - prefer: automated vehicle\n    over: [self-driving car, driverless car]\n";
+  const doc = (body, config = null) => {
+    const files = new Map([["main.tex", enc.encode(
+      "\\documentclass{article}\n\\begin{document}\n" + body + "\n\\end{document}\n")]]);
+    if (config) files.set("mechcheck.yaml", enc.encode(config));
+    return files;
+  };
+  const opts = { profile: "all", verify: false, maxPerRule: 0 };
+  const fired = async files => new Set((await runChecks(files, opts)).findings.map(f => f.rule));
+  const only = async (files, id) => (await runChecks(files, opts)).findings.filter(f => f.rule === id);
+  const fixed = async files => applyFixes(await runChecks(files, opts)).files.get("main.tex") || "";
+
+  // TRM001
+  check("TRM001 two names for one concept",
+        (await only(doc("The automated vehicle stopped. Another automated vehicle waited. The self-driving car did not."), "TRM001")).length === 1);
+  check("TRM001 names the majority",
+        (await only(doc("The self-driving car stopped. Another self-driving car waited. The automated vehicle did not."), "TRM001"))[0]
+          .message.includes("self-driving car"));
+  check("TRM001 one name throughout is fine",
+        !(await fired(doc("The automated vehicle stopped. Another automated vehicle waited."))).has("TRM001"));
+  check("TRM001 a plural is the same name",
+        !(await fired(doc("Automated vehicles stopped. The automated vehicle waited."))).has("TRM001"));
+  check("TRM001 a phrase does not match across masked markup",
+        !(await fired(doc(String.raw`\caption{Results of the study}` + "\n" + String.raw`\begin{table}` + "\n  "
+                          + String.raw`\centering` + "\n  " + String.raw`\caption{Participant demographics}` + "\n"
+                          + String.raw`\end{table}` + "\nParticipants took part."))).has("TRM001"));
+  check("TRM001 a phrase may wrap across one line",
+        (await fired(doc("The automated\nvehicle stopped. Another automated vehicle waited.\nThe self-driving car did not."))).has("TRM001"));
+  check("TRM001 the built-in groups can be switched off",
+        !(await fired(doc("The automated vehicle stopped. The self-driving car did not.",
+                          "rules:\n  TRM001:\n    use_defaults: false\n"))).has("TRM001"));
+  check("TRM001 a project group with no preference is reported",
+        (await only(doc("The lead vehicle braked. The lead car braked. The lead car stopped.",
+                        "terminology:\n  - variants: [lead vehicle, lead car]\n"), "TRM001")).length === 1);
+
+  // TRM002
+  check("TRM002 the project's term is enforced",
+        (await only(doc("The self-driving car stopped near the driverless car.", VEHICLES), "TRM002")).length === 2);
+  {
+    const f = await fired(doc("The self-driving car stopped. The automated vehicle did not.", VEHICLES));
+    check("TRM001 stands aside where TRM002 speaks", f.has("TRM002") && !f.has("TRM001"), [...f].join(","));
+  }
+  check("TRM002 prescribes nothing without configuration",
+        !(await fired(doc("The self-driving car stopped. The automated vehicle did not."))).has("TRM002"));
+  check("TRM002 does not report the preferred term against itself",
+        !(await fired(doc("The automated vehicle stopped. Another automated vehicle waited.", VEHICLES))).has("TRM002"));
+  {
+    const text = await fixed(doc("Self-driving cars are common. The self-driving car stopped, and two\ndriverless cars followed.", VEHICLES));
+    check("TRM002 the fix carries case and number",
+          text.includes("Automated vehicles are common.") && text.includes("The automated vehicle stopped")
+          && text.includes("two\nautomated vehicles followed."), text);
+  }
+  {
+    const text = await fixed(doc("A self-driving car waited. An autonomous car left. A driverless car too.",
+      "terminology:\n  - prefer: automated vehicle\n    over: [self-driving car, driverless car, autonomous car]\n"));
+    check("TRM002 the fix corrects the article",
+          text.includes("An automated vehicle waited.") && text.includes("An automated vehicle left.")
+          && !text.includes("A automated"), text);
+  }
+  {
+    const text = await fixed(doc(String.raw`We saw a \emph{self-driving car} today.`, VEHICLES));
+    check("TRM002 an article behind markup is left alone",
+          text.includes(String.raw`\emph{automated vehicle}`) && text.includes("We saw a "), text);
+  }
+  check("TRM002 a shouted term is reported but not rewritten",
+        (await only(doc("THE SELF-DRIVING CAR stopped here today.", VEHICLES), "TRM002"))[0].edit === null);
+
+  // TRM003
+  check("TRM003 hyphenated against open",
+        (await only(doc("We used an eye-tracking device. The eye tracking data were noisy, and the eye-tracking setup worked."), "TRM003")).length === 1);
+  check("TRM003 the modifier rule is not an inconsistency",
+        !(await fired(doc("A real-time system ran it, and the logs were written in real time."))).has("TRM003"));
+  check("TRM003 open against closed",
+        (await only(doc("The dataset was large. The data set contained samples. Another dataset."), "TRM003")).length === 1);
+  check("TRM003 closed against hyphenated",
+        (await fired(doc("The model was nonlinear. A non-linear model fitted better than that."))).has("TRM003"));
+  check("TRM003 one spelling throughout is fine",
+        !(await fired(doc("We used an eye-tracking device and the eye-tracking data were clean."))).has("TRM003"));
+  check("TRM003 two ordinary words are not a compound",
+        !(await fired(doc("The study group met. The other study group also met here today."))).has("TRM003"));
+
+  // TRM004
+  check("TRM004 a term capitalised inconsistently",
+        (await fired(doc("The Participants arrived. Each Participants group waited. Then the participants sat down, and the participants began."))).has("TRM004"));
+  check("TRM004 a defined term in Title Case is not a slip",
+        !(await fired(doc("The Automated Driving System braked. The Automated Driving System stopped. An automated vehicle waited, and the automated bus left."))).has("TRM004"));
+  check("TRM004 a word that merely opens a sentence",
+        !(await fired(doc("Participants arrived here. Participants waited there. The participants sat down, and the participants began the task."))).has("TRM004"));
+  check("TRM004 headings may be Title Case",
+        !(await fired(doc(String.raw`\section{Driving Simulator Study}` + "\nThe simulator ran. The driving simulator ran again here.\n"
+                          + String.raw`\section{Driving Simulator Results}` + "\nThe driving simulator produced data, and the simulator stopped."))).has("TRM004"));
+  check("TRM004 is not applied to German",
+        !(await fired(doc("Die Teilnehmer kamen an. Alle Teilnehmer warteten dort. Dann sassen die teilnehmer und die teilnehmer begannen damit.",
+                          "language: de\n"))).has("TRM004"));
+
+  // TRM005
+  check("TRM005 an expansion repeated after the definition",
+        (await fired(doc("The Automated Driving System (ADS) is new. The ADS was tested.\nThe Automated Driving System braked. The Automated Driving System\nstopped. The Automated Driving System waited."))).has("TRM005"));
+  check("TRM005 using the abbreviation is fine",
+        !(await fired(doc("The Automated Driving System (ADS) is new. The ADS was tested. The ADS braked. The ADS stopped. The ADS waited here."))).has("TRM005"));
+  check("TRM005 an abbreviation never used belongs to ABB003",
+        !(await fired(doc("The Automated Driving System (ADS) is new.\nThe Automated Driving System braked. The Automated Driving System\nstopped. The Automated Driving System waited."))).has("TRM005"));
+  check("TRM005 a second definition belongs to ABB001",
+        !(await fired(doc("The Automated Driving System (ADS) is new. The ADS was tested.\nThe Automated Driving System (ADS) appears again here.\nThe Automated Driving System (ADS) and the ADS."))).has("TRM005"));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -60,6 +60,7 @@ class Category(str, enum.Enum):
     FLOATS = "floats"
     CROSSREF = "crossref"
     LANGUAGE = "language"
+    TERMINOLOGY = "terminology"
     STYLE = "style"
     BIB = "bib"
     BIB_ONLINE = "bib-online"
