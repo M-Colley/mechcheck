@@ -99,6 +99,16 @@ def test_sentence_boundaries_respect_abbreviations():
     assert not sentence_starts_at(text, text.index("one"))
 
 
+def test_a_past_tense_verb_is_not_the_abbreviation_ed():
+    """"arrived." ends with "ed.", and once ended no sentence at all."""
+    from mechcheck.texsource import sentence_starts_at
+
+    for sentence in ("They arrived. ", "We used it. ", "It was described. ",
+                     "He said no more. "):
+        text = sentence + "Next"
+        assert sentence_starts_at(text, text.index("Next")), sentence
+
+
 # --------------------------------------------------------------------------- #
 # FIG012 / FIG008 / FIG015: where the graphics really are
 # --------------------------------------------------------------------------- #

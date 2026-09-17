@@ -682,6 +682,12 @@ _NOT_SENTENCE_END = ("et al.", "e.g.", "i.e.", "cf.", "vs.", "etc.", "fig.", "fi
                      "eq.", "eqs.", "sec.", "no.", "approx.", "resp.", "ca.", "p.", "pp.",
                      "ed.", "eds.", "vol.", "dr.", "prof.", "mr.", "ms.", "st.", "jr.")
 
+#: The abbreviation has to be a word of its own. Matching the bare ending
+#: instead made every past-tense verb an abbreviation -- "arrived." ends with
+#: "ed." -- so no sentence that ended in one was seen to end at all.
+_ABBREVIATION_END = re.compile(
+    r"(?<![\w])(?:" + "|".join(re.escape(a) for a in _NOT_SENTENCE_END) + r")$")
+
 
 def sentence_starts_at(text: str, pos: int) -> bool:
     """Does a new sentence begin at ``pos``?
@@ -701,8 +707,8 @@ def sentence_starts_at(text: str, pos: int) -> bool:
         return True
     if text[i] not in ".!?":
         return False
-    head = text[max(0, i - 12):i + 1].lower()
-    if head.endswith(_NOT_SENTENCE_END):
+    head = text[max(0, i - 24):i + 1].lower()
+    if _ABBREVIATION_END.search(head):
         return False
     return re.search(r"(?<![\w])[a-z]\.$", head) is None
 

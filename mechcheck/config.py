@@ -72,6 +72,9 @@ DEFAULTS: dict = {
     "enable": [],
     "severity": {},
     "rules": {},
+    #: The project's own vocabulary: groups of words that name one concept,
+    #: optionally with the one this project uses. See mechcheck/rules/terminology.py.
+    "terminology": [],
     "ignore_paths": ["build/**", "out/**", ".git/**", "**/node_modules/**"],
 }
 
@@ -85,7 +88,7 @@ def _coerce_shapes(data: dict) -> None:
     is it: a wrong type degrades to the empty default, and a bare scalar where
     a list belongs is read as a list of one, which is what was meant.
     """
-    for key in ("disable", "enable", "ignore_paths"):
+    for key in ("disable", "enable", "ignore_paths", "terminology"):
         value = data.get(key)
         if isinstance(value, str):
             value = value.strip()
@@ -197,6 +200,21 @@ class Config:
         for pattern, value in overrides.items():
             if _glob(rule_id, str(pattern)):
                 return Severity.parse(value, base)
+
+        # A venue pack may raise the stakes on a rule -- ASSETS desk-rejects an
+        # inaccessible submission, so it makes the accessibility rules errors.
+        # This was read by the browser engine and not here, which meant the two
+        # gave different answers for the same venue. The project's own file
+        # still wins, and the stage still applies on top.
+        venue_severity = self.venue_data.get("severity")
+        if isinstance(venue_severity, dict) and venue_severity:
+            if rule_id in venue_severity:
+                base = Severity.parse(venue_severity[rule_id], base)
+            else:
+                for pattern, value in venue_severity.items():
+                    if _glob(rule_id, str(pattern)):
+                        base = Severity.parse(value, base)
+                        break
 
         stage = STAGES.get(self.stage, {})
         if any(_glob(rule_id, p) for p in stage.get("promote", [])):

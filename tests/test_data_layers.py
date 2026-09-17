@@ -208,6 +208,23 @@ def test_project_config_beats_the_venue_pack(tmp_path):
     assert config.rule_option("MET002", "max_pages") == 12
 
 
+def test_a_venue_pack_can_raise_a_rules_severity(tmp_path):
+    """ASSETS desk-rejects an inaccessible submission, so it makes ACC003 an error.
+
+    The browser engine read this block from the start and the command line did
+    not, so the same venue produced two different answers.
+    """
+    assert Config.load(str(tmp_path)).severity_for("ACC003") is Severity.WARN
+    assets = Config.load(str(tmp_path), overrides={"venue": "assets"})
+    assert assets.severity_for("ACC003") is Severity.ERROR
+
+
+def test_the_projects_own_severity_still_beats_the_venue(tmp_path):
+    (tmp_path / "mechcheck.yaml").write_text(
+        "venue: assets\nseverity:\n  ACC003: info\n", encoding="utf-8", newline="\n")
+    assert Config.load(str(tmp_path)).severity_for("ACC003") is Severity.INFO
+
+
 def test_unknown_venue_degrades_to_no_pack(tmp_path):
     config = Config.load(str(tmp_path), overrides={"venue": "not-a-venue"})
     assert config.venue_data == {}
