@@ -10,6 +10,7 @@ Rule id prefixes, one per module, so ids never collide:
     STY  style.py          source-level writing mechanics
     BIB  bib.py            bibliography hygiene (offline)
     BIO  bibonline.py      bibliography verification (Crossref/OpenAlex/DBLP)
+    URL  links.py          links in the body, and whether they still resolve
     LOG  compilelog.py     what the TeX log says
     MET  metrics.py        counts: words, pages, figures, references
     ANON anonymity.py      double-anonymous review sweep
@@ -29,6 +30,7 @@ from mechcheck.rules import (  # noqa: F401
     compilelog,
     crossref,
     floats,
+    links,
     metrics,
     policy,
     structure,

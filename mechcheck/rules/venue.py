@@ -259,6 +259,42 @@ def stale_venue_pack(ctx):
                       fix=f"Re-read {source or 'the current call for papers'} and update the pack.")
 
 
+@rule("VEN010", "Few references to this venue's own community", Category.POLICY, Severity.INFO,
+      rationale="Work that cites almost nothing from the community it is submitted to is the shape of a paper sent to the wrong venue -- CHI's chairs report that papers desk-rejected as out of scope cite a median of zero HCI references. Whether the fit is right is a judgement for a person; the count is not.",
+      fix="If the work does belong here, show it: engage the venue's own literature where you position the contribution.")
+def community_references(ctx):
+    from mechcheck.rules.bib import entries
+
+    pack = _pack(ctx)
+    community = pack.get("community") or {}
+    tokens = [str(t) for t in _as_list(community.get("venues")) if str(t).strip()]
+    if not tokens:
+        return
+    minimum = int(ctx.opt("VEN010", "min_references", community.get("min_references", 4)) or 4)
+    all_entries = entries(ctx)
+    if not all_entries:
+        return          # BIB001 reports a missing bibliography; this is not that
+    # A bibliography that is thin overall is MET004's finding: "you cite
+    # almost nothing" and "you cite almost nothing from here" are the same
+    # sentence twice, and the first one says it better.
+    thin = int(ctx.opt("MET004", "min_references", 0) or 0)
+    if thin and len(all_entries) < thin and ctx.config.enabled("MET004"):
+        return
+    pattern = re.compile(r"(?<![\w])(?:" + "|".join(re.escape(t) for t in tokens) + r")(?![\w])",
+                         re.IGNORECASE)
+    # Matched against the venue field only, which is already the context that
+    # tells an acronym apart from an ordinary word.
+    hits = [e for e in all_entries if e.venue and pattern.search(e.venue)]
+    if len(hits) >= minimum:
+        return
+    label = community.get("name") or pack.get("name", ctx.config.venue)
+    yield ctx.finding("VEN010",
+                      f"{len(hits)} of {len(all_entries)} references cite {label} venues "
+                      f"(this pack expects at least {minimum})",
+                      file=ctx.project.main,
+                      data={"community_references": len(hits), "references": len(all_entries)})
+
+
 @rule("VEN009", "Text the venue does not allow", Category.POLICY, Severity.WARN,
       rationale="Some venues forbid specific content in a submission -- a visible author block, a non-anonymous repository link, a placeholder title.",
       fix="Remove or replace the offending text.")

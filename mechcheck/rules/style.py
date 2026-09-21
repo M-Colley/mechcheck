@@ -415,6 +415,35 @@ def legacy_syntax(ctx):
 _ET_AL = re.compile(r"(?<![\w])(?:et\.\s*al\.?|et\s+al(?![.\w])|etal\.?)(?![\w])")
 
 
+_FILLER = re.compile(
+    r"\blorem\s+ipsum\b|\bdolor\s+sit\s+amet\b|\btext\s+goes\s+here\b"
+    r"|\b(?:figure|table|citation|reference)\s+(?:goes\s+)?here\b|\bplaceholder\s+text\b",
+    re.IGNORECASE)
+
+#: LaTeX prints an unresolved reference as "??" and an unresolved citation as
+#: "[?]". Typed into the source they are a note to self that reads, in the
+#: PDF, exactly like a broken build.
+_UNRESOLVED_MARKER = re.compile(r"(?<![\w?])\?\?(?!\?)|(?<![\w])\[\s*\?\s*\]")
+
+
+@rule("STY021", "Filler text or an unresolved-reference marker", Category.STYLE, Severity.WARN,
+      rationale="'lorem ipsum' and a bare '??' reach a reviewer as an unfinished manuscript. The compile log reports '??' only once the document has been built twice, and nobody reads that log; typed into the source it is never reported at all.",
+      fix="Write the sentence, or resolve the cross-reference.")
+def filler_text(ctx):
+    prose = ctx.project.prose
+    for m in _FILLER.finditer(prose):
+        f, line, col = ctx.project.locate(m.start())
+        yield ctx.finding("STY021", f"filler text: '{m.group(0)}'",
+                          file=f, line=line, col=col, context=ctx.project.excerpt(m.start()))
+    for m in _UNRESOLVED_MARKER.finditer(prose):
+        f, line, col = ctx.project.locate(m.start())
+        yield ctx.finding("STY021",
+                          f"'{m.group(0)}' reads as an unresolved "
+                          + ("reference" if "?" == m.group(0)[0] else "citation"),
+                          file=f, line=line, col=col, context=ctx.project.excerpt(m.start()),
+                          fix="Point it at a real label or citation key.")
+
+
 @rule("STY020", "'et al.' mistyped", Category.STYLE, Severity.WARN,
       rationale="'et al.' abbreviates 'et alii': no period after 'et', one after 'al'. The variants are the kind of slip a reviewer notices in the first paragraph and holds against the rest.",
       fix="Write 'et al.' -- or let \\citet{...} produce it.")

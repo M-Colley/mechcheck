@@ -184,17 +184,64 @@ def pdf_metadata(ctx):
         return
     try:
         with open(ctx.pdf_path, "rb") as fh:
-            data = fh.read(2_000_000)
+            # A PDF carries the author in two unrelated places: the Info
+            # dictionary and an XMP packet. Reading only the first and only
+            # the first two megabytes left the commoner of the two unread.
+            data = fh.read(32_000_000)
     except OSError:
         return
-    for m in re.finditer(rb"/Author\s*\(([^)]{1,200})\)", data):
-        value = m.group(1).decode("latin-1", errors="replace").strip()
-        if not value or value.lower() in ("anonymous", "anonymous author(s)", "()"):
-            continue
-        yield ctx.finding("ANON006", f"the PDF metadata author is \"{value[:60]}\"",
-                          file=ctx.project.rel(ctx.pdf_path),
-                          fix="Set \\hypersetup{pdfauthor={}} or compile with the anonymous option.")
+    for pattern in (rb"/Author\s*\(([^)]{1,200})\)",
+                    rb"<pdf:Author>([^<]{1,200})</pdf:Author>",
+                    rb"<dc:creator>.{0,200}?<rdf:li[^>]*>([^<]{1,200})</rdf:li>"):
+        for m in re.finditer(pattern, data, re.DOTALL):
+            value = m.group(1).decode("utf-8", errors="replace").strip()
+            if not value or value.lower() in ("anonymous", "anonymous author(s)", "()"):
+                continue
+            where = "XMP metadata" if b"rdf" in pattern or b"pdf:" in pattern else "metadata"
+            yield ctx.finding("ANON006", f"the PDF {where} author is \"{value[:60]}\"",
+                              file=ctx.project.rel(ctx.pdf_path),
+                              fix="Set \\hypersetup{pdfauthor={}} or compile with the anonymous option.")
+            return
+
+
+#: An author field that is nothing but "Anonymous" is a masked citation. A
+#: title containing the word is not -- papers about anonymity exist.
+_MASKED_AUTHOR = re.compile(r"^[\s{}]*anonymous\.?[\s{}]*$", re.IGNORECASE)
+
+#: Phrases that mask a reference wherever they appear in the entry.
+_MASKED_PHRASE = re.compile(
+    r"\b(?:(?:removed|withheld|omitted|redacted|anonymi[sz]ed|blinded|suppressed)"
+    r"\s+(?:for|during|pending)\s+(?:double[- ]?)?(?:blind\s+)?(?:review|blinding|submission)"
+    r"|author(?:s)?(?:'|’)?\s+names?\s+(?:withheld|removed|omitted)"
+    r"|reference\s+(?:removed|withheld|omitted)"
+    r"|\[\s*(?:redacted|removed|anonymi[sz]ed|withheld)\s*\])", re.IGNORECASE)
+
+
+@rule("ANON008", "Masked reference in the bibliography", Category.ANONYMITY, Severity.ERROR,
+      rationale="CHI lists masked references as grounds for desk rejection: a reference a reviewer cannot resolve cannot be assessed, and the mask itself advertises that the work is the authors' own. Venues ask you to cite your own prior work in the third person instead.",
+      fix="Restore the real reference and cite it in the third person -- 'Prior work [12] showed ...' rather than 'our earlier study'. The citation is not what de-anonymises a paper; writing about it in the first person is.")
+def masked_reference(ctx):
+    from mechcheck.rules.bib import entries
+
+    if not _is_anonymous_stage(ctx):
         return
+    for entry in entries(ctx):
+        author = entry.get("author") or entry.get("editor")
+        reason = None
+        if author and _MASKED_AUTHOR.match(author):
+            reason = f"the author field is \"{author.strip()}\""
+        else:
+            for field in ("author", "editor", "title", "booktitle", "journal", "note", "howpublished"):
+                m = _MASKED_PHRASE.search(entry.get(field))
+                if m:
+                    reason = f"{field} says \"{m.group(0)}\""
+                    break
+        if not reason:
+            continue
+        yield ctx.finding("ANON008", f"`{entry.key}` is a masked reference: {reason}",
+                          file=ctx.project.rel(entry.file), line=entry.line,
+                          context=(entry.title or author or "")[:70],
+                          data={"key": entry.key})
 
 
 @rule("ANON007", "Anonymous option left in a camera-ready document", Category.ANONYMITY,

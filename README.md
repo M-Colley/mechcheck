@@ -6,12 +6,13 @@
 Mechanical checks for LaTeX theses and papers: the boring layer of review,
 automated, so supervision time goes to the argument instead of the formatting.
 
-149 rules across figures, cross-references, abbreviations, prose mechanics,
+154 rules across figures, cross-references, abbreviations, prose mechanics,
 bibliography hygiene, **bibliography verification against Crossref/OpenAlex/DBLP**,
 compile-log analysis, accessibility, anonymity, reporting conventions,
 **one name per concept**, the things that compile on your laptop but not on
-Overleaf, and per-venue submission requirements for CHI, ASSETS, AutomotiveUI,
-IMWUT and Transportation Research Part F.
+Overleaf, **the desk-reject screen a venue runs before review**, and per-venue
+submission requirements for CHI, ASSETS, AutomotiveUI, IMWUT and
+Transportation Research Part F.
 
 **Nothing to install.** Save
 [`browser/mechcheck.html`](browser/mechcheck.html), double-click it, and drop
@@ -71,7 +72,7 @@ Confirm it landed:
 mechcheck rules | tail -1
 ```
 
-prints `149 rules`. Then run it on the self-test document, whose answer is
+prints `154 rules`. Then run it on the self-test document, whose answer is
 known in advance:
 
 ```bash
@@ -224,6 +225,25 @@ Windows and macOS open `Figures/Plot.PNG` when the file is `figures/plot.png`;
 Linux, and therefore Overleaf and every CI runner, do not. `mechcheck fix`
 rewrites the path, merges the citations, wraps the URL and corrects the
 "et al." — the corrections with exactly one right answer.
+
+And against the screen a venue runs before anyone reviews the paper:
+
+```
+main.tex
+  x error POL011:44  white text contains an instruction to the reader: "positive review"
+  x error ANON008:8  `smith2024` is a masked reference: the author field is "Anonymous"
+  x error ANON006     the PDF XMP metadata author is "Mark Colley"
+  ! warn  STY021:19  'Section ??' reads as an unresolved reference
+  ! warn  MET001      13,900 words of main text, limit 12000 (references and floats excluded)
+  i info  VEN010      2 of 61 references cite SIGCHI/HCI venues (this pack expects at least 4)
+```
+
+Those mirror the cards a CHI screening report raises: a masked reference and
+an author name in either of the PDF's two metadata blocks are desk-reject
+grounds, hidden text addressed to an automated reviewer is a
+research-integrity matter, and the length and scope items are advisory
+counts, never verdicts. `mechcheck check . --venue chi` runs the lot before
+you submit rather than after.
 
 The full list is in **[docs/rules.md](docs/rules.md)** — generated from the code,
 so it cannot drift.
@@ -425,10 +445,10 @@ tests/                the Python suite, and the fixtures both engines are checke
 
 ## Status
 
-Python side: 629 tests passing, and the bibliography verification has been run
+Python side: 678 tests passing, and the bibliography verification has been run
 against the live Crossref, OpenAlex and DBLP APIs.
 
-Browser side: 226 checks passing (`node browser/test-engine.mjs`) against the
+Browser side: 266 checks passing (`node browser/test-engine.mjs`) against the
 same fixtures as the Python suite — including the assertion that both engines
 produce exactly the same findings on the self-test document, and that both
 readers of `mechcheck.yaml` agree on this repository's own configuration.

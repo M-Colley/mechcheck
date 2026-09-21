@@ -37,6 +37,41 @@ required_commands:
 
 filename_charset_strict: true
 
+community:
+  name: SIGCHI/ubiquitous computing
+  min_references: 4
+  venues:
+    - CHI
+    - UIST
+    - CSCW
+    - DIS
+    - ASSETS
+    - MobileHCI
+    - IUI
+    - TEI
+    - UbiComp
+    - IMWUT
+    - CHI PLAY
+    - IDC
+    - VRST
+    - EICS
+    - CUI
+    - AutomotiveUI
+    - AutoUI
+    - TOCHI
+    - Human Factors in Computing Systems
+    - Computer-Supported Cooperative Work
+    - Computer Supported Cooperative Work
+    - User Interface Software
+    - Interacting with Computers
+    - Human-Computer Interaction
+    - Human Computer Interaction
+    - Human-Computer Studies
+    - Pervasive
+    - Wearable
+    - Internet of Things
+    - ISWC
+
 uncertain:
   - 'The final typeset format is a large single-column ACM journal format (acmlarge in some guidance, acmsmall in others). Confirm which the current template uses before the camera-ready.'
   - 'No length limit is encoded because none was confirmed.'

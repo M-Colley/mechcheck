@@ -1,6 +1,6 @@
 # The browser version — no Python, no GitHub, no server
 
-`browser/mechcheck.html` is the whole checker in one file: all 149 rules, the
+`browser/mechcheck.html` is the whole checker in one file: all 154 rules, the
 five venue packs, and the reference verification. It runs in the browser, on
 the machine in front of you. Nothing is uploaded, and there is nothing to
 install.
@@ -122,7 +122,7 @@ fixtures as the Python test-suite and asserts the same rules fire.
 node browser/test-engine.mjs
 ```
 
-226 checks, no dependencies beyond Node. If the two implementations ever
+266 checks, no dependencies beyond Node. If the two implementations ever
 disagree, that suite is what tells you.
 
 ## What it cannot do

@@ -62,6 +62,60 @@ class Fetcher:
         self.stats["miss"] += 1
         return data
 
+    def url_status(self, url: str):
+        """What a bare URL answers: an HTTP status, ``"dns"``, or ``None``.
+
+        ``None`` means "could not be determined" -- a timeout, a reset, a TLS
+        failure, or offline. It is deliberately a third answer rather than a
+        failure: a server that refuses a robot has not told us the link is
+        broken, and only a definite answer may be reported as one.
+        """
+        key = "status:" + url
+        cached = self._read_cache(key)
+        if isinstance(cached, dict) and "status" in cached:
+            self.stats["hit"] += 1
+            return cached["status"]
+        if self.offline:
+            self.stats["skipped"] += 1
+            return None
+        status = self._probe(url)
+        if status is not None:
+            self._write_cache(key, {"status": status})
+            self.stats["miss"] += 1
+        else:
+            self.stats["error"] += 1
+        return status
+
+    def _probe(self, url: str, attempts: int = 2):
+        import socket
+
+        host = urllib.parse.urlparse(url).netloc
+        for attempt in range(attempts):
+            self._throttle(host)
+            # HEAD first; plenty of servers answer it with 405, so fall back.
+            for method in ("HEAD", "GET"):
+                req = urllib.request.Request(url, method=method, headers={
+                    "User-Agent": self._user_agent(),
+                    "Accept": "*/*",
+                })
+                try:
+                    with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
+                        return int(resp.status)
+                except urllib.error.HTTPError as exc:
+                    if exc.code in (405, 501) and method == "HEAD":
+                        continue            # this server dislikes HEAD; try GET
+                    if exc.code in (429, 500, 502, 503) and attempt < attempts - 1:
+                        time.sleep(2.0)
+                        break               # transient: start the attempt again
+                    return int(exc.code)
+                except urllib.error.URLError as exc:
+                    if isinstance(exc.reason, socket.gaierror):
+                        return "dns"        # the host itself does not exist
+                    return None
+                except (TimeoutError, OSError, ValueError):
+                    return None
+        return None
+
     # -- internals --------------------------------------------------------- #
 
     def _user_agent(self) -> str:

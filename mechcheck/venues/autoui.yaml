@@ -51,5 +51,42 @@ rules:
   MET004:
     min_references: 20
 
+community:
+  name: SIGCHI/automotive HCI
+  min_references: 4
+  venues:
+    - CHI
+    - UIST
+    - CSCW
+    - DIS
+    - ASSETS
+    - MobileHCI
+    - IUI
+    - TEI
+    - UbiComp
+    - IMWUT
+    - CHI PLAY
+    - IDC
+    - VRST
+    - EICS
+    - CUI
+    - AutomotiveUI
+    - AutoUI
+    - Automotive User Interfaces
+    - TOCHI
+    - Human Factors in Computing Systems
+    - Computer-Supported Cooperative Work
+    - Computer Supported Cooperative Work
+    - User Interface Software
+    - Interacting with Computers
+    - Human-Computer Interaction
+    - Human Computer Interaction
+    - Human-Computer Studies
+    - Transportation Research Part F
+    - Human Factors
+    - Accident Analysis
+    - Applied Ergonomics
+    - Intelligent Transportation
+
 uncertain:
   - 'The camera-ready limit (12 pages including references) differs from the submission limit (13 pages excluding references). For the camera-ready check run --stage final and set rules.MET002.max_pages to 12.'

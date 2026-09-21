@@ -597,12 +597,21 @@ const VENUES = {
     class_options: { submission: { required: ["manuscript", "review"], forbidden: ["sigconf"] },
                      final: { required: ["sigconf"], forbidden: ["review", "anonymous"] } },
     anonymity: { model: "double-anonymous" },
-    length: { unit: "none", excludes: "references, figures and tables are not counted as main text" },
+    length: { unit: "words", max_words: 12000,
+              excludes: "references, figures and tables are not counted as main text" },
     accessibility: { descriptions_required: true },
     requires: { ai_disclosure: true, data_availability: false },
     required_commands: [{ command: "ccsdesc", why: "ACM requires CCS concepts; TAPS rejects submissions without them" },
                         { command: "keywords", why: "ACM templates expect keywords" }],
     filename_charset_strict: true,
+    community: { name: "SIGCHI/HCI", min_references: 4,
+      venues: [
+        "CHI", "UIST", "CSCW", "DIS", "ASSETS", "MobileHCI", "IUI", "TEI", "UbiComp", "IMWUT",
+        "CHI PLAY", "IDC", "VRST", "EICS", "CUI", "AutomotiveUI", "AutoUI",
+        "Automotive User Interfaces", "TOCHI", "Human Factors in Computing Systems",
+        "Computer-Supported Cooperative Work", "Computer Supported Cooperative Work",
+        "User Interface Software", "Interacting with Computers", "Human-Computer Interaction",
+        "Human Computer Interaction", "Human-Computer Studies" ] },
     rules: { MET004: { min_references: 25 } },
     uncertain: ["No numeric page or word limit is encoded: CHI states length should be commensurate with contribution."],
   },
@@ -618,6 +627,15 @@ const VENUES = {
     requires: { ai_disclosure: true, data_availability: true },
     required_commands: [{ command: "ccsdesc" }, { command: "keywords" }],
     filename_charset_strict: true,
+    community: { name: "SIGCHI/accessibility", min_references: 4,
+      venues: [
+        "CHI", "UIST", "CSCW", "DIS", "ASSETS", "MobileHCI", "IUI", "TEI", "UbiComp", "IMWUT",
+        "CHI PLAY", "IDC", "VRST", "EICS", "CUI", "AutomotiveUI", "AutoUI", "TOCHI",
+        "Human Factors in Computing Systems", "Computer-Supported Cooperative Work",
+        "Computer Supported Cooperative Work", "User Interface Software",
+        "Interacting with Computers", "Human-Computer Interaction",
+        "Human Computer Interaction", "Human-Computer Studies", "SIGACCESS",
+        "Accessible Computing", "TACCESS", "W4A", "Accessibility" ] },
     rules: { MET001: { max_words: 10000, min_words: 7500 }, ACC002: { min_words: 10 } },
     severity: { ACC001: "error", ACC002: "error", ACC003: "error", ACC006: "error" },
     uncertain: ["Short papers are 4,000-5,000 words; override MET001 for those.",
@@ -636,6 +654,16 @@ const VENUES = {
     requires: { ai_disclosure: true, data_availability: false },
     required_commands: [{ command: "ccsdesc" }, { command: "keywords" }],
     filename_charset_strict: true,
+    community: { name: "SIGCHI/automotive HCI", min_references: 4,
+      venues: [
+        "CHI", "UIST", "CSCW", "DIS", "ASSETS", "MobileHCI", "IUI", "TEI", "UbiComp", "IMWUT",
+        "CHI PLAY", "IDC", "VRST", "EICS", "CUI", "AutomotiveUI", "AutoUI",
+        "Automotive User Interfaces", "TOCHI", "Human Factors in Computing Systems",
+        "Computer-Supported Cooperative Work", "Computer Supported Cooperative Work",
+        "User Interface Software", "Interacting with Computers", "Human-Computer Interaction",
+        "Human Computer Interaction", "Human-Computer Studies",
+        "Transportation Research Part F", "Human Factors", "Accident Analysis",
+        "Applied Ergonomics", "Intelligent Transportation" ] },
     rules: { MET002: { min_pages: 6, max_pages: 13 }, MET004: { min_references: 20 } },
     uncertain: ["Camera-ready is 12 pages including references — set MET002.max_pages to 12 for --stage final."],
   },
@@ -650,6 +678,15 @@ const VENUES = {
     requires: { ai_disclosure: true },
     required_commands: [{ command: "ccsdesc" }, { command: "keywords" }],
     filename_charset_strict: true,
+    community: { name: "SIGCHI/ubiquitous computing", min_references: 4,
+      venues: [
+        "CHI", "UIST", "CSCW", "DIS", "ASSETS", "MobileHCI", "IUI", "TEI", "UbiComp", "IMWUT",
+        "CHI PLAY", "IDC", "VRST", "EICS", "CUI", "AutomotiveUI", "AutoUI", "TOCHI",
+        "Human Factors in Computing Systems", "Computer-Supported Cooperative Work",
+        "Computer Supported Cooperative Work", "User Interface Software",
+        "Interacting with Computers", "Human-Computer Interaction",
+        "Human Computer Interaction", "Human-Computer Studies", "Pervasive", "Wearable",
+        "Internet of Things", "ISWC" ] },
     uncertain: ["The typeset format is a large single-column ACM journal format (acmlarge in some guidance, acmsmall in others).",
                 "No length limit is encoded because none was confirmed.",
                 "The anonymity model was not confirmed; the ANON rules stay off unless you pick the anonymous profile."],
@@ -678,6 +715,13 @@ const VENUES = {
       { name: "highlights", severity: "warn", pattern: "highlights",
         fix: "Elsevier requires a separate Highlights file of short bullet points. Check the guide for the exact count and character limit." },
     ],
+    community: { name: "transport and human factors", min_references: 3,
+      venues: [
+        "Transportation Research Part F", "Transportation Research Part C",
+        "Accident Analysis", "Human Factors", "Applied Ergonomics", "Ergonomics",
+        "Safety Science", "Journal of Safety Research", "Traffic Injury Prevention",
+        "IEEE Transactions on Intelligent", "AutomotiveUI", "AutoUI", "CHI",
+        "Transport Policy", "Travel Behaviour" ] },
     severity: { POL005: "warn", POL006: "warn", POL007: "warn" },
     uncertain: ["The Highlights format (commonly 3-5 bullets, at most 85 characters each) could not be re-verified: the live guide blocks automated fetching.",
                 "The exact bst/biblatex style name was not confirmed.",
@@ -2391,12 +2435,19 @@ rule({ id:"ANON006", title:"PDF metadata names the author", cat:"anonymity", sev
   why:"Reviewers see the document properties. An anonymised body with your name in the PDF metadata is the classic near-miss.",
   fix:"Clear the metadata with \\hypersetup{pdfauthor={}}, or let the anonymous class option do it.",
   run(ctx){ if (!isAnonymousStage(ctx) || !ctx.pdfBytes) return;
-    const text = new TextDecoder("latin1").decode(ctx.pdfBytes.slice(0, 2e6));
-    for (const m of text.matchAll(/\/Author\s*\(([^)]{1,200})\)/g)) {
-      const value = m[1].trim();
-      if (!value || ["anonymous","anonymous author(s)"].includes(value.toLowerCase())) continue;
-      ctx.add("ANON006", `the PDF metadata author is "${value.slice(0, 60)}"`, { file: ctx.pdfName || "the PDF" });
-      return;
+    // A PDF carries the author in two unrelated places: the Info dictionary
+    // and an XMP packet. Reading only the first left the commoner unread.
+    const text = new TextDecoder("utf-8").decode(ctx.pdfBytes.slice(0, 32e6));
+    const patterns = [[/\/Author\s*\(([^)]{1,200})\)/g, "metadata"],
+                      [/<pdf:Author>([^<]{1,200})<\/pdf:Author>/g, "XMP metadata"],
+                      [/<dc:creator>[\s\S]{0,200}?<rdf:li[^>]*>([^<]{1,200})<\/rdf:li>/g, "XMP metadata"]];
+    for (const [pattern, where] of patterns) {
+      for (const m of text.matchAll(pattern)) {
+        const value = m[1].trim();
+        if (!value || ["anonymous","anonymous author(s)"].includes(value.toLowerCase())) continue;
+        ctx.add("ANON006", `the PDF ${where} author is "${value.slice(0, 60)}"`, { file: ctx.pdfName || "the PDF" });
+        return;
+      }
     }}});
 
 rule({ id:"ANON007", title:"Anonymous option left in a camera-ready document", cat:"anonymity", sev:SEV.error,
@@ -3658,6 +3709,139 @@ rule({ id:"TRM005", title:"Expansion still written out after the abbreviation wa
     }
   }});
 
+/* ---- The checks a CHI review-screening report makes that this did not ----
+   A masked reference, text hidden from the reader, filler left in the
+   source, how much of the venue's own literature is cited, and whether the
+   links still resolve. Mirrors mechcheck/rules/{anonymity,policy,style,
+   venue,links}.py; both sides are asserted on the same inputs. */
+
+const MASKED_AUTHOR = /^[\s{}]*anonymous\.?[\s{}]*$/i;
+const MASKED_PHRASE = /\b(?:(?:removed|withheld|omitted|redacted|anonymi[sz]ed|blinded|suppressed)\s+(?:for|during|pending)\s+(?:double[- ]?)?(?:blind\s+)?(?:review|blinding|submission)|author(?:s)?(?:'|’)?\s+names?\s+(?:withheld|removed|omitted)|reference\s+(?:removed|withheld|omitted)|\[\s*(?:redacted|removed|anonymi[sz]ed|withheld)\s*\])/i;
+
+rule({ id:"ANON008", title:"Masked reference in the bibliography", cat:"anonymity", sev:SEV.error,
+  why:"CHI lists masked references as grounds for desk rejection: a reference a reviewer cannot resolve cannot be assessed, and the mask itself advertises that the work is the authors' own. Venues ask you to cite your own prior work in the third person instead.",
+  fix:"Restore the real reference and cite it in the third person -- 'Prior work [12] showed ...' rather than 'our earlier study'. The citation is not what de-anonymises a paper; writing about it in the first person is.",
+  run(ctx){ if (!isAnonymousStage(ctx)) return;
+    for (const e of ctx.bib) {
+      const author = e.get("author") || e.get("editor");
+      let reason = null;
+      if (author && MASKED_AUTHOR.test(author)) reason = `the author field is "${author.trim()}"`;
+      else for (const field of ["author","editor","title","booktitle","journal","note","howpublished"]) {
+        const m = MASKED_PHRASE.exec(e.get(field));
+        if (m) { reason = `${field} says "${m[0]}"`; break; }
+      }
+      if (!reason) continue;
+      ctx.add("ANON008", `\`${e.key}\` is a masked reference: ${reason}`,
+        { file: e.file, line: e.line, context: (e.title || author || "").slice(0, 70) });
+    }}});
+
+/* Colour specifications that come out white, by model. */
+const WHITE_BY_MODEL = { rgb:["1,1,1","1.0,1.0,1.0"], RGB:["255,255,255"], HTML:["FFFFFF","ffffff"],
+                         cmyk:["0,0,0,0"], gray:["1","1.0"], grey:["1","1.0"] };
+/* Environments where white text is ordinary: a dark table header, a coloured
+   box, a title page. Hidden prose does not live in these. */
+const COLOURED_BACKGROUNDS = ["tabular","tabular*","tabularx","longtable","tabu","tikzpicture",
+                              "tcolorbox","titlepage","frame","beamercolorbox","mdframed","colorbox","adjustbox"];
+/* Text that tells a reader what to conclude rather than telling them
+   anything. Only ever consulted for text the reader cannot see. */
+const REVIEWER_DIRECTIVE = /\b(?:positive\s+review|favou?rable\s+review|accept\s+th(?:is|e)\s+(?:paper|submission|manuscript)|recommend(?:ing)?\s+acceptance|strong\s+accept|high(?:est)?\s+(?:score|rating|mark)|ignore\s+(?:all\s+|any\s+)?(?:previous|prior|above|earlier)\s+instructions|as\s+an?\s+(?:AI|LLM|language\s+model)|you\s+are\s+an?\s+(?:AI|LLM|reviewer)|do\s+not\s+(?:mention|report|reveal)|disregard\s+(?:the\s+)?(?:previous|prior)|give\s+(?:it|this|the\s+paper)\s+a\s+)/i;
+
+const isWhite = (model, colour) => model
+  ? (WHITE_BY_MODEL[model] || []).some(v => v.replace(/\s/g, "") === colour.replace(/\s/g, ""))
+  : colour.toLowerCase() === "white";
+
+function hiddenSpans(ctx) {
+  const text = ctx.project.text;
+  const background = [];
+  for (const env of COLOURED_BACKGROUNDS)
+    for (const e of ctx.project.environments(env)) background.push([e.start, e.end]);
+  const inBackground = pos => background.some(([a, b]) => a <= pos && pos < b);
+  const out = [];
+  for (const c of ctx.project.commands("textcolor", 2))
+    if (isWhite((c.opt(0) || "").trim(), c.arg(0).trim()) && !inBackground(c.start))
+      out.push({ at: c.start, how: "white text", content: c.arg(1) });
+  // \color{white} is a switch, not a wrapper: take the prose that follows it.
+  for (const c of ctx.project.commands("color", 1))
+    if (isWhite((c.opt(0) || "").trim(), c.arg(0).trim()) && !inBackground(c.start))
+      out.push({ at: c.start, how: "white text", content: ctx.project.prose.slice(c.end, c.end + 400) });
+  for (const c of ctx.project.commands("fontsize", 2)) {
+    const size = parseFloat(String(c.arg(0)).replace(/[^\d.]/g, "")) || 12;
+    if (size < Number(ctx.config.option("POL011", "min_size_pt", 2) || 2))
+      out.push({ at: c.start, how: `${size}pt type`, content: ctx.project.prose.slice(c.end, c.end + 400) });
+  }
+  for (const c of ctx.project.commands("scalebox", 2))
+    if (parseFloat(c.arg(0).trim()) === 0)
+      out.push({ at: c.start, how: "zero-scaled text", content: c.arg(1) });
+  return out;
+}
+
+rule({ id:"POL011", title:"Text a reader cannot see", cat:"policy", sev:SEV.warn,
+  why:"In 2025 papers were found with white-on-white instructions telling an AI reviewer to recommend acceptance. Hiding text that the typesetter still lays down is not a formatting choice: the reviewer and the reader are being shown different documents.",
+  fix:"Delete it. A note to yourself belongs in a % comment, which is never typeset; anything a reader should not see should not be in the PDF.",
+  run(ctx){ const minimum = Number(ctx.config.option("POL011", "min_words", 8)) || 8;
+    for (const span of hiddenSpans(ctx)) {
+      const body = String(span.content || "").split(/\s+/).filter(Boolean).join(" ");
+      const words = body.split(" ").filter(w => /[A-Za-z]/.test(w));
+      const directive = REVIEWER_DIRECTIVE.exec(body);
+      // Short white text is a dark table header or a spacing trick. Length is
+      // the evidence -- unless the text gives an instruction, and then one
+      // sentence is enough.
+      if (!directive && words.length < minimum) continue;
+      if (directive)
+        ctx.add("POL011", `${span.how} contains an instruction to the reader: "${directive[0]}"`,
+          { at: span.at, context: body.slice(0, 90), severity: SEV.error,
+            fix: "Remove it. Text addressed to an automated reviewer is a research-integrity matter, not a formatting one." });
+      else
+        ctx.add("POL011", `${words.length} words of ${span.how} the reader cannot see`,
+          { at: span.at, context: body.slice(0, 90) });
+    }}});
+
+const FILLER = /\blorem\s+ipsum\b|\bdolor\s+sit\s+amet\b|\btext\s+goes\s+here\b|\b(?:figure|table|citation|reference)\s+(?:goes\s+)?here\b|\bplaceholder\s+text\b/gi;
+/* LaTeX prints an unresolved reference as "??" and an unresolved citation as
+   "[?]". Typed into the source they read, in the PDF, like a broken build. */
+const UNRESOLVED_MARKER = /(?<![\w?])\?\?(?!\?)|(?<![\w])\[\s*\?\s*\]/g;
+
+rule({ id:"STY021", title:"Filler text or an unresolved-reference marker", cat:"style", sev:SEV.warn,
+  why:"'lorem ipsum' and a bare '??' reach a reviewer as an unfinished manuscript. The compile log reports '??' only once the document has been built twice, and nobody reads that log; typed into the source it is never reported at all.",
+  fix:"Write the sentence, or resolve the cross-reference.",
+  run(ctx){ const prose = ctx.project.prose;
+    for (const m of prose.matchAll(FILLER))
+      ctx.add("STY021", `filler text: '${m[0]}'`, { at: m.index, context: ctx.project.excerpt(m.index) });
+    for (const m of prose.matchAll(UNRESOLVED_MARKER))
+      ctx.add("STY021", `'${m[0]}' reads as an unresolved ${m[0][0] === "?" ? "reference" : "citation"}`,
+        { at: m.index, context: ctx.project.excerpt(m.index),
+          fix: "Point it at a real label or citation key." });
+  }});
+
+rule({ id:"VEN010", title:"Few references to this venue's own community", cat:"policy", sev:SEV.info,
+  why:"Work that cites almost nothing from the community it is submitted to is the shape of a paper sent to the wrong venue -- CHI's chairs report that papers desk-rejected as out of scope cite a median of zero HCI references. Whether the fit is right is a judgement for a person; the count is not.",
+  fix:"If the work does belong here, show it: engage the venue's own literature where you position the contribution.",
+  run(ctx){ const community = ctx.config.venue.community || {};
+    const tokens = (community.venues || []).map(String).filter(Boolean);
+    if (!tokens.length || !ctx.bib.length) return;
+    // A bibliography that is thin overall is MET004's finding.
+    const thin = Number(ctx.config.option("MET004", "min_references", 0)) || 0;
+    if (thin && ctx.bib.length < thin && ctx.config.enabled("MET004")) return;
+    const minimum = Number(ctx.config.option("VEN010", "min_references", community.min_references || 4)) || 4;
+    const pattern = new RegExp("(?<![\\w])(?:" + tokens.map(escapeRe).join("|") + ")(?![\\w])", "i");
+    // Matched against the venue field only, which is already the context that
+    // tells an acronym apart from an ordinary word.
+    const hits = ctx.bib.filter(e => e.venue && pattern.test(e.venue));
+    if (hits.length >= minimum) return;
+    const label = community.name || ctx.config.venue.name || ctx.config.venueKey;
+    ctx.add("VEN010", `${hits.length} of ${ctx.bib.length} references cite ${label} venues `
+            + `(this pack expects at least ${minimum})`, { file: ctx.project.main });
+  }});
+
+rule({ id:"URL001", title:"Link in the text does not resolve", cat:"policy", sev:SEV.warn,
+  online:true, serverOnly:true,
+  why:"A reviewer following the artifact link is the best thing that can happen to a paper, and a 404 is the worst. Unlike a broken citation nobody notices until later, this one is discovered by exactly the person deciding on the work.",
+  fix:"Fix the address, or point at an archived copy with a persistent identifier (Zenodo, OSF, a DOI) that cannot move.",
+  /* Checking an arbitrary URL means a cross-origin request to a host that has
+     not opted in, which neither a web page nor a Manifest V3 extension may
+     make. The rule reports as skipped here and runs in the command line. */
+  run(){}});
+
 /* ===================== 5. Reading what the user dropped in =============== */
 
 /** Minimal ZIP reader: central directory + DecompressionStream. No library. */
@@ -3927,6 +4111,12 @@ async function runChecks(files, options) {
   const skipped = {};
   const applicable = RULES.filter(r => {
     if (!config.enabled(r.id)) { skipped[r.id] = "not part of this profile"; return false; }
+    if (r.serverOnly) {
+      // Probing an arbitrary URL is a cross-origin request to a host that has
+      // not opted in: neither a page nor a Manifest V3 extension may make it.
+      skipped[r.id] = "needs a request a browser is not allowed to make (run `mechcheck check`)";
+      return false;
+    }
     if (r.online && !options.verify) { skipped[r.id] = "online verification is off"; return false; }
     if (r.needsBuild && !log && !pdfBytes) { skipped[r.id] = "needs the .log or .pdf"; return false; }
     return true;

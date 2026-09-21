@@ -29,9 +29,10 @@ anonymity:
   note: 'CHI review is anonymous; acmart replaces the author block when the anonymous option is set.'
 
 length:
-  unit: none
+  unit: words
+  max_words: 12000
   excludes: 'references, figures and tables are not counted as main text'
-  note: 'CHI has no fixed page limit: length must be commensurate with the contribution. Excessively long papers without justification are a listed desk-reject reason.'
+  note: 'CHI has no page limit: length must be commensurate with the contribution. The chairs state that submissions above 12000 words are desk-rejected if the excessive length is not justified, so this is a threshold to be able to defend rather than a hard cap.'
 
 accessibility:
   descriptions_required: true
@@ -50,9 +51,42 @@ required_commands:
 filename_charset_strict: true
 forbidden_packages_fix: 'TAPS compiles your sources itself and only supports its accepted package list: https://www.acm.org/publications/taps/accepted-latex-packages'
 
+community:
+  name: SIGCHI/HCI
+  min_references: 4
+  venues:
+    - CHI
+    - UIST
+    - CSCW
+    - DIS
+    - ASSETS
+    - MobileHCI
+    - IUI
+    - TEI
+    - UbiComp
+    - IMWUT
+    - CHI PLAY
+    - IDC
+    - VRST
+    - EICS
+    - CUI
+    - AutomotiveUI
+    - AutoUI
+    - Automotive User Interfaces
+    - TOCHI
+    - Human Factors in Computing Systems
+    - Computer-Supported Cooperative Work
+    - Computer Supported Cooperative Work
+    - User Interface Software
+    - Interacting with Computers
+    - Human-Computer Interaction
+    - Human Computer Interaction
+    - Human-Computer Studies
+
 rules:
   MET004:
     min_references: 25
 
 uncertain:
-  - 'No numeric page or word limit is encoded, because CHI 2026 states length should be commensurate with contribution rather than giving a number. If your track publishes one, set rules.MET002.max_pages in mechcheck.yaml.'
+  - 'The 12000-word threshold is the one the chairs published; it is conditional on justification, not a hard cap, and mechchecks word count approximates their basis (references, captions and appendices excluded; abstract counted) rather than reproducing it. Check against your own texcount before acting on a near-miss.'
+  - 'No page limit is encoded, because CHI states length should be commensurate with contribution rather than giving a number.'

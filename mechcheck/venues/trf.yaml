@@ -52,6 +52,26 @@ severity:
   POL006: warn
   POL007: warn
 
+community:
+  name: transport and human factors
+  min_references: 3
+  venues:
+    - Transportation Research Part F
+    - Transportation Research Part C
+    - Accident Analysis
+    - Human Factors
+    - Applied Ergonomics
+    - Ergonomics
+    - Safety Science
+    - Journal of Safety Research
+    - Traffic Injury Prevention
+    - IEEE Transactions on Intelligent
+    - AutomotiveUI
+    - AutoUI
+    - CHI
+    - Transport Policy
+    - Travel Behaviour
+
 uncertain:
   - 'The Highlights format (commonly 3-5 bullets of at most 85 characters each) could not be re-verified: the live guide for authors blocks automated fetching. Check the numbers before submitting.'
   - 'The exact bst/biblatex style name was not confirmed; elsarticle-harv is the usual APA-like Elsevier style but verify against the template you download.'

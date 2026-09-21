@@ -115,7 +115,7 @@ script) in any browser. It reports 22 checks.
 
 ## What is verified, and what is not
 
-Verified: the engine (226 Node checks), the zip reading, the panel rendering,
+Verified: the engine (266 Node checks), the zip reading, the panel rendering,
 filtering and fixing in a real browser (22 harness checks), the manifest, and
 the icons.
 

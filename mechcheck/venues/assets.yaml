@@ -62,6 +62,42 @@ severity:
   ACC005: warn
   ACC006: error
 
+community:
+  name: SIGCHI/accessibility
+  min_references: 4
+  venues:
+    - CHI
+    - UIST
+    - CSCW
+    - DIS
+    - ASSETS
+    - MobileHCI
+    - IUI
+    - TEI
+    - UbiComp
+    - IMWUT
+    - CHI PLAY
+    - IDC
+    - VRST
+    - EICS
+    - CUI
+    - AutomotiveUI
+    - AutoUI
+    - TOCHI
+    - Human Factors in Computing Systems
+    - Computer-Supported Cooperative Work
+    - Computer Supported Cooperative Work
+    - User Interface Software
+    - Interacting with Computers
+    - Human-Computer Interaction
+    - Human Computer Interaction
+    - Human-Computer Studies
+    - SIGACCESS
+    - Accessible Computing
+    - TACCESS
+    - W4A
+    - Accessibility
+
 uncertain:
   - 'Short-paper limits (4,000-5,000 words) are not the default here. Override rules.MET001 if you are submitting a short paper.'
   - 'The exact definition of an accessible PDF at submission is set by the accessibility chairs; this pack checks alt text and PDF tagging, which is necessary but may not be sufficient.'

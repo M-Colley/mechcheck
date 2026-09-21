@@ -187,6 +187,119 @@ def keywords(ctx):
     yield ctx.finding("POL009", "no \\keywords{...} found", file=ctx.project.main)
 
 
+#: Colour specifications that come out white, by model.
+_WHITE_BY_MODEL = {
+    "rgb": ("1,1,1", "1.0,1.0,1.0", "1, 1, 1"),
+    "RGB": ("255,255,255", "255, 255, 255"),
+    "HTML": ("FFFFFF", "ffffff"),
+    "cmyk": ("0,0,0,0", "0, 0, 0, 0"),
+    "gray": ("1", "1.0"),
+    "grey": ("1", "1.0"),
+}
+
+#: Environments where white text is ordinary: a dark table header, a coloured
+#: box, a title page. Hidden prose does not live in these.
+_COLOURED_BACKGROUNDS = ("tabular", "tabular*", "tabularx", "longtable", "tabu",
+                         "tikzpicture", "tcolorbox", "titlepage", "frame", "beamercolorbox",
+                         "mdframed", "colorbox", "adjustbox")
+
+#: Text that tells a reader what to conclude rather than telling them anything.
+#: Only ever consulted for text the reader cannot see.
+_REVIEWER_DIRECTIVE = re.compile(
+    r"\b(?:positive\s+review|favou?rable\s+review|accept\s+th(?:is|e)\s+(?:paper|submission|manuscript)"
+    r"|recommend(?:ing)?\s+acceptance|strong\s+accept|high(?:est)?\s+(?:score|rating|mark)"
+    r"|ignore\s+(?:all\s+|any\s+)?(?:previous|prior|above|earlier)\s+instructions"
+    r"|as\s+an?\s+(?:AI|LLM|language\s+model)|you\s+are\s+an?\s+(?:AI|LLM|reviewer)"
+    r"|do\s+not\s+(?:mention|report|reveal)|disregard\s+(?:the\s+)?(?:previous|prior)"
+    r"|give\s+(?:it|this|the\s+paper)\s+a\s+)", re.IGNORECASE)
+
+
+def _hidden_spans(ctx) -> list:
+    """Every construction that typesets text the reader cannot see.
+
+    Returns ``(offset, end, how, content)``. Only the source is inspected:
+    a PDF content stream would have to be decompressed and parsed, and every
+    way of hiding text in LaTeX passes through one of these commands first.
+    """
+    from mechcheck.texsource import parse_commands
+
+    text = ctx.project.text
+    protected = []
+    for env in _COLOURED_BACKGROUNDS:
+        protected.extend((e.start, e.end) for e in ctx.project.environments(env))
+
+    def in_background(pos: int) -> bool:
+        return any(a <= pos < b for a, b in protected)
+
+    out = []
+    for cmd in parse_commands(text, "textcolor", 2):
+        model = (cmd.opt(0) or "").strip()
+        colour = cmd.arg(0).strip()
+        white = (colour.lower() == "white" if not model
+                 else colour.replace(" ", "") in
+                      [v.replace(" ", "") for v in _WHITE_BY_MODEL.get(model, ())])
+        if white and not in_background(cmd.start):
+            out.append((cmd.start, cmd.end, "white text", cmd.arg(1)))
+
+    # \color{white} is a switch, not a wrapper: take the prose that follows it.
+    for cmd in parse_commands(text, "color", 1):
+        model = (cmd.opt(0) or "").strip()
+        colour = cmd.arg(0).strip()
+        white = (colour.lower() == "white" if not model
+                 else colour.replace(" ", "") in
+                      [v.replace(" ", "") for v in _WHITE_BY_MODEL.get(model, ())])
+        if white and not in_background(cmd.start):
+            out.append((cmd.start, cmd.end, "white text",
+                        ctx.project.prose[cmd.end:cmd.end + 400]))
+
+    for cmd in parse_commands(text, "fontsize", 2):
+        try:
+            size = float(re.sub(r"[^\d.]", "", cmd.arg(0)) or "12")
+        except ValueError:
+            continue
+        if size < float(ctx.opt("POL011", "min_size_pt", 2) or 2):
+            out.append((cmd.start, cmd.end, f"{size:g}pt type",
+                        ctx.project.prose[cmd.end:cmd.end + 400]))
+
+    for cmd in parse_commands(text, "scalebox", 2):
+        try:
+            factor = float(cmd.arg(0).strip() or "1")
+        except ValueError:
+            continue
+        if factor == 0:
+            out.append((cmd.start, cmd.end, "zero-scaled text", cmd.arg(1)))
+    return out
+
+
+@rule("POL011", "Text a reader cannot see", Category.POLICY, Severity.WARN,
+      rationale="In 2025 papers were found with white-on-white instructions telling an AI reviewer to recommend acceptance. Hiding text that the typesetter still lays down is not a formatting choice: the reviewer and the reader are being shown different documents.",
+      fix="Delete it. A note to yourself belongs in a % comment, which is never typeset; anything a reader should not see should not be in the PDF.")
+def hidden_text(ctx):
+    minimum = int(ctx.opt("POL011", "min_words", 8) or 8)
+    for start, _end, how, content in _hidden_spans(ctx):
+        body = " ".join(str(content or "").split())
+        words = [w for w in body.split(" ") if re.search(r"[A-Za-z]", w)]
+        directive = _REVIEWER_DIRECTIVE.search(body)
+        # Short white text is a dark table header or a spacing trick. Length
+        # is the evidence -- unless the text itself gives an instruction, and
+        # then one sentence is enough.
+        if not directive and len(words) < minimum:
+            continue
+        f, line, col = ctx.project.locate(start)
+        if directive:
+            yield ctx.finding("POL011",
+                              f"{how} contains an instruction to the reader: \"{directive.group(0)}\"",
+                              file=f, line=line, col=col, context=body[:90],
+                              severity=Severity.ERROR,
+                              fix="Remove it. Text addressed to an automated reviewer is a "
+                                  "research-integrity matter, not a formatting one.",
+                              data={"how": how, "directive": directive.group(0)})
+        else:
+            yield ctx.finding("POL011", f"{len(words)} words of {how} the reader cannot see",
+                              file=f, line=line, col=col, context=body[:90],
+                              data={"how": how, "words": len(words)})
+
+
 _NUMBER_WORDS = (r"one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|"
                  r"fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|"
                  r"fifty|sixty|seventy|eighty|ninety|hundred|hundreds|thousand")
