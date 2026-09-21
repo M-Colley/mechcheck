@@ -23,12 +23,44 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      # This workflow ships with the checker, so it runs in repositories that
+      # never opted into it -- and a scheduled job that fails every week
+      # teaches everyone to ignore a red mark. No students.yaml means the
+      # digest is simply not in use here; say so and stop. A students.yaml
+      # with no token is a real misconfiguration, and still fails.
+      - name: Is this repository set up for the digest?
+        id: setup
+        env:
+          TOKEN: ${{ secrets.STUDENT_REPOS_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ ! -f students.yaml ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No students.yaml in this repository, so there is nothing to report on."
+            {
+              echo "### Supervision digest: not configured here"
+              echo
+              echo "Add a \`students.yaml\` (see \`students.example.yaml\`) and a"
+              echo "\`STUDENT_REPOS_TOKEN\` secret to switch this on."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ -z "${TOKEN:-}" ]; then
+            echo "::error::students.yaml is present but the STUDENT_REPOS_TOKEN secret is not set."
+            exit 1
+          fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-python@v7
+        if: steps.setup.outputs.configured == 'true'
         with:
           python-version: '3.12'
       - run: pip install -e .
+        if: steps.setup.outputs.configured == 'true'
 
       - name: Cache reference lookups
+        if: steps.setup.outputs.configured == 'true'
         uses: actions/cache@v6
         with:
           path: ~/.cache/mechcheck
@@ -36,11 +68,13 @@ jobs:
           restore-keys: mechcheck-digest-
 
       - name: Build the digest
+        if: steps.setup.outputs.configured == 'true'
         env:
           GH_TOKEN: ${{ secrets.STUDENT_REPOS_TOKEN }}
         run: python scripts/digest.py --config students.yaml --out digest.md --offline
 
       - name: Open (or update) this week's issue
+        if: steps.setup.outputs.configured == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -57,6 +91,7 @@ jobs:
           fi
 
       - uses: actions/upload-artifact@v7
+        if: steps.setup.outputs.configured == 'true'
         with:
           name: digest
           path: digest.md

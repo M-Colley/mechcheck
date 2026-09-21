@@ -47,22 +47,49 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Pull the current state from Overleaf
+      # This workflow ships with the checker and is scheduled, so it also runs
+      # in repositories that mirror nothing. Neither secret set means the
+      # mirror is not in use here: say so and stop, rather than failing every
+      # half hour until people stop reading the red marks. One of the two set
+      # is a real misconfiguration, and still fails.
+      - name: Is this repository set up to mirror?
+        id: setup
         env:
           PROJECT_ID: ${{ github.event.inputs.project_id || secrets.OVERLEAF_PROJECT_ID }}
           TOKEN: ${{ secrets.OVERLEAF_GIT_TOKEN }}
         run: |
           set -euo pipefail
+          if [ -z "${PROJECT_ID:-}" ] && [ -z "${TOKEN:-}" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No Overleaf mirror is configured in this repository."
+            {
+              echo "### Overleaf mirror: not configured here"
+              echo
+              echo "Set the \`OVERLEAF_PROJECT_ID\` and \`OVERLEAF_GIT_TOKEN\` secrets"
+              echo "to switch this on — see docs/overleaf-setup.md."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           if [ -z "${PROJECT_ID:-}" ] || [ -z "${TOKEN:-}" ]; then
-            echo "::error::Set the OVERLEAF_PROJECT_ID and OVERLEAF_GIT_TOKEN secrets first."
+            echo "::error::Set both OVERLEAF_PROJECT_ID and OVERLEAF_GIT_TOKEN; only one is set."
             exit 1
           fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Pull the current state from Overleaf
+        if: steps.setup.outputs.configured == 'true'
+        env:
+          PROJECT_ID: ${{ github.event.inputs.project_id || secrets.OVERLEAF_PROJECT_ID }}
+          TOKEN: ${{ secrets.OVERLEAF_GIT_TOKEN }}
+        run: |
+          set -euo pipefail
           # The token is the password; the username is ignored by the bridge.
           git clone --depth 1 \
             "https://git:${TOKEN}@git.overleaf.com/${PROJECT_ID}" overleaf-snapshot
           rm -rf overleaf-snapshot/.git
 
       - name: Copy the snapshot into the tracked directory
+        if: steps.setup.outputs.configured == 'true'
         run: |
           set -euo pipefail
           mkdir -p paper
@@ -74,6 +101,7 @@ jobs:
           rm -rf overleaf-snapshot
 
       - name: Commit, if Overleaf actually changed
+        if: steps.setup.outputs.configured == 'true'
         id: commit
         run: |
           set -euo pipefail
@@ -90,6 +118,7 @@ jobs:
           fi
 
       - name: Report what happened
+        if: steps.setup.outputs.configured == 'true'
         run: |
           if [ "${{ steps.commit.outputs.changed }}" = "true" ]; then
             echo "### Mirrored a new version from Overleaf" >> "$GITHUB_STEP_SUMMARY"
