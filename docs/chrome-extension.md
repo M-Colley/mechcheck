@@ -70,19 +70,34 @@ gutter, nothing is written into the document, and switching the panel's
 editor redraws — scrolling a long file recycles the line elements, so the
 markers follow.
 
-Two honest limitations:
+**Verified against live Overleaf on 2026-09-22**: every dot landed beside the
+line it named, to the pixel, and followed the lines as the file was scrolled.
+That run was worth doing, because the first version of this feature placed
+*no* dots at all on a real project while passing its tests:
+
+* the file-tree row renders its icons as Material Symbols ligatures, so the
+  row's text for `main.tex` is `descriptionmain.texmore_vertMenu` — reading
+  the name that way matched nothing, and every finding was filtered out; and
+* CodeMirror keeps a hidden, zero-height gutter element holding the widest
+  line number, to size the gutter. It is not a line, and its number collides
+  with a real one on a long enough document.
+
+The name now comes from the row's `aria-label` (then `.item-name`, then the
+text with decorative nodes removed), only the line-number gutter is used, and
+zero-height elements are skipped. The harness markup was replaced with a copy
+of what Overleaf actually served that day, spacer and ligatures included, so
+the same mistake fails the suite next time.
+
+Two limitations remain:
 
 * **It matches files by name.** A finding is shown only when its file is the
   one open in the editor. Two files of the same name in different folders
   would both match.
 * **It reads Overleaf's editor DOM**, which is the one thing here that is not
-  a documented interface. It looks for CodeMirror's `.cm-gutterElement` line
-  numbers and the selected entry in the file tree. This is verified against a
-  faithful copy of that structure in the test harness, **not** against live
-  Overleaf — if Overleaf changes its editor, the markers stop appearing. They
-  are deliberately built so that failing means no dots: the panel, the
-  findings and the fixes are untouched, and nothing else in the extension
-  depends on them.
+  a documented interface, and the episode above is exactly what that risk
+  looks like. If Overleaf changes its editor again the markers stop appearing.
+  They are deliberately built so that failing means no dots: the panel, the
+  findings and the fixes are untouched, and nothing else depends on them.
 
 ## Privacy
 
@@ -141,13 +156,13 @@ The generated file is committed, so nobody needs to run this to install.
 from a mocked `fetch`, and drives the real content script — the panel, the zip
 reading, the filters, the Markdown export and the error path. Open
 `extension/test-harness.built.html` (self-contained; produced by the build
-script) in any browser. It reports 35 checks, including the editor markers.
+script) in any browser. It reports 39 checks, including the editor markers.
 
 ## What is verified, and what is not
 
 Verified: the engine (327 Node checks), the zip reading, the panel rendering,
-filtering, fixing and the editor markers in a real browser (35 harness checks), the manifest, and
-the icons.
+filtering, fixing and the editor markers in a real browser (39 harness
+checks), the manifest, and the icons.
 
 **Verified against a live Overleaf project** on 2026-08-28: the extension
 injected, read the project, and reported exactly the findings the self-test

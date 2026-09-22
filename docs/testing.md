@@ -73,8 +73,10 @@ a few seconds. `BIO001` should *not* appear — the DOI in `refs.bib` is real. T
 prove the check is actually running, change that DOI to `10.1145/9999999.9999999`
 and re-check: `BIO001` should appear, saying the DOI does not resolve.
 
-**Then the gutter markers,** which are the part I could verify only against a
-copy of Overleaf's editor, never the real one. With `main.tex` open, coloured
+**Then the gutter markers.** These were verified on live Overleaf on
+2026-09-22, and they are still the part most likely to rot, because they are
+the only part that reads Overleaf's editor rather than its download URL.
+Re-run this step whenever Overleaf changes the editor. With `main.tex` open, coloured
 dots should sit in the line-number gutter beside the lines with findings —
 line 21 (`ANON001`), line 49 (`STY016` and `ANON003` together in one dot),
 lines 52 and 68 (`ACC001`). Hover a dot: it names the rule and the message,
@@ -158,11 +160,11 @@ So you know where the gaps are rather than re-testing what is covered:
 | 157 rules, Python | 857 tests |
 | 157 rules, browser engine | 327 checks in Node, same fixtures |
 | Both agree on this exact document | asserted in both suites, 37 findings |
-| Extension panel, zip reading, filters, editor markers | 35 checks in a real browser |
+| Extension panel, zip reading, filters, editor markers | 39 checks in a real browser |
 | `mechcheck.sty` | 14 checks against TeX Live 2026 |
 | p-value recomputation | both engines pinned to one table of reference values; the Python side checked against numerical integration; and run over 31 recomputable statistics in a real paper's results section without a single false positive |
 | **Extension in Chrome on live Overleaf** | verified once, on 2026-08-28 — re-run test 1 after updating |
-| **Gutter markers against Overleaf's live editor** | **not verified — the harness drives a copy of that DOM structure, so an Overleaf editor change would stop the markers appearing** |
+| Gutter markers against Overleaf's live editor | verified on 2026-09-22 — every dot beside its own line, to the pixel, and following the lines on scroll. It took two fixes to get there; the harness now copies the real markup |
 | **`mechcheck.sty` inside Overleaf** | **not verified — that is test 3** |
 
 Test 2 is a sanity check; tests 1 and 3 are the ones that cover genuinely

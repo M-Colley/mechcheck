@@ -490,13 +490,14 @@ same fixtures as the Python suite — including the assertion that both engines
 produce exactly the same findings on the self-test document, and that both
 readers of `mechcheck.yaml` agree on this repository's own configuration.
 
-Extension: 35 checks passing in a real browser via `extension/test-harness.html`
+Extension: 39 checks passing in a real browser via `extension/test-harness.html`
 — panel rendering, project-zip reading, filtering, export, error path, and the
-gutter markers against a copy of Overleaf's editor structure — and loaded
-against a live Overleaf project once, on 2026-08-28. The markers are the one
-part that reads Overleaf's editor DOM rather than its download URL, so they
-are verified against that copy and not against live Overleaf; if Overleaf
-changes its editor they stop appearing and nothing else is affected. Re-run
+gutter markers — and loaded against a live Overleaf project on 2026-08-28,
+with the markers verified there on 2026-09-22: every dot beside the line it
+named, to the pixel, and following the lines on scroll. The markers are the
+one part that reads Overleaf's editor DOM rather than its download URL, so
+that is the check to repeat when Overleaf changes; if they ever stop
+appearing, nothing else is affected. Re-run
 [docs/testing.md](docs/testing.md) test 1 after updating.
 
 `latex/mechcheck.sty`: 14 checks passing against TeX Live 2026
