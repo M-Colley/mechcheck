@@ -482,7 +482,7 @@ tests/                the Python suite, and the fixtures both engines are checke
 
 ## Status
 
-Python side: 857 tests passing, and the bibliography verification has been run
+Python side: 861 tests passing, and the bibliography verification has been run
 against the live Crossref, OpenAlex and DBLP APIs.
 
 Browser side: 327 checks passing (`node browser/test-engine.mjs`) against the

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "mechcheck for Overleaf",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Mechanical checks for LaTeX theses and papers, inside Overleaf. Nothing leaves your machine except the reference lookups you switch on.",
 
   "permissions": ["storage"],
