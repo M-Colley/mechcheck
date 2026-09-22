@@ -593,13 +593,35 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
 
   const editorRoot = () => document.querySelector(".cm-editor");
 
-  /** The file the editor is showing, as the file tree names it. */
+  /** The file the editor is showing, as the file tree names it.
+   *
+   *  Reading textContent off the tree row is wrong, and live Overleaf is where
+   *  that showed: the row renders its icons as Material Symbols ligatures, so
+   *  the text of the row for main.tex is "descriptionmain.texmore_vertMenu".
+   *  Ask for the name four ways, cheapest and most explicit first. */
   function openFileName() {
     for (const selector of ['[role="tree"] [aria-selected="true"]',
+                            '[role="tree"] li.selected',
                             ".file-tree li.selected", ".file-tree-item.selected"]) {
       let node = null;
       try { node = document.querySelector(selector); } catch (err) { continue; }
-      const name = node && (node.textContent || "").trim().split("\n")[0].trim();
+      if (!node) continue;
+      // 1. The row labels itself for screen readers, and that label is the name.
+      const label = ((node.getAttribute && node.getAttribute("aria-label")) || "").trim();
+      if (label) return label;
+      // 2. Overleaf wraps the name in its own element.
+      for (const hint of [".item-name", '[class*="item-name"]']) {
+        const inner = node.querySelector(hint);
+        const text = inner && (inner.textContent || "").trim();
+        if (text) return text.split("\n")[0].trim();
+      }
+      // 3. Otherwise drop what is decorative and read what is left.
+      const clone = node.cloneNode(true);
+      for (const junk of clone.querySelectorAll(
+             '[aria-hidden="true"], .material-symbols, .visually-hidden, button, svg')) {
+        junk.remove();
+      }
+      const name = (clone.textContent || "").trim().split("\n")[0].trim();
       if (name) return name;
     }
     return null;
@@ -636,7 +658,14 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
       clearMarkers();
       const byLine = findingsByLine(target, openFileName());
       let placed = 0;
-      for (const element of editor.querySelectorAll(".cm-gutterElement")) {
+      // Only the line-number gutter: the fold and lint gutters carry their own
+      // .cm-gutterElement children, and a mark belongs beside a number.
+      const gutter = editor.querySelector(".cm-lineNumbers") || editor;
+      for (const element of gutter.querySelectorAll(".cm-gutterElement")) {
+        // CodeMirror keeps a hidden zero-height element holding the widest
+        // number, to size the gutter. It is not a line, and on a long enough
+        // document its number collides with a real one.
+        if (element.offsetHeight === 0) continue;
         const line = parseInt((element.textContent || "").trim(), 10);
         if (!Number.isInteger(line)) continue;
         const here = byLine.get(line);

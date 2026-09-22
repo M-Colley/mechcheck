@@ -119,28 +119,76 @@ function makeZip(entries) {
 
 /* ---- a stand-in for Overleaf's editor ----
    The marker code reads a file tree and a CodeMirror gutter out of the host
-   page. This is that markup, in the shape the extension expects, so the
-   placement logic is exercised rather than described. It says nothing about
-   whether live Overleaf still looks like this -- only test 1 in
-   docs/testing.md can say that. */
-function buildFakeEditor(lineCount = 20) {
-  const tree = document.createElement("div");
+   page, so this is that markup. It is not a tidied version of it: it is
+   copied from what live Overleaf actually served on 2026-09-22, including
+   the two things that broke the first attempt --
+
+     * the tree row renders its icons as Material Symbols ligatures, so its
+       textContent is "descriptionmain.texmore_vertMenu" and only aria-label
+       or .item-name gives the real name; and
+     * CodeMirror keeps a hidden zero-height .cm-gutterElement holding the
+       widest line number, to size the gutter, which is not a line.
+
+   A stand-in that leaves those out passes while the real thing shows nothing,
+   which is exactly what happened. Re-run test 1 in docs/testing.md when
+   Overleaf changes: only that can say this is still faithful. */
+function buildFakeEditor(lineCount = 20, spacerText = "99") {
+  const tree = document.createElement("ul");
   tree.setAttribute("role", "tree");
-  tree.innerHTML = `<div role="treeitem" aria-selected="true">main.tex</div>
-                    <div role="treeitem">refs.bib</div>`;
+  const row = (name, selected) => `
+    <li role="treeitem" ${selected ? 'class="selected" aria-selected="true"' : ""}
+        aria-label="${name}" translate="no">
+      <div class="entity" role="presentation" data-file-type="doc">
+        <div class="entity-name entity-name-react" role="presentation">
+          <div class="file-tree-entity-details">
+            <span class="material-symbols file-tree-icon unfilled"
+                  aria-hidden="true" translate="no">description</span>
+            <div class="item-name"><span>${name}</span></div>
+          </div>
+          <div class="menu-button btn-group">
+            <button class="entity-menu-toggle btn btn-sm" aria-label="Open ${name} action menu">
+              <span class="material-symbols" aria-hidden="true" translate="no">more_vert</span>
+              <span class="visually-hidden">Menu</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </li>`;
+  tree.innerHTML = row("main.tex", true) + row("refs.bib", false);
+
   const editor = document.createElement("div");
   editor.className = "cm-editor";
   const gutters = document.createElement("div");
   gutters.className = "cm-gutters";
+  const lineNumbers = document.createElement("div");
+  lineNumbers.className = "cm-gutter cm-lineNumbers";
+  // The measuring spacer comes first, exactly as CodeMirror emits it.
+  const spacer = document.createElement("div");
+  spacer.className = "cm-gutterElement";
+  spacer.style.cssText = "height:0;visibility:hidden";
+  spacer.textContent = spacerText;
+  lineNumbers.appendChild(spacer);
   for (let n = 1; n <= lineCount; n++) {
     const el = document.createElement("div");
     el.className = "cm-gutterElement";
+    el.style.height = "18px";
     el.textContent = String(n);
-    gutters.appendChild(el);
+    lineNumbers.appendChild(el);
   }
+  // The fold gutter has its own .cm-gutterElement children, with no numbers.
+  const fold = document.createElement("div");
+  fold.className = "cm-gutter cm-foldGutter";
+  for (let n = 1; n <= lineCount; n++) {
+    const el = document.createElement("div");
+    el.className = "cm-gutterElement";
+    el.style.height = "18px";
+    el.textContent = " ";
+    fold.appendChild(el);
+  }
+  gutters.append(lineNumbers, fold);
   editor.appendChild(gutters);
   document.body.append(tree, editor);
-  return { tree, editor, gutters };
+  return { tree, editor, gutters, lineNumbers, spacer };
 }
 
 const ZIP = makeZip(PROJECT);
@@ -214,10 +262,16 @@ window.fetch = async (url) => {
     say("clicking Fix shows the corrected file to copy",
         shadow.querySelector(".body").textContent.includes("Copy corrected file"));
 
-    // marks beside the lines, against a stand-in for Overleaf's editor
-    const fake = buildFakeEditor(20);
-    say("the open file is read from the file tree", C.openFileName() === "main.tex", C.openFileName());
+    // marks beside the lines, against a stand-in for Overleaf's editor.
+    // The spacer is given the number of a line that really has a finding, so
+    // that anything reading it as a line is caught here rather than in Chrome.
     const byLine = C.findingsByLine(result, "main.tex");
+    const trapLine = [...byLine.keys()][0];
+    const fake = buildFakeEditor(20, String(trapLine));
+    say("the open file is read from the file tree", C.openFileName() === "main.tex", C.openFileName());
+    say("the tree row's own text would have given the wrong name",
+        fake.tree.querySelector('[aria-selected="true"]').textContent.replace(/\s+/g, "")
+          !== "main.tex");
     say("findings are grouped by the line they sit on", byLine.size > 0, byLine.size + " lines");
     say("a finding in another file is not grouped here",
         ![...byLine.values()].flat().some(f => f.file && f.file !== "main.tex"));
@@ -235,6 +289,12 @@ window.fetch = async (url) => {
         [...marks].every(m => /\b(error|warn|info)\b/.test(m.className)));
     say("marks are styled from one injected sheet",
         document.querySelectorAll("#mechcheck-marker-styles").length === 1);
+    say("the hidden measuring spacer is not treated as a line",
+        !fake.spacer.querySelector(".mechcheck-gutter-mark"), "spacer reads " + trapLine);
+    say("every mark sits on a line with a height",
+        [...marks].every(m => m.parentElement.offsetHeight > 0));
+    say("the fold gutter gets no marks",
+        !fake.editor.querySelector(".cm-foldGutter .mechcheck-gutter-mark"));
 
     const again = C.placeMarkers(result);
     say("re-placing does not duplicate marks",
@@ -246,7 +306,7 @@ window.fetch = async (url) => {
 
     // A line that scrolls out of view takes its mark with it; one that
     // scrolls in gets a fresh one on the next pass.
-    fake.gutters.firstChild.remove();
+    fake.lineNumbers.querySelectorAll(".cm-gutterElement")[1].remove();
     say("a line scrolled out of view loses its mark",
         C.placeMarkers(result) <= placed);
 
