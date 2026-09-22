@@ -760,6 +760,35 @@ console.log("\nterminology: one name per concept (the same cases as tests/test_t
         !(await fired(doc("The Automated Driving System (ADS) is new. The ADS was tested.\nThe Automated Driving System (ADS) appears again here.\nThe Automated Driving System (ADS) and the ADS."))).has("TRM005"));
 }
 
+console.log("\ndefaults: a CHI paper at submission (the same cases as tests/test_data_layers.py)");
+{
+  const enc = new TextEncoder();
+  const doc = (body, config = null) => {
+    const files = new Map([["main.tex", enc.encode(
+      "\\documentclass{article}\n\\begin{document}\n" + body + "\n\\end{document}\n")]]);
+    if (config) files.set("mechcheck.yaml", enc.encode(config));
+    return files;
+  };
+  const cfg = async (files, o = {}) => (await runChecks(files, { verify: false, ...o })).config;
+  let c = await cfg(doc("Text here."));
+  check("the default is a CHI paper at submission",
+        c.profile === "paper" && c.stage === "submission" && c.venueKey === "chi",
+        JSON.stringify({ profile: c.profile, stage: c.stage, venue: c.venueKey }));
+  c = await cfg(doc("Text here."), { profile: "thesis" });
+  check("the thesis profile turns the venue off", c.venueKey === "" && !c.enabled("VEN001"), c.venueKey);
+  c = await cfg(doc("Text here."), { profile: "thesis", venue: "chi" });
+  check("a thesis can still name a venue", c.venueKey === "chi");
+  c = await cfg(doc("Text here.", "venue: null\n"));
+  check("an explicit null venue beats the default", c.venueKey === "", c.venueKey);
+  c = await cfg(doc("Text here.", "venue: uist\n"));
+  check("a project file chooses its own venue", c.venueKey === "uist", c.venueKey);
+  c = await cfg(doc("Text here.", "profile: thesis\ndisable: []\n"));
+  check("an empty disable list does not erase the profile's own",
+        !c.enabled("VEN001") && !c.enabled("ANON001"));
+  c = await cfg(doc("Text here.", "profile: thesis\nenable:\n  - 'VEN*'\n"));
+  check("enable undoes a profile's disable", c.enabled("VEN001"));
+}
+
 console.log("\nreview-screening checks (the same cases as tests/test_review_rules.py)");
 {
   const enc = new TextEncoder();
@@ -792,7 +821,7 @@ console.log("\nreview-screening checks (the same cases as tests/test_review_rule
         !(await fired(doc(String.raw`Cited~\cite{k1}.`, { bib: entry("k1", { author: "Doe, Jane" }) }))).has("ANON008"));
   check("ANON008 is an anonymous-stage concern",
         !(await fired(doc(String.raw`Cited~\cite{k1}.`, { bib: entry("k1", { author: "Anonymous" }), options: "sigconf" }),
-                      { profile: "paper" })).has("ANON008"));
+                      { profile: "paper", venue: null })).has("ANON008"));
 
   // ANON006 — the author in the PDF's other metadata block
   check("ANON006 finds the author in the XMP packet",
@@ -857,7 +886,7 @@ console.log("\nreview-screening checks (the same cases as tests/test_review_rule
                       { venue: "chi", profile: "paper" })).has("VEN010"));
   check("VEN010 no venue pack means no expectation",
         !(await fired(doc(String.raw`Cited~\cite{k0}.`, { bib: many(30, "Journal of Fluid Mechanics"), options: "manuscript" }),
-                      { profile: "paper" })).has("VEN010"));
+                      { profile: "paper", venue: null })).has("VEN010"));
 
   // VEN011 — the style file that identifies a non-ACM venue
   {

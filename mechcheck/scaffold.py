@@ -122,7 +122,11 @@ def init_project(path: str, profile: str = "thesis", venue: str | None = None,
 
     written, skipped = [], []
 
-    venue_line = f"venue: {venue}" if venue else "venue: null           # chi | assets | autoui | imwut | trf"
+    # A thesis is not submitted to a venue; anything else gets the default.
+    if not venue:
+        venue = None if profile == "thesis" else "chi"
+    venue_line = (f"venue: {venue}" if venue else "venue: null") + \
+        "           # chi | assets | autoui | mobilehci | uist | chiplay | imwut | trf | neurips | iclr | cvpr | aaai"
     config = CONFIG_TEMPLATE.format(profile=profile, venue_line=venue_line)
     _write(os.path.join(root, "mechcheck.yaml"), config, force, written, skipped)
 

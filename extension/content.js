@@ -23,7 +23,9 @@
   let lastOutputAttempts = [];
   let lastAdopted = [], lastConfigPath = null;
 
-  const DEFAULTS = { profile: "thesis", stage: "submission", venue: "", verify: false, autorun: false };
+  /* A paper being submitted to CHI, as everywhere else. A thesis picks the
+     thesis profile, and the project's own mechcheck.yaml overrides both. */
+  const DEFAULTS = { profile: "paper", stage: "submission", venue: "chi", verify: false, autorun: false };
 
   async function getSettings() {
     try {

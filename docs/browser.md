@@ -39,12 +39,15 @@ bibliography is instant and costs the APIs nothing.
 
 | Control | What it does |
 |---|---|
-| **Profile** | thesis · paper · paper (anonymous review) · camera-ready · everything |
+| **Profile** | thesis · **paper** (the default) · paper (anonymous review) · camera-ready · everything |
 | **Stage** | `draft` reports but never blocks · `submission` · `final` promotes warnings to errors |
 | **Venue** | CHI · ASSETS · AutomotiveUI · IMWUT · TRF · MobileHCI · UIST · CHI PLAY · NeurIPS · ICLR · CVPR · AAAI — adds that venue's requirements |
 | **Verify online** | turns the seven reference-verification rules on |
 
-The settings are remembered in the browser, so each student sets them once.
+The page opens on the same default as everything else: a paper being
+submitted to CHI. Pick **Thesis** for a thesis and the venue switches off
+with it. The settings are remembered in the browser, so each student sets
+them once.
 
 **The project's own `mechcheck.yaml` is read too.** If the zip you drop in
 contains one, the page applies it: rules it disables stay quiet, severities it

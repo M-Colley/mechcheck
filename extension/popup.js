@@ -2,7 +2,8 @@
    the button on the page. The venue list is read from the shared engine rather
    than duplicated here, so adding a venue stays a one-file change. */
 
-const DEFAULTS = { profile: "thesis", stage: "submission", venue: "", verify: false, autorun: false };
+/* A paper being submitted to CHI, matching the command line and the page. */
+const DEFAULTS = { profile: "paper", stage: "submission", venue: "chi", verify: false, autorun: false };
 const $ = id => document.getElementById(id);
 const FIELDS = ["profile", "stage", "venue", "verify", "autorun"];
 

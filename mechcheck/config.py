@@ -29,6 +29,9 @@ PROFILES: dict = {
     "thesis": {
         "description": "Bachelor's/Master's thesis: structure, cross-references, abbreviations, bibliography.",
         "disable": ["VEN*", "ANON*"],
+        #: A thesis is not submitted to a venue, so choosing this profile also
+        #: turns the default venue off. Naming one explicitly still wins.
+        "venue": None,
     },
     "paper": {
         "description": "Conference or journal paper without a specific venue pack.",
@@ -57,10 +60,14 @@ STAGES: dict = {
     "final": {"promote": ["*"], "demote": []},          # every warning becomes an error
 }
 
+#: What a document is assumed to be when nothing says otherwise: a paper
+#: being submitted to CHI. A thesis sets `profile: thesis` (which turns the
+#: venue off with it) in its mechcheck.yaml, or passes --profile thesis;
+#: `mechcheck init` writes that file, so a project only chooses once.
 DEFAULTS: dict = {
-    "profile": "thesis",
+    "profile": "paper",
     "stage": "submission",
-    "venue": None,
+    "venue": "chi",
     "language": "en",
     "main": None,
     "fail_on": "error",
@@ -121,17 +128,35 @@ class Config:
         profile_name = (overrides or {}).get("profile") or user.get("profile") or data["profile"]
         profile = PROFILES.get(profile_name, {})
 
-        venue_name = (overrides or {}).get("venue") or user.get("venue") or profile.get("venue")
+        # By key, not by truthiness: `venue: null` in a project's file is an
+        # explicit "no venue" and has to beat the default, which a chain of
+        # `or` would silently skip over.
+        venue_name = data["venue"]
+        for layer in ((overrides or {}), user, profile):
+            if "venue" in layer:
+                venue_name = layer["venue"]
+                break
         venue_data: dict = {}
         if venue_name:
             venue_data = load_venue(venue_name)
+
+        # A profile's own disable list is part of what the profile *is*, so it
+        # is added to the project's rather than replaced by it. Lists replace
+        # on merge, and `mechcheck init` scaffolds `disable: []` -- which used
+        # to erase the profile's selection and quietly switch VEN*/ANON* back
+        # on for every project created that way. `enable:` undoes one.
+        profile_disable = [str(p) for p in (profile.get("disable") or [])]
 
         for layer in (profile, venue_data.get("config", {}), user, overrides or {}):
             _merge(data, {k: v for k, v in (layer or {}).items() if v is not None})
 
         data["profile"] = profile_name
         data["venue"] = venue_name
+        # Shapes first: a project may write `disable: ACC006` as a bare scalar,
+        # and iterating that string would disable the letters of it.
         _coerce_shapes(data)
+        chosen = [str(p) for p in data["disable"]]
+        data["disable"] = profile_disable + [p for p in chosen if p not in profile_disable]
         cfg = cls(data=data, path=user_path, venue_data=venue_data)
         return cfg
 

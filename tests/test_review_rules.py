@@ -94,7 +94,9 @@ def test_an_ordinary_reference_is_not_masked(tmp_path):
 def test_masked_references_are_an_anonymous_stage_concern(tmp_path):
     root = build(tmp_path, "Cited~" + BS + "cite{k1}.", bib=entry(author="Anonymous"),
                  options="sigconf")
-    assert "ANON008" not in fired(check(root, only=["ANON008"], profile="paper"))
+    # venue=None on purpose: the default venue is CHI, whose pack declares
+    # double-anonymous review and would put this document in that stage.
+    assert "ANON008" not in fired(check(root, only=["ANON008"], profile="paper", venue=None))
 
 
 # --------------------------------------------------------------------------- #
@@ -270,7 +272,7 @@ def test_a_thin_bibliography_is_met004s_finding(tmp_path):
 def test_no_venue_pack_means_no_community_expectation(tmp_path):
     root = build(tmp_path, "Cited~" + BS + "cite{k0}.",
                  bib=many("", 30, "Journal of Fluid Mechanics"), options="manuscript")
-    assert "VEN010" not in fired(check(root, only=["VEN010"], profile="paper"))
+    assert "VEN010" not in fired(check(root, only=["VEN010"], profile="paper", venue=None))
 
 
 @pytest.mark.parametrize("name", __import__("mechcheck.config", fromlist=["x"]).available_venues())

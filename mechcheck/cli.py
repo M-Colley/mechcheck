@@ -69,7 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
     init = sub.add_parser("init", help="write a starter mechcheck.yaml (and optionally CI + .sty)")
     init.add_argument("path", nargs="?", default=".")
     init.add_argument("--venue")
-    init.add_argument("--profile", choices=sorted(PROFILES), default="thesis")
+    init.add_argument("--profile", choices=sorted(PROFILES), default="paper")
     init.add_argument("--with-ci", action="store_true", help="also write .github/workflows/mechcheck.yml")
     init.add_argument("--with-sty", action="store_true", help="also copy mechcheck.sty into the project")
     init.add_argument("--force", action="store_true")

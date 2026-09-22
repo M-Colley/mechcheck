@@ -202,6 +202,79 @@ def test_dumps_produces_something_the_parser_reads_back():
 # configuration
 # --------------------------------------------------------------------------- #
 
+# --------------------------------------------------------------------------- #
+# what a document is assumed to be when nothing says otherwise
+# --------------------------------------------------------------------------- #
+
+def test_the_default_is_a_chi_paper_at_submission(tmp_path):
+    config = Config.load(str(tmp_path))
+    assert (config.profile, config.stage, config.venue) == ("paper", "submission", "chi")
+    assert config.venue_data.get("name") == "ACM CHI"
+
+
+def test_choosing_the_thesis_profile_turns_the_venue_off(tmp_path):
+    """A thesis is not submitted to a venue, so it cannot inherit one."""
+    config = Config.load(str(tmp_path), overrides={"profile": "thesis"})
+    assert config.venue is None
+    assert config.venue_data == {}
+    assert not config.enabled("VEN001")
+
+
+def test_a_thesis_can_still_name_a_venue_deliberately(tmp_path):
+    config = Config.load(str(tmp_path), overrides={"profile": "thesis", "venue": "chi"})
+    assert config.venue == "chi"
+
+
+def test_an_explicit_null_venue_beats_the_default(tmp_path):
+    """`venue: null` is a choice, and a chain of `or` would skip over it."""
+    (tmp_path / "mechcheck.yaml").write_text("venue: null\n", encoding="utf-8", newline="\n")
+    assert Config.load(str(tmp_path)).venue is None
+
+
+def test_a_project_file_still_chooses_its_own_venue(tmp_path):
+    (tmp_path / "mechcheck.yaml").write_text("venue: uist\n", encoding="utf-8", newline="\n")
+    assert Config.load(str(tmp_path)).venue == "uist"
+
+
+def test_an_empty_disable_list_no_longer_erases_the_profiles_own(tmp_path):
+    """`mechcheck init` scaffolds `disable: []`, and lists replace on merge.
+
+    That quietly switched VEN* and ANON* back on for every project created
+    that way, whatever profile it had chosen.
+    """
+    (tmp_path / "mechcheck.yaml").write_text(
+        "profile: thesis\ndisable: []\n", encoding="utf-8", newline="\n")
+    config = Config.load(str(tmp_path))
+    assert not config.enabled("VEN001")
+    assert not config.enabled("ANON001")
+
+
+def test_a_project_adds_to_the_profiles_disable_list(tmp_path):
+    (tmp_path / "mechcheck.yaml").write_text(
+        "profile: thesis\ndisable:\n  - 'STY*'\n", encoding="utf-8", newline="\n")
+    config = Config.load(str(tmp_path))
+    assert not config.enabled("VEN001")      # the profile's
+    assert not config.enabled("STY001")      # the project's
+
+
+def test_enable_is_how_a_project_undoes_a_profiles_disable(tmp_path):
+    (tmp_path / "mechcheck.yaml").write_text(
+        "profile: thesis\nenable:\n  - 'VEN*'\n", encoding="utf-8", newline="\n")
+    assert Config.load(str(tmp_path)).enabled("VEN001")
+
+
+def test_init_writes_the_venue_that_matches_the_profile(tmp_path):
+    from mechcheck.scaffold import init_project
+
+    paper, thesis = tmp_path / "paper", tmp_path / "thesis"
+    paper.mkdir(), thesis.mkdir()
+    init_project(str(paper), profile="paper")
+    init_project(str(thesis), profile="thesis")
+    assert "venue: chi" in (paper / "mechcheck.yaml").read_text(encoding="utf-8")
+    assert "venue: null" in (thesis / "mechcheck.yaml").read_text(encoding="utf-8")
+    assert Config.load(str(thesis)).venue is None
+
+
 def test_cli_overrides_beat_the_config_file(tmp_path):
     (tmp_path / "mechcheck.yaml").write_text("profile: thesis\nstage: draft\n", encoding="utf-8")
     config = Config.load(str(tmp_path), overrides={"stage": "final"})

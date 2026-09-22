@@ -71,7 +71,7 @@ Chrome profiles.
 
 | Setting | Notes |
 |---|---|
-| Profile | thesis · paper · paper (anonymous review) · camera-ready · everything |
+| Profile | thesis · **paper** (the default) · paper (anonymous review) · camera-ready · everything |
 | Stage | `draft` never blocks · `submission` · `final` promotes warnings to errors |
 | Venue | CHI · ASSETS · AutomotiveUI · IMWUT · TRF · MobileHCI · UIST · CHI PLAY · NeurIPS · ICLR · CVPR · AAAI |
 | Verify refs | turns on the seven `BIO*` rules |

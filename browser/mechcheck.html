@@ -212,7 +212,7 @@ footer a { color:var(--accent); }
         <label for="profile">Profile</label>
         <select id="profile">
           <option value="thesis">Thesis</option>
-          <option value="paper">Paper</option>
+          <option value="paper" selected>Paper</option>
           <option value="paper-anonymous">Paper (anonymous review)</option>
           <option value="camera-ready">Camera-ready</option>
           <option value="all">Everything</option>
@@ -830,7 +830,9 @@ const SEV = { info: 10, warn: 20, error: 30 };
 const SEV_NAME = { 10: "info", 20: "warn", 30: "error" };
 
 const PROFILES = {
-  "thesis":          { disable: ["VEN*", "ANON*"] },
+  // venue: null -- a thesis is not submitted to a venue, so this profile
+  // turns the default venue off with it.
+  "thesis":          { disable: ["VEN*", "ANON*"], venue: null },
   "paper":           { disable: ["THE*"] },
   "paper-anonymous": { disable: ["THE*"], anonymous: true },
   "camera-ready":    { disable: ["THE*"], stage: "final" },
@@ -2061,6 +2063,13 @@ function globMatch(value, pattern) {
   return re.test(value);
 }
 
+/* What a document is assumed to be when nothing says otherwise: a paper
+   being submitted to CHI. Mirrors DEFAULTS in mechcheck/config.py. A thesis
+   picks the thesis profile, which turns the venue off with it. */
+const DEFAULT_PROFILE = "paper";
+const DEFAULT_STAGE = "submission";
+const DEFAULT_VENUE = "chi";
+
 class Config {
   /** ``options`` is what the person in front of the page chose; ``file`` is
       the project's mechcheck.yaml. An explicit choice wins over the file, so
@@ -2070,12 +2079,21 @@ class Config {
     const pick = (key, fallback) =>
       (Object.prototype.hasOwnProperty.call(options, key) && options[key] !== undefined)
         ? options[key] : (file[key] !== undefined && file[key] !== null ? file[key] : fallback);
-    const profile = pick("profile", "thesis");
+    const profile = pick("profile", DEFAULT_PROFILE);
     const prof = PROFILES[profile] || {};
     this.file = isPlainObject(file) ? file : {};
     this.profile = profile;
-    this.stage = prof.stage || pick("stage", "submission");
-    this.venueKey = pick("venue", "") || "";
+    this.stage = prof.stage || pick("stage", DEFAULT_STAGE);
+    // A thesis is not submitted to a venue, so that profile turns the
+    // default venue off; naming one explicitly still wins.
+    // By key, not by truthiness: `venue: null` in a project's file is an
+    // explicit "no venue" and has to beat the default. Order: what the
+    // person chose, then the file, then the profile, then the default.
+    const has = (o, k) => o && Object.prototype.hasOwnProperty.call(o, k) && o[k] !== undefined;
+    this.venueKey = (has(options, "venue") ? options.venue
+      : has(this.file, "venue") ? this.file.venue
+      : has(prof, "venue") ? prof.venue
+      : DEFAULT_VENUE) || "";
     this.venue = this.venueKey ? (VENUES[this.venueKey] || {}) : {};
     this.language = pick("language", "en");
     this.anonymous = !!prof.anonymous;
@@ -5441,6 +5459,9 @@ function populateVenues() {
   const sel = $("#venue");
   for (const [key, pack] of Object.entries(VENUES))
     sel.appendChild(el("option", { value: key, text: pack.name }));
+  // Same default as the command line: a paper being submitted to CHI. A
+  // saved setting, and a project's own mechcheck.yaml, both override it.
+  sel.value = DEFAULT_VENUE;
 }
 
 function setDropState(loaded, label) {

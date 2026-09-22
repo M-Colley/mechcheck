@@ -24,11 +24,16 @@ If you would rather have a command line:
 
 ```bash
 pip install "git+https://github.com/M-Colley/mechcheck"
-mechcheck check .                       # a thesis
-mechcheck check . --venue chi           # + CHI's submission requirements
-mechcheck check . --venue autoui --profile paper-anonymous --stage final
+mechcheck check .                       # a CHI paper at submission — the default
+mechcheck check . --profile thesis      # a thesis: no venue, thesis formalities on
+mechcheck check . --venue uist --profile paper-anonymous --stage final
 mechcheck fix .                         # apply the unambiguous corrections
 ```
+
+**What it assumes.** With nothing configured, a document is taken to be a
+paper being submitted to CHI. A thesis says so once — `--profile thesis`, or
+`profile: thesis` in `mechcheck.yaml`, which `mechcheck init` writes — and
+that profile turns the venue off with it.
 
 ---
 
@@ -404,7 +409,8 @@ it was read and the page it was read from. `mechcheck venues` lists them.
 ## Everyday use
 
 ```bash
-mechcheck check .                          # the default: thesis, submission stage
+mechcheck check .                          # the default: a CHI paper at submission
+mechcheck check . --profile thesis         # a thesis: no venue, thesis formalities on
 mechcheck check . --stage draft            # report everything, fail nothing
 mechcheck check . --venue assets           # + ASSETS accessibility requirements
 mechcheck check . --offline                # skip the network lookups
