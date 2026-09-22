@@ -87,6 +87,16 @@ the one failure I would like reported precisely — if there are no dots but the
 panel is otherwise correct, Overleaf has changed its editor markup, and the
 fix belongs in `placeMarkers` in `extension/content.js`.
 
+**Then the inline notes**, verified the same day and carrying the same risk.
+On line 36, `Figure~\ref` and `Table~\ref` should be underlined and a red
+`REF008 …` should sit after the end of the line; on line 38, `sec:nowhere`
+underlined with `REF001 …`; on line 40, `ADS` underlined with `ABB001 …`.
+Lines 36 and 40 wrap, so check the note follows the *last* row of the line
+rather than landing on the text. Hover one for the full message. Untick
+**explain inline**: every note and underline goes. A line whose message
+quotes something that is not on that line gets its note and no underline,
+which is correct, not a miss.
+
 **If it fails,** tell me which of these it was:
 
 | Symptom | What it means |
@@ -160,11 +170,12 @@ So you know where the gaps are rather than re-testing what is covered:
 | 157 rules, Python | 861 tests |
 | 157 rules, browser engine | 327 checks in Node, same fixtures |
 | Both agree on this exact document | asserted in both suites, 37 findings |
-| Extension panel, zip reading, filters, editor markers | 39 checks in a real browser |
+| Extension panel, zip reading, filters, editor markers, inline notes | 61 checks in a real browser |
 | `mechcheck.sty` | 14 checks against TeX Live 2026 |
 | p-value recomputation | both engines pinned to one table of reference values; the Python side checked against numerical integration; and run over 31 recomputable statistics in a real paper's results section without a single false positive |
 | **Extension in Chrome on live Overleaf** | verified once, on 2026-08-28 — re-run test 1 after updating |
 | Gutter markers against Overleaf's live editor | verified on 2026-09-22 — every dot beside its own line, to the pixel, and following the lines on scroll. It took two fixes to get there; the harness now copies the real markup |
+| Inline notes against Overleaf's live editor | verified on 2026-09-22 — the named words underlined, every note clear of its own text on 7 wrapped lines, and the document byte-identical afterwards. Two more fixes to get there |
 | **`mechcheck.sty` inside Overleaf** | **not verified — that is test 3** |
 
 Test 2 is a sanity check; tests 1 and 3 are the ones that cover genuinely

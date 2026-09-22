@@ -88,16 +88,50 @@ zero-height elements are skipped. The harness markup was replaced with a copy
 of what Overleaf actually served that day, spacer and ligatures included, so
 the same mistake fails the suite next time.
 
+## The finding, where the problem is
+
+A dot says which line. The inline notes say what: the offending words are
+underlined in the text itself, and the rule's message sits at the end of the
+line, coloured by severity. Hover it for the full text; a line with more than
+one finding shows the worst and `+2 more`, and lists them all in the tooltip.
+Untick **explain inline** to turn them off.
+
+The underline is only drawn where the span can be identified — the literal
+the message quotes, when that literal really is on the line, or the word at
+the reported column. When neither holds, the line gets its note and no
+underline, because underlining the wrong words is worse than underlining
+none.
+
+Like the dots, this is drawn on a layer over the editor and never into it.
+That constraint is also why the message sits at the end of the line rather
+than on its own row underneath: giving it a row means inserting a block into
+the text, CodeMirror reconciles anything that appears inside `.cm-content`
+back into the document, and the document is a CRDT shared with whoever else
+has the project open. An overlay cannot corrupt a paper; an insertion can.
+
+**Verified against live Overleaf on 2026-09-22**, which again earned its
+keep. Two defects only a real project showed:
+
+* the notes were placed by counting gutter numbers off against line
+  elements, and Overleaf rendered 54 of the latter against 53 of the former,
+  so every note was one line out and nothing was underlined at all. Lines
+  are now matched by where they are — a gutter entry and its line share a
+  top edge — which also survives wrapped lines and widgets; and
+* a note on a wrapped line took its horizontal position from the end of the
+  last visual row and its vertical position from the first, so it was drawn
+  on top of the line's own text. It now follows the end of the last row.
+
 Two limitations remain:
 
 * **It matches files by name.** A finding is shown only when its file is the
   one open in the editor. Two files of the same name in different folders
   would both match.
-* **It reads Overleaf's editor DOM**, which is the one thing here that is not
-  a documented interface, and the episode above is exactly what that risk
-  looks like. If Overleaf changes its editor again the markers stop appearing.
-  They are deliberately built so that failing means no dots: the panel, the
-  findings and the fixes are untouched, and nothing else depends on them.
+* **They read Overleaf's editor DOM**, which is the one thing here that is
+  not a documented interface, and both episodes above are exactly what that
+  risk looks like. If Overleaf changes its editor again, the dots and the
+  notes stop appearing. They are deliberately built so that failing means
+  nothing is drawn: the panel, the findings and the fixes are untouched, and
+  nothing else depends on them.
 
 ## Privacy
 
@@ -121,6 +155,7 @@ Chrome profiles.
 | Verify refs | turns on the seven `BIO*` rules |
 | Check automatically | run as soon as a project opens |
 | Mark lines | dots in the editor gutter beside the lines with findings (on by default) |
+| Explain inline | the offending words underlined, and the message at the end of the line (on by default) |
 
 If the Overleaf project contains a `mechcheck.yaml`, it is read as well: rules
 it disables stay quiet, severities and per-rule options apply, the project's
@@ -156,13 +191,13 @@ The generated file is committed, so nobody needs to run this to install.
 from a mocked `fetch`, and drives the real content script — the panel, the zip
 reading, the filters, the Markdown export and the error path. Open
 `extension/test-harness.built.html` (self-contained; produced by the build
-script) in any browser. It reports 39 checks, including the editor markers.
+script) in any browser. It reports 61 checks, including the editor markers and the inline notes.
 
 ## What is verified, and what is not
 
 Verified: the engine (327 Node checks), the zip reading, the panel rendering,
-filtering, fixing and the editor markers in a real browser (39 harness
-checks), the manifest, and the icons.
+filtering, fixing, the editor markers and the inline notes in a real
+browser (61 harness checks), the manifest, and the icons.
 
 **Verified against a live Overleaf project** on 2026-08-28: the extension
 injected, read the project, and reported exactly the findings the self-test
