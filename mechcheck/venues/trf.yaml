@@ -76,3 +76,4 @@ uncertain:
   - 'The Highlights format (commonly 3-5 bullets of at most 85 characters each) could not be re-verified: the live guide for authors blocks automated fetching. Check the numbers before submitting.'
   - 'The exact bst/biblatex style name was not confirmed; elsarticle-harv is the usual APA-like Elsevier style but verify against the template you download.'
   - 'Structured-abstract and keyword-count requirements were not confirmed.'
+  - 'The community reference threshold (min_references) is not measured for this venue. CHI publishes the numbers behind its own -- accepted papers cite a median of 17 SIGCHI references, papers desk-rejected as out of scope a median of 0 -- and this pack reuses that shape by analogy. Treat VEN010 as a prompt to look, never as a measurement.'

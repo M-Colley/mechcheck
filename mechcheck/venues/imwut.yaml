@@ -76,3 +76,4 @@ uncertain:
   - 'The final typeset format is a large single-column ACM journal format (acmlarge in some guidance, acmsmall in others). Confirm which the current template uses before the camera-ready.'
   - 'No length limit is encoded because none was confirmed.'
   - 'The anonymity model was not confirmed; the ANON rules stay off unless you select the paper-anonymous profile.'
+  - 'The community reference threshold (min_references) is not measured for this venue. CHI publishes the numbers behind its own -- accepted papers cite a median of 17 SIGCHI references, papers desk-rejected as out of scope a median of 0 -- and this pack reuses that shape by analogy. Treat VEN010 as a prompt to look, never as a measurement.'

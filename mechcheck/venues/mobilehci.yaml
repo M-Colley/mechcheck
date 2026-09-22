@@ -1,7 +1,11 @@
-# ACM AutomotiveUI -- venue pack
-name: ACM AutomotiveUI
-verified: 2026-08-27
-source_url: https://www.auto-ui.org/26/papers/
+# ACM MobileHCI -- venue pack
+#
+# Read off the MobileHCI 2026 papers page on the `verified` date. Limits and
+# required statements change every cycle: re-read the current call before you
+# trust this file, and update `verified` when you do.
+name: ACM MobileHCI
+verified: 2026-09-21
+source_url: https://mobilehci.acm.org/2026/submit/papers.html
 
 document_class: acmart
 bibliography_style: ACM-Reference-Format
@@ -10,25 +14,24 @@ class_options:
   submission:
     required:
       - manuscript
+      - review
     forbidden:
       - sigconf
   final:
-    required:
-      - sigconf
     forbidden:
       - review
       - anonymous
 
 anonymity:
   model: double-anonymous
-  note: 'Remove identifying information from the title/header area and from the document metadata; refer to your previous work in the third person.'
+  note: 'Reviewing is double-anonymous: reviewers and authors are anonymous to each other. Use manuscript,review,anonymous for the submission.'
 
 length:
-  unit: pages
-  min_pages: 6
-  max_pages: 13
-  excludes: 'references do not count towards the submission page limit; the camera-ready must be 12 pages or fewer INCLUDING references'
-  note: 'Single-column (manuscript) format. All page elements other than references count.'
+  unit: words
+  min_words: 4000
+  max_words: 12000
+  excludes: 'references and appendix do not count'
+  note: 'Typical length is 4000 to 9000 words. Any length is allowed if the contribution is commensurate, but above 12000 words the conference may reject the paper if no justification is given.'
 
 accessibility:
   descriptions_required: true
@@ -39,20 +42,13 @@ requires:
 
 required_commands:
   - command: ccsdesc
-    why: 'ACM requires CCS concepts'
+    why: 'ACM requires CCS concepts; TAPS rejects submissions without them'
   - command: keywords
 
 filename_charset_strict: true
 
-rules:
-  MET002:
-    min_pages: 6
-    max_pages: 13
-  MET004:
-    min_references: 20
-
 community:
-  name: SIGCHI/automotive HCI
+  name: SIGCHI/HCI
   min_references: 4
   venues:
     - CHI
@@ -82,12 +78,13 @@ community:
     - Human-Computer Interaction
     - Human Computer Interaction
     - Human-Computer Studies
-    - Transportation Research Part F
-    - Human Factors
-    - Accident Analysis
-    - Applied Ergonomics
-    - Intelligent Transportation
+
+rules:
+  MET001:
+    max_words: 12000
+    min_words: 4000
 
 uncertain:
-  - 'The camera-ready limit (12 pages including references) differs from the submission limit (13 pages excluding references). For the camera-ready check run --stage final and set rules.MET002.max_pages to 12.'
+  - 'The 12000-word figure is a rejection threshold conditional on justification, not a hard cap, and mechchecks word count approximates the venues basis rather than reproducing it.'
+  - 'The screen option appears in the venues own documentclass line; it is a rendering choice rather than a requirement, so it is not enforced here.'
   - 'The community reference threshold (min_references) is not measured for this venue. CHI publishes the numbers behind its own -- accepted papers cite a median of 17 SIGCHI references, papers desk-rejected as out of scope a median of 0 -- and this pack reuses that shape by analogy. Treat VEN010 as a prompt to look, never as a measurement.'

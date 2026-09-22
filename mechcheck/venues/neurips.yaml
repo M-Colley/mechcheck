@@ -1,0 +1,73 @@
+# NeurIPS -- venue pack
+#
+# Read off the NeurIPS 2026 main track handbook and the official template on
+# the `verified` date. The style file is renamed every year, so this pack goes
+# out of date on a fixed schedule: re-read the call and update `verified`.
+name: NeurIPS
+verified: 2026-09-21
+source_url: https://neurips.cc/Conferences/2026/MainTrackHandbook
+
+document_class: article
+
+required_packages:
+  - package: neurips_2026
+    why: 'the only supported style file for this cycle; NeurIPS renames it every year, so an older one marks the paper as recycled'
+
+anonymity:
+  model: double-anonymous
+  note: 'All submissions must be anonymised and may not contain any identifying information that may violate the double-blind reviewing policy.'
+
+length:
+  unit: pages
+  excludes: 'references, checklist and appendices do not count towards the nine pages'
+  note: 'The main text of a submitted paper is limited to nine content pages, including all figures and tables. Papers over the limit are not reviewed.'
+
+required_statements:
+  - name: NeurIPS paper checklist
+    severity: warn
+    pattern: 'paper checklist|neurips checklist|answer.{0,20}checklist'
+    fix: 'Authors are required to complete the paper checklist included in the paper template; it goes after the references and does not count towards the page limit.'
+
+requires:
+  ai_disclosure: false
+  data_availability: false
+
+community:
+  name: machine learning
+  min_references: 4
+  venues:
+    - NeurIPS
+    - Neural Information Processing Systems
+    - ICLR
+    - Learning Representations
+    - ICML
+    - Machine Learning
+    - AAAI
+    - Artificial Intelligence
+    - IJCAI
+    - CVPR
+    - ICCV
+    - ECCV
+    - Computer Vision
+    - Pattern Recognition
+    - ACL
+    - EMNLP
+    - NAACL
+    - Computational Linguistics
+    - JMLR
+    - TPAMI
+    - TMLR
+    - KDD
+    - SIGIR
+    - WWW
+    - AISTATS
+    - COLT
+    - UAI
+    - CoRL
+    - RSS
+
+uncertain:
+  - 'The bibliography style is not encoded: the template ships a natbib setup but the handbook does not name a required bst, and guessing one would report conforming papers as wrong.'
+  - 'Whether the checklist must appear in the submitted PDF or only in the submission form varies by cycle; VEN005 looks for it in the PDF and is a warning, not an error.'
+  - 'The page limit is recorded in the length note but deliberately NOT encoded as max_pages: the venue counts main text without references, and mechcheck counts pages in the whole compiled PDF, so enforcing it here would report conforming papers as over. Check the limit yourself.'
+  - 'The community reference threshold (min_references) is not measured for this venue. CHI publishes the numbers behind its own -- accepted papers cite a median of 17 SIGCHI references, papers desk-rejected as out of scope a median of 0 -- and this pack reuses that shape by analogy. Treat VEN010 as a prompt to look, never as a measurement.'

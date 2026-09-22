@@ -273,16 +273,120 @@ def test_no_venue_pack_means_no_community_expectation(tmp_path):
     assert "VEN010" not in fired(check(root, only=["VEN010"], profile="paper"))
 
 
-def test_every_pack_that_names_a_community_names_real_venues():
-    from mechcheck.config import available_venues, load_venue
+@pytest.mark.parametrize("name", __import__("mechcheck.config", fromlist=["x"]).available_venues())
+def test_every_pack_names_its_community(name):
+    """Required, not optional: a pack without one loses VEN010 in silence.
 
-    for name in available_venues():
-        community = load_venue(name).get("community") or {}
-        if not community:
-            continue
-        assert community.get("name"), name
-        assert len(community.get("venues") or []) >= 5, name
-        assert int(community.get("min_references", 0)) >= 1, name
+    The rule reads the block and returns when it is absent, so a venue added
+    later would simply stop being checked and nothing would say so.
+    """
+    from mechcheck.config import load_venue
+
+    community = load_venue(name).get("community") or {}
+    assert community, f"{name}: no community block, so VEN010 cannot run for this venue"
+    assert community.get("name"), name
+    assert len(community.get("venues") or []) >= 5, name
+    assert int(community.get("min_references", 0)) >= 1, name
+
+
+def test_the_venues_the_group_submits_to_all_ship():
+    from mechcheck.config import available_venues
+
+    assert {"chi", "assets", "autoui", "imwut", "trf", "mobilehci", "uist",
+            "chiplay", "neurips", "iclr", "cvpr", "aaai"} <= set(available_venues())
+
+
+@pytest.mark.parametrize("name", __import__("mechcheck.config", fromlist=["x"]).available_venues())
+def test_every_pack_is_honest_about_when_it_was_read(name):
+    """A pack that cannot say when it was checked cannot be trusted with a deadline."""
+    import re as _re
+
+    from mechcheck.config import load_venue
+
+    pack = load_venue(name)
+    assert _re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(pack.get("verified", ""))), name
+    assert str(pack.get("source_url", "")).startswith("http"), name
+    assert pack.get("uncertain"), f"{name}: nothing recorded as unverified"
+
+
+@pytest.mark.parametrize("name", __import__("mechcheck.config", fromlist=["x"]).available_venues())
+def test_a_pack_encodes_a_page_limit_only_where_it_can_be_checked(name):
+    """MET002 counts pages in the whole PDF, references included.
+
+    Every venue here states its limit for the main text alone, so encoding
+    one as max_pages would report a conforming paper as over. A pack that
+    sets it anyway has to say in its note that the limit covers everything.
+    """
+    from mechcheck.config import load_venue
+
+    length = load_venue(name).get("length") or {}
+    if not length.get("max_pages"):
+        return
+    excludes = str(length.get("excludes", "")).lower()
+    assert "do not count" in excludes or "excluded" in excludes or "including" in excludes, \
+        f"{name}: max_pages is set but the note does not say what the limit covers"
+
+
+@pytest.mark.parametrize("name", __import__("mechcheck.config", fromlist=["x"]).available_venues())
+def test_every_pack_says_where_its_threshold_came_from(name):
+    """The number is a judgement, and a pack has to admit which kind.
+
+    CHI's comes from the chairs' published desk-reject figures; every other
+    pack reuses that shape by analogy, and saying so is the difference
+    between a convenience and a claim to authority.
+    """
+    from mechcheck.config import load_venue
+
+    notes = " ".join(str(u) for u in (load_venue(name).get("uncertain") or []))
+    assert "community reference threshold" in notes, \
+        f"{name}: the uncertain block does not say where min_references came from"
+
+
+# --------------------------------------------------------------------------- #
+# VEN011 — the style file that identifies a non-ACM venue
+# --------------------------------------------------------------------------- #
+
+def test_a_missing_style_package_is_reported(tmp_path):
+    root = build(tmp_path, "Text here.", cls="article", options="")
+    result = check(root, only=["VEN011"], venue="neurips", profile="paper")
+    assert "VEN011" in fired(result)
+    assert "neurips_2026" in result.findings[0].message
+
+
+def test_last_years_style_file_is_still_missing_this_years(tmp_path):
+    """The commonest way a recycled submission gives itself away."""
+    root = build(tmp_path, "Text here.", preamble=BS + "usepackage{neurips_2024}" + NL,
+                 cls="article", options="")
+    assert "VEN011" in fired(check(root, only=["VEN011"], venue="neurips", profile="paper"))
+
+
+def test_the_right_style_package_passes(tmp_path):
+    root = build(tmp_path, "Text here.", preamble=BS + "usepackage{neurips_2026}" + NL,
+                 cls="article", options="")
+    assert "VEN011" not in fired(check(root, only=["VEN011"], venue="neurips", profile="paper"))
+
+
+def test_a_style_package_loaded_beside_others_counts(tmp_path):
+    root = build(tmp_path, "Text here.",
+                 preamble=BS + "usepackage{iclr2026_conference,times}" + NL,
+                 cls="article", options="")
+    assert "VEN011" not in fired(check(root, only=["VEN011"], venue="iclr", profile="paper"))
+
+
+def test_a_venue_that_names_no_package_reports_nothing(tmp_path):
+    root = build(tmp_path, "Text here.", options="manuscript")
+    assert "VEN011" not in fired(check(root, only=["VEN011"], venue="chi", profile="paper"))
+
+
+def test_the_acm_venues_are_identified_by_their_class_instead(tmp_path):
+    """UIST reviews in sigconf, unlike the manuscript-format SIGCHI venues."""
+    from mechcheck.config import load_venue
+
+    assert load_venue("uist")["class_options"]["submission"]["required"] == \
+        ["sigconf", "review", "anonymous"]
+    assert "manuscript" in load_venue("uist")["class_options"]["submission"]["forbidden"]
+    assert load_venue("mobilehci")["class_options"]["submission"]["required"] == \
+        ["manuscript", "review"]
 
 
 # --------------------------------------------------------------------------- #

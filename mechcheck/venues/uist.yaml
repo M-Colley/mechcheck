@@ -1,0 +1,87 @@
+# ACM UIST -- venue pack
+#
+# Read off the UIST 2026 call for participation and author guide on the
+# `verified` date. Re-read the current call before you trust this file.
+name: ACM UIST
+verified: 2026-09-21
+source_url: https://uist.acm.org/2026/cfp/
+
+document_class: acmart
+bibliography_style: ACM-Reference-Format
+
+# UIST is the exception among the SIGCHI venues here: it reviews in the
+# two-column sigconf format, not the single-column manuscript one.
+class_options:
+  submission:
+    required:
+      - sigconf
+      - review
+      - anonymous
+    forbidden:
+      - manuscript
+  final:
+    required:
+      - sigconf
+    forbidden:
+      - review
+      - anonymous
+
+anonymity:
+  model: double-anonymous
+  note: 'Paper submissions are anonymous: authors must remove names and affiliations from the paper, the video and all supplementary material. The primary AC sees author identities; the secondary AC and external reviewers do not.'
+
+length:
+  unit: pages
+  excludes: 'references and appendices do not count towards the limit'
+  note: 'Standard papers are limited to 10 pages and short papers to 5, excluding references and appendices. Papers over the limit are desk-rejected.'
+
+accessibility:
+  descriptions_required: true
+
+requires:
+  ai_disclosure: true
+  data_availability: false
+
+required_commands:
+  - command: ccsdesc
+    why: 'ACM requires CCS concepts; TAPS rejects submissions without them'
+  - command: keywords
+
+filename_charset_strict: true
+
+community:
+  name: SIGCHI/HCI
+  min_references: 4
+  venues:
+    - CHI
+    - UIST
+    - CSCW
+    - DIS
+    - ASSETS
+    - MobileHCI
+    - IUI
+    - TEI
+    - UbiComp
+    - IMWUT
+    - CHI PLAY
+    - IDC
+    - VRST
+    - EICS
+    - CUI
+    - AutomotiveUI
+    - AutoUI
+    - Automotive User Interfaces
+    - TOCHI
+    - Human Factors in Computing Systems
+    - Computer-Supported Cooperative Work
+    - Computer Supported Cooperative Work
+    - User Interface Software
+    - Interacting with Computers
+    - Human-Computer Interaction
+    - Human Computer Interaction
+    - Human-Computer Studies
+
+uncertain:
+  - 'The bibliography style is the ACM Reference Format that acmart applies by default; the call does not name it explicitly.'
+  - 'The page limit is recorded in the length note but deliberately NOT encoded as max_pages: the venue counts main text without references, and mechcheck counts pages in the whole compiled PDF, so enforcing it here would report conforming papers as over. Check the limit yourself.'
+  - 'The community reference threshold (min_references) is not measured for this venue. CHI publishes the numbers behind its own -- accepted papers cite a median of 17 SIGCHI references, papers desk-rejected as out of scope a median of 0 -- and this pack reuses that shape by analogy. Treat VEN010 as a prompt to look, never as a measurement.'

@@ -259,6 +259,30 @@ def stale_venue_pack(ctx):
                       fix=f"Re-read {source or 'the current call for papers'} and update the pack.")
 
 
+@rule("VEN011", "Required style package missing", Category.POLICY, Severity.ERROR,
+      rationale="Outside ACM, a venue is identified by its style file rather than its document class: NeurIPS, ICLR and CVPR all build on plain `article`, and the only thing distinguishing a conforming paper is the package it loads. These files are renamed every cycle, so last year's is the commonest way a recycled submission gives itself away.",
+      fix="Load the style file from this cycle's author kit, and check the year in its name.")
+def required_packages(ctx):
+    pack = _pack(ctx)
+    loaded = {name.lower() for name in ctx.project.packages()}
+    for spec in _as_list(pack.get("required_packages")):
+        if isinstance(spec, dict):
+            name = str(spec.get("package") or spec.get("name") or "").strip()
+            why = str(spec.get("why") or "")
+            severity = spec.get("severity")
+        else:
+            name, why, severity = str(spec).strip(), "", None
+        if not name or name.lower() in loaded:
+            continue
+        yield ctx.finding("VEN011",
+                          f"\\usepackage{{{name}}} is required by {pack.get('name', ctx.config.venue)}"
+                          + (f": {why}" if why else ""),
+                          file=ctx.project.main,
+                          severity=Severity.parse(severity, ctx.config.severity_for("VEN011")),
+                          fix=f"Add \\usepackage{{{name}}} from the venue's author kit.",
+                          data={"package": name})
+
+
 @rule("VEN010", "Few references to this venue's own community", Category.POLICY, Severity.INFO,
       rationale="Work that cites almost nothing from the community it is submitted to is the shape of a paper sent to the wrong venue -- CHI's chairs report that papers desk-rejected as out of scope cite a median of zero HCI references. Whether the fit is right is a judgement for a person; the count is not.",
       fix="If the work does belong here, show it: engage the venue's own literature where you position the contribution.")

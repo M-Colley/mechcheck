@@ -73,7 +73,7 @@ Chrome profiles.
 |---|---|
 | Profile | thesis · paper · paper (anonymous review) · camera-ready · everything |
 | Stage | `draft` never blocks · `submission` · `final` promotes warnings to errors |
-| Venue | CHI · ASSETS · AutomotiveUI · IMWUT · TRF |
+| Venue | CHI · ASSETS · AutomotiveUI · IMWUT · TRF · MobileHCI · UIST · CHI PLAY · NeurIPS · ICLR · CVPR · AAAI |
 | Verify refs | turns on the seven `BIO*` rules |
 | Check automatically | run as soon as a project opens |
 
@@ -115,7 +115,7 @@ script) in any browser. It reports 22 checks.
 
 ## What is verified, and what is not
 
-Verified: the engine (266 Node checks), the zip reading, the panel rendering,
+Verified: the engine (290 Node checks), the zip reading, the panel rendering,
 filtering and fixing in a real browser (22 harness checks), the manifest, and
 the icons.
 

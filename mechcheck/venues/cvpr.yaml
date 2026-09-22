@@ -1,0 +1,66 @@
+# CVPR -- venue pack
+#
+# Read off the CVPR 2026 author guidelines on the `verified` date. The author
+# kit is updated annually at github.com/cvpr-org/author-kit.
+name: CVPR
+verified: 2026-09-21
+source_url: https://cvpr.thecvf.com/Conferences/2026/AuthorGuidelines
+
+document_class: article
+
+required_packages:
+  - package: cvpr
+    why: 'the conference style; use \usepackage[review]{cvpr} for the submission, which adds line numbers and hides the author block, and \usepackage{cvpr} for the camera-ready'
+
+anonymity:
+  model: double-anonymous
+  note: 'Authors must not identify themselves in the acknowledgements (no co-worker or grant ID mentions) or in supplementary material (no institution names in videos), and must not link to sites that identify them. Papers that are not properly anonymised are rejected without review.'
+
+length:
+  unit: pages
+  excludes: 'additional pages containing only cited references are allowed'
+  note: 'Papers are limited to eight pages, including figures and tables, in the CVPR style. There is no limit on the length of the references section. Papers over the limit are rejected without review.'
+
+requires:
+  ai_disclosure: false
+  data_availability: false
+
+community:
+  name: machine learning
+  min_references: 4
+  venues:
+    - NeurIPS
+    - Neural Information Processing Systems
+    - ICLR
+    - Learning Representations
+    - ICML
+    - Machine Learning
+    - AAAI
+    - Artificial Intelligence
+    - IJCAI
+    - CVPR
+    - ICCV
+    - ECCV
+    - Computer Vision
+    - Pattern Recognition
+    - ACL
+    - EMNLP
+    - NAACL
+    - Computational Linguistics
+    - JMLR
+    - TPAMI
+    - TMLR
+    - KDD
+    - SIGIR
+    - WWW
+    - AISTATS
+    - COLT
+    - UAI
+    - CoRL
+    - RSS
+
+uncertain:
+  - 'The bibliography style is not encoded: the author kit ships its own bst but the guidelines do not name a required one.'
+  - 'The review option is named in the packages why text but not enforced, because mechcheck checks which packages are loaded and not the options they carry.'
+  - 'The page limit is recorded in the length note but deliberately NOT encoded as max_pages: the venue counts main text without references, and mechcheck counts pages in the whole compiled PDF, so enforcing it here would report conforming papers as over. Check the limit yourself.'
+  - 'The community reference threshold (min_references) is not measured for this venue. CHI publishes the numbers behind its own -- accepted papers cite a median of 17 SIGCHI references, papers desk-rejected as out of scope a median of 0 -- and this pack reuses that shape by analogy. Treat VEN010 as a prompt to look, never as a measurement.'

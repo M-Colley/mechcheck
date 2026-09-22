@@ -1,0 +1,67 @@
+# AAAI -- venue pack
+#
+# Read off the AAAI-26 submission instructions on the `verified` date. AAAI is
+# unusually strict about its style file: modifying it is grounds for rejection,
+# and the author kit is the authority on what the file is called.
+name: AAAI
+verified: 2026-09-21
+source_url: https://aaai.org/conference/aaai/aaai-26/submission-instructions/
+
+anonymity:
+  model: double-anonymous
+  note: 'AAAI submissions are anonymous and must conform to the instructions for double-blind review. Anonymous submissions carry Anonymous Submission as the sole author with affiliations left empty, and the PDF metadata must be cleared with a metadata-cleaning tool before submitting.'
+
+length:
+  unit: pages
+  excludes: 'references and the reproducibility checklist do not count'
+  note: 'Submissions may consist of up to 7 pages of technical content plus additional pages solely for references and the reproducibility checklist.'
+
+required_statements:
+  - name: reproducibility checklist
+    severity: warn
+    pattern: 'reproducibility checklist|reproducibility_checklist'
+    fix: 'Authors must complete a reproducibility checklist at submission; its responses go in the PDF after the references and do not count towards the page limit.'
+
+requires:
+  ai_disclosure: false
+  data_availability: false
+
+community:
+  name: machine learning
+  min_references: 4
+  venues:
+    - NeurIPS
+    - Neural Information Processing Systems
+    - ICLR
+    - Learning Representations
+    - ICML
+    - Machine Learning
+    - AAAI
+    - Artificial Intelligence
+    - IJCAI
+    - CVPR
+    - ICCV
+    - ECCV
+    - Computer Vision
+    - Pattern Recognition
+    - ACL
+    - EMNLP
+    - NAACL
+    - Computational Linguistics
+    - JMLR
+    - TPAMI
+    - TMLR
+    - KDD
+    - SIGIR
+    - WWW
+    - AISTATS
+    - COLT
+    - UAI
+    - CoRL
+    - RSS
+
+uncertain:
+  - 'The document class and style package are not encoded: the submission instructions point at the AAAI-26 author kit for the template rather than naming a file, and a wrong name would report every conforming paper as wrong. Open the author kit and set document_class and required_packages yourself if you want those checked.'
+  - 'The metadata-cleaning requirement is checked by ANON006, which reads the author out of the compiled PDF -- that needs a build (--build-dir).'
+  - 'The page limit is recorded in the length note but deliberately NOT encoded as max_pages: the venue counts main text without references, and mechcheck counts pages in the whole compiled PDF, so enforcing it here would report conforming papers as over. Check the limit yourself.'
+  - 'The community reference threshold (min_references) is not measured for this venue. CHI publishes the numbers behind its own -- accepted papers cite a median of 17 SIGCHI references, papers desk-rejected as out of scope a median of 0 -- and this pack reuses that shape by analogy. Treat VEN010 as a prompt to look, never as a measurement.'

@@ -90,3 +90,4 @@ rules:
 uncertain:
   - 'The 12000-word threshold is the one the chairs published; it is conditional on justification, not a hard cap, and mechchecks word count approximates their basis (references, captions and appendices excluded; abstract counted) rather than reproducing it. Check against your own texcount before acting on a near-miss.'
   - 'No page limit is encoded, because CHI states length should be commensurate with contribution rather than giving a number.'
+  - 'The community reference threshold comes from the chairs own desk-reject figures (accepted papers cite a median of 17 SIGCHI references; papers rejected as out of scope a median of 0). It is a prompt to look, not a criterion anyone applies numerically.'

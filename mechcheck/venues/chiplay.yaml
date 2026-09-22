@@ -1,7 +1,10 @@
-# ACM AutomotiveUI -- venue pack
-name: ACM AutomotiveUI
-verified: 2026-08-27
-source_url: https://www.auto-ui.org/26/papers/
+# ACM CHI PLAY (PACM HCI, GAMES track) -- venue pack
+#
+# Read off the CHI PLAY 2026 full papers page on the `verified` date. CHI PLAY
+# full papers are published in PACM HCI rather than in conference proceedings.
+name: ACM CHI PLAY (PACM HCI GAMES)
+verified: 2026-09-21
+source_url: https://chiplay.acm.org/2026/full-papers/
 
 document_class: acmart
 bibliography_style: ACM-Reference-Format
@@ -10,25 +13,23 @@ class_options:
   submission:
     required:
       - manuscript
+      - review
+      - anonymous
     forbidden:
       - sigconf
   final:
-    required:
-      - sigconf
     forbidden:
       - review
       - anonymous
 
 anonymity:
   model: double-anonymous
-  note: 'Remove identifying information from the title/header area and from the document metadata; refer to your previous work in the third person.'
+  note: 'Use manuscript,review,anonymous. The anonymous option replaces the author block with ANONYMOUS AUTHOR(S); the submission must be anonymised whether or not that option is used.'
 
 length:
-  unit: pages
-  min_pages: 6
-  max_pages: 13
-  excludes: 'references do not count towards the submission page limit; the camera-ready must be 12 pages or fewer INCLUDING references'
-  note: 'Single-column (manuscript) format. All page elements other than references count.'
+  unit: none
+  excludes: 'not applicable: no limit is imposed'
+  note: 'No minimum or maximum length is imposed. Reviewers assess the contribution relative to the length, so a long paper has to earn it.'
 
 accessibility:
   descriptions_required: true
@@ -39,20 +40,13 @@ requires:
 
 required_commands:
   - command: ccsdesc
-    why: 'ACM requires CCS concepts'
+    why: 'ACM requires CCS concepts; TAPS rejects submissions without them'
   - command: keywords
 
 filename_charset_strict: true
 
-rules:
-  MET002:
-    min_pages: 6
-    max_pages: 13
-  MET004:
-    min_references: 20
-
 community:
-  name: SIGCHI/automotive HCI
+  name: SIGCHI/HCI
   min_references: 4
   venues:
     - CHI
@@ -82,12 +76,7 @@ community:
     - Human-Computer Interaction
     - Human Computer Interaction
     - Human-Computer Studies
-    - Transportation Research Part F
-    - Human Factors
-    - Accident Analysis
-    - Applied Ergonomics
-    - Intelligent Transportation
 
 uncertain:
-  - 'The camera-ready limit (12 pages including references) differs from the submission limit (13 pages excluding references). For the camera-ready check run --stage final and set rules.MET002.max_pages to 12.'
+  - 'No length limit is encoded because the track imposes none. Earlier cycles suggested a typical full paper is under about 8500 words; that is guidance from a previous year and is not enforced here.'
   - 'The community reference threshold (min_references) is not measured for this venue. CHI publishes the numbers behind its own -- accepted papers cite a median of 17 SIGCHI references, papers desk-rejected as out of scope a median of 0 -- and this pack reuses that shape by analogy. Treat VEN010 as a prompt to look, never as a measurement.'

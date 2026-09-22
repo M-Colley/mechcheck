@@ -1,0 +1,66 @@
+# ICLR -- venue pack
+#
+# Read off the ICLR 2026 author guide and the official Master-Template
+# repository on the `verified` date. The style file is renamed every year.
+name: ICLR
+verified: 2026-09-21
+source_url: https://iclr.cc/Conferences/2026/AuthorGuide
+
+document_class: article
+bibliography_style: iclr2026_conference
+
+required_packages:
+  - package: iclr2026_conference
+    why: 'the style file for this cycle, from github.com/ICLR/Master-Template; it is renamed every year'
+
+anonymity:
+  model: double-anonymous
+  note: 'Submissions are double blind: reviewers cannot see author names when conducting reviews, and authors cannot see reviewer names.'
+
+length:
+  unit: pages
+  excludes: 'references and appendices do not count towards the limit'
+  note: 'The main text is limited to 9 pages at submission and 10 at camera-ready. References are unlimited, and appendices may run as long as you like after the bibliography. Papers whose main text runs over are desk-rejected.'
+
+requires:
+  ai_disclosure: false
+  data_availability: false
+
+community:
+  name: machine learning
+  min_references: 4
+  venues:
+    - NeurIPS
+    - Neural Information Processing Systems
+    - ICLR
+    - Learning Representations
+    - ICML
+    - Machine Learning
+    - AAAI
+    - Artificial Intelligence
+    - IJCAI
+    - CVPR
+    - ICCV
+    - ECCV
+    - Computer Vision
+    - Pattern Recognition
+    - ACL
+    - EMNLP
+    - NAACL
+    - Computational Linguistics
+    - JMLR
+    - TPAMI
+    - TMLR
+    - KDD
+    - SIGIR
+    - WWW
+    - AISTATS
+    - COLT
+    - UAI
+    - CoRL
+    - RSS
+
+uncertain:
+  - 'The camera-ready limit (10 pages) differs from the submission limit (9). Neither is enforced here -- see the note below.'
+  - 'The page limit is recorded in the length note but deliberately NOT encoded as max_pages: the venue counts main text without references, and mechcheck counts pages in the whole compiled PDF, so enforcing it here would report conforming papers as over. Check the limit yourself.'
+  - 'The community reference threshold (min_references) is not measured for this venue. CHI publishes the numbers behind its own -- accepted papers cite a median of 17 SIGCHI references, papers desk-rejected as out of scope a median of 0 -- and this pack reuses that shape by analogy. Treat VEN010 as a prompt to look, never as a measurement.'

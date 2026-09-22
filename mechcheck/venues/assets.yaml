@@ -101,3 +101,4 @@ community:
 uncertain:
   - 'Short-paper limits (4,000-5,000 words) are not the default here. Override rules.MET001 if you are submitting a short paper.'
   - 'The exact definition of an accessible PDF at submission is set by the accessibility chairs; this pack checks alt text and PDF tagging, which is necessary but may not be sufficient.'
+  - 'The community reference threshold (min_references) is not measured for this venue. CHI publishes the numbers behind its own -- accepted papers cite a median of 17 SIGCHI references, papers desk-rejected as out of scope a median of 0 -- and this pack reuses that shape by analogy. Treat VEN010 as a prompt to look, never as a measurement.'

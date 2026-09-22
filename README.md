@@ -6,13 +6,14 @@
 Mechanical checks for LaTeX theses and papers: the boring layer of review,
 automated, so supervision time goes to the argument instead of the formatting.
 
-154 rules across figures, cross-references, abbreviations, prose mechanics,
+155 rules across figures, cross-references, abbreviations, prose mechanics,
 bibliography hygiene, **bibliography verification against Crossref/OpenAlex/DBLP**,
 compile-log analysis, accessibility, anonymity, reporting conventions,
 **one name per concept**, the things that compile on your laptop but not on
 Overleaf, **the desk-reject screen a venue runs before review**, and per-venue
-submission requirements for CHI, ASSETS, AutomotiveUI, IMWUT and
-Transportation Research Part F.
+submission requirements for twelve venues: CHI, ASSETS, AutomotiveUI, IMWUT,
+MobileHCI, UIST, CHI PLAY, Transportation Research Part F, and the machine
+learning venues NeurIPS, ICLR, CVPR and AAAI.
 
 **Nothing to install.** Save
 [`browser/mechcheck.html`](browser/mechcheck.html), double-click it, and drop
@@ -40,7 +41,7 @@ Pick the row that matches how you work. Each is spelt out below the table.
 | a page to drop a zip on | any browser | save `browser/mechcheck.html`, double-click it |
 | a button inside Overleaf | Chrome, Edge or Brave | load `extension/` unpacked — two minutes, no store account |
 | checks on every Overleaf compile | nothing; works on the free plan | upload `latex/mechcheck.sty`, add `\usepackage{mechcheck}` |
-| a command line, and CI | Python 3.10 or newer | `pip install "git+https://github.com/M-Colley/mechcheck"` |
+| a command line, and CI | Python 3.12 or newer | `pip install "git+https://github.com/M-Colley/mechcheck"` |
 
 ### The page and the extension
 
@@ -51,7 +52,7 @@ lookups you switch on. Setup: [docs/browser.md](docs/browser.md) and
 ### The command line
 
 mechcheck is not on PyPI yet, so pip installs it from this repository. You
-need Python 3.10 or newer and git. There are no other dependencies: the
+need Python 3.12 or newer and git. There are no other dependencies: the
 standard library does the parsing, the configuration and the network.
 
 ```bash
@@ -72,7 +73,7 @@ Confirm it landed:
 mechcheck rules | tail -1
 ```
 
-prints `154 rules`. Then run it on the self-test document, whose answer is
+prints `155 rules`. Then run it on the self-test document, whose answer is
 known in advance:
 
 ```bash
@@ -139,6 +140,9 @@ The LaTeX script looks for TeX Live in its usual install locations when
 `browser/mechcheck.html`, run the build script: `extension/engine.js` is
 generated from the page, and CI fails if the two drift apart. After adding or
 changing a rule, regenerate the reference: `mechcheck rules --markdown > docs/rules.md`.
+After editing a venue pack, run `python scripts/sync-venues.py`: the page
+carries its own copy of the packs, and the browser suite compares the two
+pack by pack.
 
 ### When something does not work
 
@@ -391,7 +395,9 @@ when a pack is more than nine months old. **The packs are a convenience, not an
 authority: the call for papers is the authority.** Each pack also lists what
 could not be verified — see the `uncertain:` block at the bottom of each file.
 
-Shipped: `chi`, `assets`, `autoui`, `imwut`, `trf`.
+Shipped: `chi`, `assets`, `autoui`, `imwut`, `trf`, `mobilehci`, `uist`,
+`chiplay`, `neurips`, `iclr`, `cvpr`, `aaai` — twelve packs, each with the date
+it was read and the page it was read from. `mechcheck venues` lists them.
 
 ---
 
@@ -445,10 +451,10 @@ tests/                the Python suite, and the fixtures both engines are checke
 
 ## Status
 
-Python side: 678 tests passing, and the bibliography verification has been run
+Python side: 790 tests passing, and the bibliography verification has been run
 against the live Crossref, OpenAlex and DBLP APIs.
 
-Browser side: 266 checks passing (`node browser/test-engine.mjs`) against the
+Browser side: 290 checks passing (`node browser/test-engine.mjs`) against the
 same fixtures as the Python suite — including the assertion that both engines
 produce exactly the same findings on the self-test document, and that both
 readers of `mechcheck.yaml` agree on this repository's own configuration.
