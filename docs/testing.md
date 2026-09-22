@@ -73,6 +73,18 @@ a few seconds. `BIO001` should *not* appear — the DOI in `refs.bib` is real. T
 prove the check is actually running, change that DOI to `10.1145/9999999.9999999`
 and re-check: `BIO001` should appear, saying the DOI does not resolve.
 
+**Then the gutter markers,** which are the part I could verify only against a
+copy of Overleaf's editor, never the real one. With `main.tex` open, coloured
+dots should sit in the line-number gutter beside the lines with findings —
+line 21 (`ANON001`), line 49 (`STY016` and `ANON003` together in one dot),
+lines 52 and 68 (`ACC001`). Hover a dot: it names the rule and the message,
+and a dot standing for two findings lists both. Scroll to the bottom and
+back; the dots should still be on the right lines, because the editor recycles
+those elements as you scroll. Untick **mark lines**: every dot goes. This is
+the one failure I would like reported precisely — if there are no dots but the
+panel is otherwise correct, Overleaf has changed its editor markup, and the
+fix belongs in `placeMarkers` in `extension/content.js`.
+
 **If it fails,** tell me which of these it was:
 
 | Symptom | What it means |
@@ -81,6 +93,7 @@ and re-check: `BIO001` should appear, saying the DOI does not resolve.
 | "Overleaf refused the download (HTTP 4xx)" | the download endpoint moved or the session is not shared — this is the thing I could not verify from here |
 | Header still says "no .log" | hover the header line — it now lists every URL tried and the status each returned; send me that |
 | Findings appear but `verify refs` finds nothing | the service worker relay is not working; check the extension's *service worker* console |
+| Findings appear but no dots in the gutter | the editor markup differs from the harness's copy of it; nothing else is affected, and the panel remains correct |
 | Counts differ from 12/15/10 | send me the numbers — that is a real disagreement between us |
 
 ---
@@ -142,12 +155,14 @@ So you know where the gaps are rather than re-testing what is covered:
 
 | | Verified how |
 |---|---|
-| 155 rules, Python | 790 tests |
-| 155 rules, browser engine | 290 checks in Node, same fixtures |
+| 157 rules, Python | 857 tests |
+| 157 rules, browser engine | 327 checks in Node, same fixtures |
 | Both agree on this exact document | asserted in both suites, 37 findings |
-| Extension panel, zip reading, filters | 22 checks in a real browser |
+| Extension panel, zip reading, filters, editor markers | 35 checks in a real browser |
 | `mechcheck.sty` | 14 checks against TeX Live 2026 |
+| p-value recomputation | both engines pinned to one table of reference values; the Python side checked against numerical integration; and run over 31 recomputable statistics in a real paper's results section without a single false positive |
 | **Extension in Chrome on live Overleaf** | verified once, on 2026-08-28 — re-run test 1 after updating |
+| **Gutter markers against Overleaf's live editor** | **not verified — the harness drives a copy of that DOM structure, so an Overleaf editor change would stop the markers appearing** |
 | **`mechcheck.sty` inside Overleaf** | **not verified — that is test 3** |
 
 Test 2 is a sanity check; tests 1 and 3 are the ones that cover genuinely

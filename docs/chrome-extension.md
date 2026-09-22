@@ -55,6 +55,35 @@ Only rules with exactly one right answer are fixed — abbreviations reintroduce
 a space before punctuation, hyphen ranges. Alt text and anything needing
 judgement are never touched.
 
+## Markers in the editor
+
+A panel tells you a finding is on line 214. Scrolling to line 214 to see what
+it meant is the tedious part, so after a check the extension puts a small
+coloured dot in the line-number gutter next to every line with a finding in
+the file you have open — red for an error, amber for a warning, grey for a
+note. Hover it and the rule and its message appear; several findings on one
+line become one dot listing all of them.
+
+This is display only. The dots are `<span>`s added next to Overleaf's own
+gutter, nothing is written into the document, and switching the panel's
+**mark lines** box off removes every one. They are placed again whenever the
+editor redraws — scrolling a long file recycles the line elements, so the
+markers follow.
+
+Two honest limitations:
+
+* **It matches files by name.** A finding is shown only when its file is the
+  one open in the editor. Two files of the same name in different folders
+  would both match.
+* **It reads Overleaf's editor DOM**, which is the one thing here that is not
+  a documented interface. It looks for CodeMirror's `.cm-gutterElement` line
+  numbers and the selected entry in the file tree. This is verified against a
+  faithful copy of that structure in the test harness, **not** against live
+  Overleaf — if Overleaf changes its editor, the markers stop appearing. They
+  are deliberately built so that failing means no dots: the panel, the
+  findings and the fixes are untouched, and nothing else in the extension
+  depends on them.
+
 ## Privacy
 
 - Runs only on `overleaf.com/project/*` pages.
@@ -76,6 +105,7 @@ Chrome profiles.
 | Venue | CHI · ASSETS · AutomotiveUI · IMWUT · TRF · MobileHCI · UIST · CHI PLAY · NeurIPS · ICLR · CVPR · AAAI |
 | Verify refs | turns on the seven `BIO*` rules |
 | Check automatically | run as soon as a project opens |
+| Mark lines | dots in the editor gutter beside the lines with findings (on by default) |
 
 If the Overleaf project contains a `mechcheck.yaml`, it is read as well: rules
 it disables stay quiet, severities and per-rule options apply, the project's
@@ -111,12 +141,12 @@ The generated file is committed, so nobody needs to run this to install.
 from a mocked `fetch`, and drives the real content script — the panel, the zip
 reading, the filters, the Markdown export and the error path. Open
 `extension/test-harness.built.html` (self-contained; produced by the build
-script) in any browser. It reports 22 checks.
+script) in any browser. It reports 35 checks, including the editor markers.
 
 ## What is verified, and what is not
 
-Verified: the engine (290 Node checks), the zip reading, the panel rendering,
-filtering and fixing in a real browser (22 harness checks), the manifest, and
+Verified: the engine (327 Node checks), the zip reading, the panel rendering,
+filtering, fixing and the editor markers in a real browser (35 harness checks), the manifest, and
 the icons.
 
 **Verified against a live Overleaf project** on 2026-08-28: the extension

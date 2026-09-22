@@ -6,10 +6,11 @@
 Mechanical checks for LaTeX theses and papers: the boring layer of review,
 automated, so supervision time goes to the argument instead of the formatting.
 
-155 rules across figures, cross-references, abbreviations, prose mechanics,
+157 rules across figures, cross-references, abbreviations, prose mechanics,
 bibliography hygiene, **bibliography verification against Crossref/OpenAlex/DBLP**,
 compile-log analysis, accessibility, anonymity, reporting conventions,
-**one name per concept**, the things that compile on your laptop but not on
+**p-values recomputed from the test statistic**, **one name per concept**,
+the things that compile on your laptop but not on
 Overleaf, **the desk-reject screen a venue runs before review**, and per-venue
 submission requirements for twelve venues: CHI, ASSETS, AutomotiveUI, IMWUT,
 MobileHCI, UIST, CHI PLAY, Transportation Research Part F, and the machine
@@ -78,7 +79,7 @@ Confirm it landed:
 mechcheck rules | tail -1
 ```
 
-prints `155 rules`. Then run it on the self-test document, whose answer is
+prints `157 rules`. Then run it on the self-test document, whose answer is
 known in advance:
 
 ```bash
@@ -253,6 +254,30 @@ grounds, hidden text addressed to an automated reviewer is a
 research-integrity matter, and the length and scope items are advisory
 counts, never verdicts. `mechcheck check . --venue chi` runs the lot before
 you submit rather than after.
+
+And against the numbers in the results section, which no amount of reading
+will catch:
+
+```
+main.tex
+  ! warn  STA001:6  t(48) = 2.13 gives p = 0.0383, but the paper reports p = .003
+  ! warn  STA001:7  F(2, 46) = 4.71 gives p = 0.0138, but the paper reports p = .21,
+                    which changes whether the result is significant at 0.05
+  ! warn  STA001:8  r(38) = 0.42 gives p = 0.007, but the paper reports p = .48,
+                    which changes whether the result is significant at 0.05
+  ! warn  STA002:9  p = .000: no p-value is exactly zero; this is a rounded printout
+```
+
+`STA001` recomputes the p-value from the test statistic and its degrees of
+freedom — `t`, `F`, `r`, `χ²` and `z` — and reports it only when the two
+cannot be reconciled. A transposed digit is invisible to a reader and to a
+reviewer; arithmetic finds it. Because a wrongly accused author is worse than
+a missed error, it compares *intervals* rather than numbers: `t(48) = 2.13`
+was rounded from somewhere in [2.125, 2.135], which gives a p-value between
+0.0379 and 0.0388, and a finding needs that range to miss the reported
+p-value's own rounding interval entirely. One-tailed tests never produce a
+finding, because nothing in the text distinguishes one from a mistake. The
+same document's correctly reported `t(120) = 2.51, p = .013` stays silent.
 
 The full list is in **[docs/rules.md](docs/rules.md)** — generated from the code,
 so it cannot drift.
@@ -457,17 +482,21 @@ tests/                the Python suite, and the fixtures both engines are checke
 
 ## Status
 
-Python side: 790 tests passing, and the bibliography verification has been run
+Python side: 857 tests passing, and the bibliography verification has been run
 against the live Crossref, OpenAlex and DBLP APIs.
 
-Browser side: 290 checks passing (`node browser/test-engine.mjs`) against the
+Browser side: 327 checks passing (`node browser/test-engine.mjs`) against the
 same fixtures as the Python suite — including the assertion that both engines
 produce exactly the same findings on the self-test document, and that both
 readers of `mechcheck.yaml` agree on this repository's own configuration.
 
-Extension: 22 checks passing in a real browser via `extension/test-harness.html`
-— panel rendering, project-zip reading, filtering, export, error path — and
-loaded against a live Overleaf project once, on 2026-08-28. Re-run
+Extension: 35 checks passing in a real browser via `extension/test-harness.html`
+— panel rendering, project-zip reading, filtering, export, error path, and the
+gutter markers against a copy of Overleaf's editor structure — and loaded
+against a live Overleaf project once, on 2026-08-28. The markers are the one
+part that reads Overleaf's editor DOM rather than its download URL, so they
+are verified against that copy and not against live Overleaf; if Overleaf
+changes its editor they stop appearing and nothing else is affected. Re-run
 [docs/testing.md](docs/testing.md) test 1 after updating.
 
 `latex/mechcheck.sty`: 14 checks passing against TeX Live 2026
