@@ -158,6 +158,10 @@ function buildFakeEditor(lineCount = 20, spacerText = "99") {
 
   const editor = document.createElement("div");
   editor.className = "cm-editor";
+  editor.style.cssText = "position:relative;width:820px;font:13px/18px monospace";
+  const scroller = document.createElement("div");
+  scroller.className = "cm-scroller";
+  scroller.style.cssText = "display:flex;overflow:auto;max-height:400px";
   const gutters = document.createElement("div");
   gutters.className = "cm-gutters";
   const lineNumbers = document.createElement("div");
@@ -186,9 +190,41 @@ function buildFakeEditor(lineCount = 20, spacerText = "99") {
     fold.appendChild(el);
   }
   gutters.append(lineNumbers, fold);
-  editor.appendChild(gutters);
+
+  // The text itself. The inline notes underline a span of a line, so the
+  // lines have to carry the real source -- and split across spans, the way
+  // syntax highlighting leaves them, or a walk over one text node would
+  // pass while the real thing failed.
+  const content = document.createElement("div");
+  content.className = "cm-content";
+  content.style.cssText = "flex:1;white-space:pre";
+  const source = PROJECT["main.tex"].split("\n");
+  for (let n = 1; n <= lineCount; n++) {
+    const el = document.createElement("div");
+    el.className = "cm-line";
+    el.style.height = "18px";
+    const text = source[n - 1] || "";
+    const cut = Math.floor(text.length / 2);
+    el.append(document.createTextNode(text.slice(0, cut)));
+    const tail = document.createElement("span");
+    tail.textContent = text.slice(cut);
+    el.appendChild(tail);
+    content.appendChild(el);
+  }
+  // Live Overleaf rendered 54 line elements against 53 gutter numbers, and
+  // code that paired the two by counting put every note on the wrong line.
+  // This is an element matching .cm-line that no number lines up with: it
+  // takes no space, so it shifts the count without shifting the page, which
+  // is what makes counting wrong and geometry right.
+  const orphan = document.createElement("div");
+  orphan.className = "cm-line";
+  orphan.style.cssText = "position:absolute;top:-9999px";
+  orphan.textContent = "% a row the gutter does not number";
+  content.insertBefore(orphan, content.children[5] || null);
+  scroller.append(gutters, content);
+  editor.appendChild(scroller);
   document.body.append(tree, editor);
-  return { tree, editor, gutters, lineNumbers, spacer };
+  return { tree, editor, scroller, gutters, lineNumbers, spacer, content };
 }
 
 const ZIP = makeZip(PROJECT);
@@ -296,6 +332,94 @@ window.fetch = async (url) => {
     say("the fold gutter gets no marks",
         !fake.editor.querySelector(".cm-foldGutter .mechcheck-gutter-mark"));
 
+    // the finding written where the problem is
+    const written = C.placeAnnotations(result);
+    const notes = [...document.querySelectorAll(".mechcheck-inline-note")];
+    const rules = [...document.querySelectorAll(".mechcheck-inline-rule")];
+    say("a note is written beside the line", written > 0 && notes.length === written,
+        written + " notes");
+    say("the note names its rule and says what is wrong",
+        notes.every(n => /^[A-Z]{3,4}\d{3}\s{2}\S/.test(n.textContent)), notes[0] && notes[0].textContent);
+    say("a line with two findings says so once", notes.every(n => {
+      const line = +n.getAttribute("data-mechcheck-line");
+      const count = C.findingsByLine(result, "main.tex").get(line).length;
+      return count === 1 || / \+\d+ more$/.test(n.textContent);
+    }));
+    say("the full list is in the note's tooltip",
+        notes.every(n => (n.title || "").split("\n").length
+                         === C.findingsByLine(result, "main.tex")
+                              .get(+n.getAttribute("data-mechcheck-line")).length));
+    say("lines are found by where they are, not by counting", (() => {
+      const source = PROJECT["main.tex"].split("\n");
+      const map = C.renderedLines(fake.editor);
+      // past the unnumbered row, which is where counting goes wrong
+      return [2, 7, 12, 18].every(n => map.get(n) && map.get(n).textContent === source[n - 1]);
+    })());
+    say("the unnumbered row is matched to no line", (() => {
+      const map = C.renderedLines(fake.editor);
+      return ![...map.values()].some(el => el.textContent.startsWith("% a row the gutter"));
+    })());
+    say("the offending words are underlined", rules.length > 0, rules.length + " underlines");
+    say("the underline covers the words the message names", (() => {
+      const source = PROJECT["main.tex"].split("\n");
+      const map = C.renderedLines(fake.editor);
+      return [...C.findingsByLine(result, "main.tex")].every(([line, here]) =>
+        !map.get(line) || here.every(f => {
+          const span = C.spanFor(f, source[line - 1] || "");
+          if (!span) return true;
+          // A quote only decides the span when the line really contains it;
+          // otherwise the column decides, and the span is a word instead.
+          const quoted = /[`'‘"]([^`'’"\n]{2,60})['’`"]/.exec(f.message || "");
+          const text = source[line - 1] || "";
+          if (!quoted || !text.includes(quoted[1])) return /^\S+$/.test(text.slice(span[0], span[1]));
+          return text.slice(span[0], span[1]) === quoted[1];
+        }));
+    })());
+    say("a note clears the text of its own line", notes.every(n => {
+      const line = C.renderedLines(fake.editor).get(+n.getAttribute("data-mechcheck-line"));
+      if (!line) return true;
+      const box = n.getBoundingClientRect();
+      const range = document.createRange(); range.selectNodeContents(line);
+      return [...range.getClientRects()].filter(r => r.width)
+        .every(r => Math.abs(r.top - box.top) > 6 || box.left >= r.right - 0.5);
+    }));
+    say("every underline has a width and a place",
+        rules.every(r => parseFloat(r.style.width) > 0 && r.style.left !== ""));
+    say("notes and underlines sit on a layer, not in the text",
+        [...notes, ...rules].every(el => el.closest(".cm-content") === null)
+        && !!fake.editor.querySelector(":scope > .mechcheck-inline-layer"));
+    say("the text itself is untouched", (() => {
+      const source = PROJECT["main.tex"].split("\n");
+      const map = C.renderedLines(fake.editor);
+      return [...map].every(([line, el]) => el.textContent === source[line - 1]);
+    })());
+
+    // The span is a guess, so it has to be a checkable one.
+    say("a quoted literal is found in the line",
+        JSON.stringify(C.spanFor({message: "repeated word `is is`", col: 10},
+                                 "the word is is repeated")) === JSON.stringify([9, 14]));
+    say("the reported column picks which occurrence",
+        JSON.stringify(C.spanFor({message: "repeated word `is is`", col: 12},
+                                 "is is and is is")) === JSON.stringify([10, 15]));
+    say("a literal that is not on the line underlines nothing",
+        C.spanFor({message: "missing `\\Description`"}, "a line without it") === null);
+    say("with no quote it underlines the word at the column",
+        JSON.stringify(C.spanFor({message: "no quote here", col: 7}, "abcde fghij k"))
+          === JSON.stringify([6, 11]));
+    say("a column landing on a space underlines nothing",
+        C.spanFor({message: "no quote here", col: 6}, "abcde fghij k") === null);
+    say("a column past the end of the line underlines nothing",
+        C.spanFor({message: "no quote here", col: 99}, "short") === null);
+
+    say("turning notes off removes every one",
+        C.setAnnotationsEnabled(false) === 0
+        && document.querySelectorAll(".mechcheck-inline-note").length === 0);
+    say("turning them back on restores them", C.setAnnotationsEnabled(true) === written);
+    say("one redraw refreshes both kinds", (() => {
+      const both = C.redrawDecorations();
+      return both && both.marks === placed && both.notes === written;
+    })());
+
     const again = C.placeMarkers(result);
     say("re-placing does not duplicate marks",
         document.querySelectorAll(".mechcheck-gutter-mark").length === again, String(again));
@@ -310,9 +434,10 @@ window.fetch = async (url) => {
     say("a line scrolled out of view loses its mark",
         C.placeMarkers(result) <= placed);
 
-    C.clearMarkers();
+    C.clearMarkers(); C.clearAnnotations();
     fake.editor.remove(); fake.tree.remove();
     say("no editor means no marks and no error", C.placeMarkers(result) === 0);
+    say("no editor means no notes and no error", C.placeAnnotations(result) === 0);
 
     // error path
     C.renderError(new Error("Overleaf refused the download (HTTP 403)."));

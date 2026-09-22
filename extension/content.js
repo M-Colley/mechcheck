@@ -26,7 +26,7 @@
   /* A paper being submitted to CHI, as everywhere else. A thesis picks the
      thesis profile, and the project's own mechcheck.yaml overrides both. */
   const DEFAULTS = { profile: "paper", stage: "submission", venue: "chi",
-                     verify: false, autorun: false, markers: true };
+                     verify: false, autorun: false, markers: true, notes: true };
 
   async function getSettings() {
     try {
@@ -279,6 +279,7 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
       <select class="venue" title="Venue"></select>
       <label class="toggle"><input type="checkbox" class="verify"> verify refs</label>
       <label class="toggle"><input type="checkbox" class="markers" checked> mark lines</label>
+      <label class="toggle"><input type="checkbox" class="notes" checked> explain inline</label>
       <button class="btn primary check">Check</button>
       <button class="btn fix" disabled>Fix</button>
     </div>
@@ -331,12 +332,24 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
       if (on) setStatus(placed ? `${placed} line${placed === 1 ? "" : "s"} marked in the editor`
                                : "Nothing to mark in the file you have open");
     });
+    q(".notes").addEventListener("change", async () => {
+      const on = q(".notes").checked;
+      const written = setAnnotationsEnabled(on);
+      try {
+        const stored = await chrome.storage.sync.get("settings");
+        await chrome.storage.sync.set({ settings: { ...(stored.settings || {}), notes: on } });
+      } catch (err) { /* settings are a convenience; the toggle still worked */ }
+      if (on) setStatus(written ? `${written} line${written === 1 ? "" : "s"} explained in the editor`
+                                : "Nothing to explain in the file you have open");
+    });
 
     getSettings().then(s => {
       q(".profile").value = s.profile; q(".stage").value = s.stage;
       q(".venue").value = s.venue; q(".verify").checked = !!s.verify;
       q(".markers").checked = s.markers !== false;
       markersEnabled = s.markers !== false;
+      q(".notes").checked = s.notes !== false;
+      annotationsEnabled = s.notes !== false;
       if (s.autorun) run();
     });
   }
@@ -460,8 +473,10 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
     // Put the findings beside the lines they are about, in Overleaf's own
     // editor. Nothing is written into the project; see placeMarkers.
     markersEnabled = settings.markers !== false;
+    annotationsEnabled = settings.notes !== false;
     const marked = placeMarkers(result);
-    if (markersEnabled) startWatchingEditor();
+    placeAnnotations(result);
+    if (markersEnabled || annotationsEnabled) startWatchingEditor();
 
     setStatus(`${counts.error} error${counts.error === 1 ? "" : "s"}, ${counts.warn} warning${counts.warn === 1 ? "" : "s"}`
       + (result.suppressed.length ? ` · ${result.suppressed.length} silenced` : "")
@@ -471,6 +486,7 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
   function renderError(err) {
     ensureUI();
     clearMarkers();          // marks from an earlier run would now be lying
+    clearAnnotations();      // and so would the notes beside the lines
     root.querySelector(".panel").classList.remove("hidden");
     root.querySelector(".body").innerHTML =
       `<div class="empty"><b>Could not check this project</b>${escapeHtml(err.message || String(err))}</div>`;
@@ -587,7 +603,20 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
       .${MARK_CLASS} { position: absolute; left: 1px; top: 1px; bottom: 1px; width: 3px;
                        border-radius: 2px; background: #9a6207; cursor: help; z-index: 5; }
       .${MARK_CLASS}.error { background: #b23026; }
-      .${MARK_CLASS}.info { background: #3a4ea8; }`;
+      .${MARK_CLASS}.info { background: #3a4ea8; }
+      .${NOTE_LAYER} { position: absolute; inset: 0; overflow: hidden;
+                       pointer-events: none; z-index: 4; }
+      .${NOTE_RULE} { position: absolute; height: 2px; border-radius: 1px;
+                      background: #9a6207; opacity: .85; }
+      .${NOTE_RULE}.error { background: #b23026; }
+      .${NOTE_RULE}.info { background: #3a4ea8; }
+      .${NOTE_CLASS} { position: absolute; pointer-events: auto; cursor: help;
+                       font: 11px/1.45 ui-sans-serif, system-ui, sans-serif;
+                       padding: 0 6px; border-radius: 3px; white-space: nowrap;
+                       overflow: hidden; text-overflow: ellipsis;
+                       color: #fff; background: #9a6207; opacity: .92; }
+      .${NOTE_CLASS}.error { background: #b23026; }
+      .${NOTE_CLASS}.info { background: #3a4ea8; }`;
     (document.head || document.documentElement).appendChild(style);
   }
 
@@ -644,17 +673,29 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
     for (const mark of document.querySelectorAll("." + MARK_CLASS)) mark.remove();
   }
 
+  /** Run fn without the observer listening.
+   *
+   *  Everything below draws into the DOM the observer watches, so without
+   *  this it retriggers itself forever. */
+  function withObserverPaused(fn) {
+    const watching = markerObserver !== null;
+    if (watching) markerObserver.disconnect();
+    try { return fn(); }
+    catch (err) { return 0; }
+    finally { if (watching) startWatchingEditor(); }
+  }
+
   /** Draw a mark beside every visible line that has a finding. */
   function placeMarkers(result) {
+    return withObserverPaused(() => drawMarkers(result));
+  }
+
+  function drawMarkers(result) {
     const target = result || lastResult;
     const editor = editorRoot();
     if (!markersEnabled || !target || !editor) { clearMarkers(); return 0; }
     injectMarkerStyles();
-    // Placing marks changes the DOM the observer watches, so stop listening
-    // for the duration or it retriggers itself forever.
-    const watching = markerObserver !== null;
-    if (watching) markerObserver.disconnect();
-    try {
+    {
       clearMarkers();
       const byLine = findingsByLine(target, openFileName());
       let placed = 0;
@@ -680,10 +721,6 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
         placed++;
       }
       return placed;
-    } catch (err) {
-      return 0;
-    } finally {
-      if (watching) startWatchingEditor();
     }
   }
 
@@ -696,24 +733,234 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
       markerObserver = new MutationObserver(() => {
         if (queued) return;                 // one pass per frame, not per mutation
         queued = true;
-        const pass = () => { queued = false; placeMarkers(); };
+        const pass = () => { queued = false; redrawDecorations(); };
         if (typeof requestAnimationFrame === "function") requestAnimationFrame(pass);
         else setTimeout(pass, 16);
       });
     }
     markerObserver.observe(editor, { childList: true, subtree: true });
+    // Scrolling inside already-rendered content moves the lines without
+    // changing the DOM, so the observer alone would leave the overlay behind.
+    const scroller = editor.querySelector(".cm-scroller");
+    if (scroller && !scroller.dataset.mechcheckScroll) {
+      scroller.dataset.mechcheckScroll = "1";
+      scroller.addEventListener("scroll", () => {
+        if (scrollQueued) return;
+        scrollQueued = true;
+        const pass = () => { scrollQueued = false; redrawDecorations(); };
+        if (typeof requestAnimationFrame === "function") requestAnimationFrame(pass);
+        else setTimeout(pass, 16);
+      }, { passive: true });
+    }
+  }
+
+  /** Both kinds of decoration, in one pause of the observer. */
+  function redrawDecorations() {
+    return withObserverPaused(() => {
+      const marks = drawMarkers();
+      const notes = drawAnnotations();
+      return { marks, notes };
+    });
   }
 
   function setMarkersEnabled(on) {
     markersEnabled = !!on;
     if (!markersEnabled) {
-      if (markerObserver) { markerObserver.disconnect(); markerObserver = null; }
       clearMarkers();
+      if (!annotationsEnabled && markerObserver) { markerObserver.disconnect(); markerObserver = null; }
       return 0;
     }
     const placed = placeMarkers();
     startWatchingEditor();
     return placed;
+  }
+
+  /* ---------- the finding, written where the problem is ----------
+
+     A dot in the gutter says which line; this says what, on the line itself:
+     the offending words underlined, and the rule's message at the end of the
+     line.
+
+     It is drawn on a layer over the editor, never into it. Overleaf's editor
+     is a CRDT synced over a websocket, and CodeMirror reconciles anything
+     that appears inside .cm-content back into the document -- so putting the
+     message on its own row, which would mean inserting a block into the
+     text, is the one presentation that cannot be done safely from outside.
+     The layer is a sibling of the scroller, reads positions with Range
+     rectangles, and writes nothing the editor will ever look at. */
+
+  const NOTE_LAYER = "mechcheck-inline-layer";
+  const NOTE_CLASS = "mechcheck-inline-note";
+  const NOTE_RULE = "mechcheck-inline-rule";
+  let annotationsEnabled = true, scrollQueued = false;
+
+  function annotationLayer(editor) {
+    let layer = editor.querySelector(":scope > ." + NOTE_LAYER);
+    if (!layer) {
+      layer = document.createElement("div");
+      layer.className = NOTE_LAYER;
+      // The layer is placed against the editor's box, so the editor has to be
+      // the containing block. CodeMirror already makes it one; this is for
+      // anything that does not.
+      if (getComputedStyle(editor).position === "static") editor.style.position = "relative";
+      editor.appendChild(layer);
+    }
+    return layer;
+  }
+
+  function clearAnnotations() {
+    for (const layer of document.querySelectorAll("." + NOTE_LAYER)) layer.textContent = "";
+  }
+
+  /** Line number to the element CodeMirror is currently rendering it as.
+   *
+   *  Paired by where things are, not by how many there are. Counting them
+   *  off against each other looks right and is not: on a live project the
+   *  content held 54 line elements while the gutter had 53 numbers, so every
+   *  line came out shifted and nothing was ever underlined. A gutter element
+   *  and its line share a top edge -- that is what a gutter is -- and that
+   *  survives wrapped lines, widgets and whatever else is rendered between. */
+  function renderedLines(editor) {
+    const gutter = editor.querySelector(".cm-lineNumbers");
+    const content = editor.querySelector(".cm-content");
+    const map = new Map();
+    if (!gutter || !content) return map;
+    const byTop = new Map();
+    for (const line of content.querySelectorAll(".cm-line")) {
+      const top = Math.round(line.getBoundingClientRect().top);
+      if (!byTop.has(top)) byTop.set(top, line);
+    }
+    for (const element of gutter.querySelectorAll(".cm-gutterElement")) {
+      if (element.offsetHeight === 0) continue;
+      const n = parseInt((element.textContent || "").trim(), 10);
+      if (!Number.isInteger(n)) continue;
+      const top = Math.round(element.getBoundingClientRect().top);
+      const line = byTop.get(top) || byTop.get(top - 1) || byTop.get(top + 1);
+      if (line) map.set(n, line);
+    }
+    return map;
+  }
+
+  /** A DOM range over characters [from, to) of a rendered line.
+   *  Highlighting splits a line across many text nodes, so walk them. */
+  function rangeInLine(lineEl, from, to) {
+    const walker = document.createTreeWalker(lineEl, NodeFilter.SHOW_TEXT, null);
+    const range = document.createRange();
+    let seen = 0, started = false;
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const len = node.nodeValue.length;
+      if (!started && seen + len > from) { range.setStart(node, from - seen); started = true; }
+      if (started && seen + len >= to) { range.setEnd(node, to - seen); return range; }
+      seen += len;
+    }
+    return null;
+  }
+
+  /** Which characters of the line is this finding about?
+   *
+   *  Only ever a guess, so it has to be a checkable one: the literal the
+   *  message quotes, if it really is on that line, else the word the
+   *  reported column points at. When neither holds there is no underline --
+   *  a line under the wrong words would be worse than none. */
+  function spanFor(finding, text) {
+    const quoted = /[`'‘"]([^`'’"\n]{2,60})['’`"]/.exec(finding.message || "");
+    if (quoted) {
+      const needle = quoted[1];
+      const near = finding.col ? Math.max(0, finding.col - 1 - needle.length) : 0;
+      const at = text.indexOf(needle, near);
+      const idx = at >= 0 ? at : text.indexOf(needle);
+      if (idx >= 0) return [idx, idx + needle.length];
+    }
+    if (finding.col && finding.col >= 1 && finding.col - 1 < text.length) {
+      const start = finding.col - 1;
+      const word = /^\S+/.exec(text.slice(start));
+      if (word) return [start, start + word[0].length];
+    }
+    return null;
+  }
+
+  /** Where the line's text actually ends -- the end of its last visual row,
+   *  not the corner of its box. A long line wraps into several rows, and a
+   *  note hung off the first row at the width of the last one lands on top
+   *  of the text. */
+  function textEnd(lineEl, box) {
+    const range = document.createRange();
+    range.selectNodeContents(lineEl);
+    const rects = [...range.getClientRects()].filter(r => r.width || r.height);
+    const last = rects.length ? rects[rects.length - 1] : null;
+    return last ? { x: last.right, y: last.top } : { x: box.left, y: box.top };
+  }
+
+  function placeAnnotations(result) {
+    return withObserverPaused(() => drawAnnotations(result));
+  }
+
+  function drawAnnotations(result) {
+    const target = result || lastResult;
+    const editor = editorRoot();
+    if (!annotationsEnabled || !target || !editor) { clearAnnotations(); return 0; }
+    injectMarkerStyles();
+    const layer = annotationLayer(editor);
+    layer.textContent = "";
+    const byLine = findingsByLine(target, openFileName());
+    if (!byLine.size) return 0;
+    const lines = renderedLines(editor);
+    const frame = editor.getBoundingClientRect();
+    const scroller = editor.querySelector(".cm-scroller");
+    const clip = scroller ? scroller.getBoundingClientRect() : frame;
+    let written = 0;
+
+    for (const [line, here] of byLine) {
+      const lineEl = lines.get(line);
+      if (!lineEl) continue;                       // not rendered: nothing to write on
+      const box = lineEl.getBoundingClientRect();
+      if (box.bottom < clip.top || box.top > clip.bottom) continue;
+      const text = lineEl.textContent || "";
+
+      for (const f of here) {
+        const span = spanFor(f, text);
+        if (!span) continue;
+        const range = rangeInLine(lineEl, span[0], span[1]);
+        if (!range) continue;
+        for (const r of range.getClientRects()) {
+          if (!r.width) continue;
+          const underline = document.createElement("div");
+          underline.className = `${NOTE_RULE} ${M.SEV_NAME[f.severity]}`;
+          underline.style.left = (r.left - frame.left) + "px";
+          underline.style.top = (r.bottom - frame.top - 2) + "px";
+          underline.style.width = r.width + "px";
+          layer.appendChild(underline);
+        }
+      }
+
+      const worst = here.reduce((a, b) => (b.severity > a.severity ? b : a));
+      const note = document.createElement("div");
+      note.className = `${NOTE_CLASS} ${M.SEV_NAME[worst.severity]}`;
+      note.setAttribute("data-mechcheck-line", String(line));
+      note.textContent = here.length === 1
+        ? `${here[0].rule}  ${here[0].message}`
+        : `${worst.rule}  ${worst.message}  +${here.length - 1} more`;
+      note.title = here.map(f => `${f.rule}: ${f.message}`).join("\n");
+      const end = textEnd(lineEl, box);
+      note.style.left = (end.x - frame.left + 14) + "px";
+      note.style.top = (end.y - frame.top) + "px";
+      note.style.maxWidth = Math.max(60, frame.right - end.x - 28) + "px";
+      layer.appendChild(note);
+      written++;
+    }
+    return written;
+  }
+
+  function setAnnotationsEnabled(on) {
+    annotationsEnabled = !!on;
+    if (!annotationsEnabled) {
+      clearAnnotations();
+      if (!markersEnabled && markerObserver) { markerObserver.disconnect(); markerObserver = null; }
+      return 0;
+    }
+    const written = placeAnnotations();
+    startWatchingEditor();
+    return written;
   }
 
   /* ---------- popup messages ---------- */
@@ -735,5 +982,7 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
   globalThis.__mechcheckContent = { run, render, renderError, ensureUI, reportMarkdown,
                                     fetchProjectZip, fetchOutputs, showFixes, PROJECT_ID,
                                     placeMarkers, clearMarkers, setMarkersEnabled,
+                                    placeAnnotations, clearAnnotations, setAnnotationsEnabled,
+                                    spanFor, renderedLines, redrawDecorations,
                                     openFileName, findingsByLine };
 })();
