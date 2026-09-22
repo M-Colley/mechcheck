@@ -339,8 +339,11 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
         const stored = await chrome.storage.sync.get("settings");
         await chrome.storage.sync.set({ settings: { ...(stored.settings || {}), notes: on } });
       } catch (err) { /* settings are a convenience; the toggle still worked */ }
+      // Notes are only drawn for the lines on screen, so nothing drawn does
+      // not mean nothing found -- and saying it did would be a lie the
+      // moment you scrolled.
       if (on) setStatus(written ? `${written} line${written === 1 ? "" : "s"} explained in the editor`
-                                : "Nothing to explain in the file you have open");
+                                : "No findings on the lines you can see");
     });
 
     getSettings().then(s => {
