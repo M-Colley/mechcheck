@@ -117,6 +117,32 @@ function makeZip(entries) {
   return out;
 }
 
+/* ---- a stand-in for Overleaf's editor ----
+   The marker code reads a file tree and a CodeMirror gutter out of the host
+   page. This is that markup, in the shape the extension expects, so the
+   placement logic is exercised rather than described. It says nothing about
+   whether live Overleaf still looks like this -- only test 1 in
+   docs/testing.md can say that. */
+function buildFakeEditor(lineCount = 20) {
+  const tree = document.createElement("div");
+  tree.setAttribute("role", "tree");
+  tree.innerHTML = `<div role="treeitem" aria-selected="true">main.tex</div>
+                    <div role="treeitem">refs.bib</div>`;
+  const editor = document.createElement("div");
+  editor.className = "cm-editor";
+  const gutters = document.createElement("div");
+  gutters.className = "cm-gutters";
+  for (let n = 1; n <= lineCount; n++) {
+    const el = document.createElement("div");
+    el.className = "cm-gutterElement";
+    el.textContent = String(n);
+    gutters.appendChild(el);
+  }
+  editor.appendChild(gutters);
+  document.body.append(tree, editor);
+  return { tree, editor, gutters };
+}
+
 const ZIP = makeZip(PROJECT);
 window.fetch = async (url) => {
   const path = String(url);
@@ -187,6 +213,46 @@ window.fetch = async (url) => {
     C.showFixes(result);
     say("clicking Fix shows the corrected file to copy",
         shadow.querySelector(".body").textContent.includes("Copy corrected file"));
+
+    // marks beside the lines, against a stand-in for Overleaf's editor
+    const fake = buildFakeEditor(20);
+    say("the open file is read from the file tree", C.openFileName() === "main.tex", C.openFileName());
+    const byLine = C.findingsByLine(result, "main.tex");
+    say("findings are grouped by the line they sit on", byLine.size > 0, byLine.size + " lines");
+    say("a finding in another file is not grouped here",
+        ![...byLine.values()].flat().some(f => f.file && f.file !== "main.tex"));
+
+    const placed = C.placeMarkers(result);
+    const marks = document.querySelectorAll(".mechcheck-gutter-mark");
+    say("marks are placed in the gutter", placed > 0 && marks.length === placed, placed + " marks");
+    say("each mark sits beside the line it is about", [...marks].every(mark => {
+      const line = mark.getAttribute("data-mechcheck-line");
+      return mark.parentElement.textContent.trim().startsWith(line);
+    }));
+    say("a mark carries the finding as its tooltip",
+        [...marks].every(m => /^[A-Z]{3,4}\d{3}: /.test(m.title || "")));
+    say("the worst severity on a line wins its colour",
+        [...marks].every(m => /\b(error|warn|info)\b/.test(m.className)));
+    say("marks are styled from one injected sheet",
+        document.querySelectorAll("#mechcheck-marker-styles").length === 1);
+
+    const again = C.placeMarkers(result);
+    say("re-placing does not duplicate marks",
+        document.querySelectorAll(".mechcheck-gutter-mark").length === again, String(again));
+    say("turning marks off removes every one",
+        C.setMarkersEnabled(false) === 0
+        && document.querySelectorAll(".mechcheck-gutter-mark").length === 0);
+    say("turning them back on restores them", C.setMarkersEnabled(true) === placed);
+
+    // A line that scrolls out of view takes its mark with it; one that
+    // scrolls in gets a fresh one on the next pass.
+    fake.gutters.firstChild.remove();
+    say("a line scrolled out of view loses its mark",
+        C.placeMarkers(result) <= placed);
+
+    C.clearMarkers();
+    fake.editor.remove(); fake.tree.remove();
+    say("no editor means no marks and no error", C.placeMarkers(result) === 0);
 
     // error path
     C.renderError(new Error("Overleaf refused the download (HTTP 403)."));

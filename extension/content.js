@@ -25,7 +25,8 @@
 
   /* A paper being submitted to CHI, as everywhere else. A thesis picks the
      thesis profile, and the project's own mechcheck.yaml overrides both. */
-  const DEFAULTS = { profile: "paper", stage: "submission", venue: "chi", verify: false, autorun: false };
+  const DEFAULTS = { profile: "paper", stage: "submission", venue: "chi",
+                     verify: false, autorun: false, markers: true };
 
   async function getSettings() {
     try {
@@ -277,6 +278,7 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
       <select class="stage" title="Stage"></select>
       <select class="venue" title="Venue"></select>
       <label class="toggle"><input type="checkbox" class="verify"> verify refs</label>
+      <label class="toggle"><input type="checkbox" class="markers" checked> mark lines</label>
       <button class="btn primary check">Check</button>
       <button class="btn fix" disabled>Fix</button>
     </div>
@@ -317,9 +319,24 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
         if (lastResult) run();
       });
     }
+    // Marks are a view of the last result, not part of the check, so this
+    // toggle redraws rather than re-running anything.
+    q(".markers").addEventListener("change", async () => {
+      const on = q(".markers").checked;
+      const placed = setMarkersEnabled(on);
+      try {
+        const stored = await chrome.storage.sync.get("settings");
+        await chrome.storage.sync.set({ settings: { ...(stored.settings || {}), markers: on } });
+      } catch (err) { /* settings are a convenience; the toggle still worked */ }
+      if (on) setStatus(placed ? `${placed} line${placed === 1 ? "" : "s"} marked in the editor`
+                               : "Nothing to mark in the file you have open");
+    });
+
     getSettings().then(s => {
       q(".profile").value = s.profile; q(".stage").value = s.stage;
       q(".venue").value = s.venue; q(".verify").checked = !!s.verify;
+      q(".markers").checked = s.markers !== false;
+      markersEnabled = s.markers !== false;
       if (s.autorun) run();
     });
   }
@@ -348,6 +365,9 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
 
   function render(result, settings) {
     ensureUI();
+    // Whatever is on screen is the current result: the marker toggle, the
+    // fix button and the report all read it back from here.
+    lastResult = result;
     const q = sel => root.querySelector(sel);
     const counts = { error: 0, warn: 0, info: 0 };
     // Totals cover everything found, including what the per-rule cap held back.
@@ -437,12 +457,20 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
     fixButton.disabled = !fixable;
     fixButton.textContent = fixable ? `Fix ${fixable}` : "Fix";
 
+    // Put the findings beside the lines they are about, in Overleaf's own
+    // editor. Nothing is written into the project; see placeMarkers.
+    markersEnabled = settings.markers !== false;
+    const marked = placeMarkers(result);
+    if (markersEnabled) startWatchingEditor();
+
     setStatus(`${counts.error} error${counts.error === 1 ? "" : "s"}, ${counts.warn} warning${counts.warn === 1 ? "" : "s"}`
-      + (result.suppressed.length ? ` · ${result.suppressed.length} silenced` : ""));
+      + (result.suppressed.length ? ` · ${result.suppressed.length} silenced` : "")
+      + (marked ? ` · ${marked} marked in the editor` : ""));
   }
 
   function renderError(err) {
     ensureUI();
+    clearMarkers();          // marks from an earlier run would now be lying
     root.querySelector(".panel").classList.remove("hidden");
     root.querySelector(".body").innerHTML =
       `<div class="empty"><b>Could not check this project</b>${escapeHtml(err.message || String(err))}</div>`;
@@ -530,6 +558,135 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
     }
   }
 
+  /* ---- marks beside the lines, in Overleaf's own editor ----------------
+     Every finding already carries a file and a line. Drawing a mark at that
+     line puts the problem where the problem is, instead of in a list the
+     reader has to map back onto the source themselves.
+
+     Display only, and deliberately so. An extension must not edit an
+     Overleaf document -- it is a CRDT synced over a websocket, and writing
+     into it behind the editor's back is how you corrupt somebody's paper --
+     but a mark in the gutter writes nothing. Nothing here is saved, sent, or
+     visible to anyone else.
+
+     All of it is feature-detected against markup this cannot control. If
+     Overleaf changes its editor, every function here finds nothing, places
+     nothing, and the panel carries on exactly as before. */
+
+  const MARK_CLASS = "mechcheck-gutter-mark";
+  const MARK_STYLES = "mechcheck-marker-styles";
+  let markerObserver = null, markersEnabled = true;
+
+  function injectMarkerStyles() {
+    if (document.getElementById(MARK_STYLES)) return;
+    const style = document.createElement("style");
+    style.id = MARK_STYLES;
+    // These live in Overleaf's own DOM rather than the panel's shadow root,
+    // so the class name is distinctive enough not to collide with anything.
+    style.textContent = `
+      .${MARK_CLASS} { position: absolute; left: 1px; top: 1px; bottom: 1px; width: 3px;
+                       border-radius: 2px; background: #9a6207; cursor: help; z-index: 5; }
+      .${MARK_CLASS}.error { background: #b23026; }
+      .${MARK_CLASS}.info { background: #3a4ea8; }`;
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  const editorRoot = () => document.querySelector(".cm-editor");
+
+  /** The file the editor is showing, as the file tree names it. */
+  function openFileName() {
+    for (const selector of ['[role="tree"] [aria-selected="true"]',
+                            ".file-tree li.selected", ".file-tree-item.selected"]) {
+      let node = null;
+      try { node = document.querySelector(selector); } catch (err) { continue; }
+      const name = node && (node.textContent || "").trim().split("\n")[0].trim();
+      if (name) return name;
+    }
+    return null;
+  }
+
+  /** Findings for the open file, grouped by the line they sit on. */
+  function findingsByLine(result, fileName) {
+    const byLine = new Map();
+    for (const f of (result.findings || []).concat(result.truncated || [])) {
+      if (!f.line) continue;
+      // The tree shows a basename; a finding carries the project-relative path.
+      if (fileName && f.file && f.file.split("/").pop() !== fileName) continue;
+      if (!byLine.has(f.line)) byLine.set(f.line, []);
+      byLine.get(f.line).push(f);
+    }
+    return byLine;
+  }
+
+  function clearMarkers() {
+    for (const mark of document.querySelectorAll("." + MARK_CLASS)) mark.remove();
+  }
+
+  /** Draw a mark beside every visible line that has a finding. */
+  function placeMarkers(result) {
+    const target = result || lastResult;
+    const editor = editorRoot();
+    if (!markersEnabled || !target || !editor) { clearMarkers(); return 0; }
+    injectMarkerStyles();
+    // Placing marks changes the DOM the observer watches, so stop listening
+    // for the duration or it retriggers itself forever.
+    const watching = markerObserver !== null;
+    if (watching) markerObserver.disconnect();
+    try {
+      clearMarkers();
+      const byLine = findingsByLine(target, openFileName());
+      let placed = 0;
+      for (const element of editor.querySelectorAll(".cm-gutterElement")) {
+        const line = parseInt((element.textContent || "").trim(), 10);
+        if (!Number.isInteger(line)) continue;
+        const here = byLine.get(line);
+        if (!here) continue;
+        const worst = here.reduce((a, b) => (b.severity > a.severity ? b : a));
+        const mark = document.createElement("span");
+        mark.className = `${MARK_CLASS} ${M.SEV_NAME[worst.severity]}`;
+        mark.setAttribute("data-mechcheck-line", String(line));
+        mark.title = here.map(f => `${f.rule}: ${f.message}`).join("\n");
+        if (getComputedStyle(element).position === "static") element.style.position = "relative";
+        element.appendChild(mark);
+        placed++;
+      }
+      return placed;
+    } catch (err) {
+      return 0;
+    } finally {
+      if (watching) startWatchingEditor();
+    }
+  }
+
+  /** The editor renders only the lines you can see, so re-place on every change. */
+  function startWatchingEditor() {
+    const editor = editorRoot();
+    if (!editor || typeof MutationObserver !== "function") return;
+    if (!markerObserver) {
+      let queued = false;
+      markerObserver = new MutationObserver(() => {
+        if (queued) return;                 // one pass per frame, not per mutation
+        queued = true;
+        const pass = () => { queued = false; placeMarkers(); };
+        if (typeof requestAnimationFrame === "function") requestAnimationFrame(pass);
+        else setTimeout(pass, 16);
+      });
+    }
+    markerObserver.observe(editor, { childList: true, subtree: true });
+  }
+
+  function setMarkersEnabled(on) {
+    markersEnabled = !!on;
+    if (!markersEnabled) {
+      if (markerObserver) { markerObserver.disconnect(); markerObserver = null; }
+      clearMarkers();
+      return 0;
+    }
+    const placed = placeMarkers();
+    startWatchingEditor();
+    return placed;
+  }
+
   /* ---------- popup messages ---------- */
   chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     if (!msg || msg.type !== "mechcheck:run") return false;
@@ -547,5 +704,7 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
      chrome API and a mocked fetch. Costs nothing in production and means the
      rendering path is not shipped untested. */
   globalThis.__mechcheckContent = { run, render, renderError, ensureUI, reportMarkdown,
-                                    fetchProjectZip, fetchOutputs, showFixes, PROJECT_ID };
+                                    fetchProjectZip, fetchOutputs, showFixes, PROJECT_ID,
+                                    placeMarkers, clearMarkers, setMarkersEnabled,
+                                    openFileName, findingsByLine };
 })();
