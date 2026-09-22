@@ -57,7 +57,11 @@ def _scalar(raw: str):
         return True
     if low in ("false", "no", "off"):
         return False
-    if low in ("null", "~", "none"):
+    # YAML's null tokens are null, ~ and empty -- "none" is an ordinary word.
+    # Reading it as null made `unit: none` a None here and the string "none"
+    # under PyYAML, so the same file said two different things depending on
+    # what happened to be installed.
+    if low in ("null", "~"):
         return None
     if _INT.match(s):
         return int(s)

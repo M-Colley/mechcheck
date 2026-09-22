@@ -160,6 +160,34 @@ def test_a_config_of_the_wrong_shape_cannot_crash_a_rule(tmp_path):
     assert cfg.enabled("STR005") is True
 
 
+def test_none_is_a_word_not_a_null(tmp_path):
+    """Both readers of a pack have to agree on what its values are.
+
+    "none" is not one of YAML's null tokens. Reading it as one made
+    `unit: none` a None for the built-in parser and the string "none" for
+    PyYAML, so the same venue pack said different things depending on which
+    was installed.
+    """
+    text = "unit: none\nempty: null\ntilde: ~\n"
+    for parse in (minyaml.loads_builtin, minyaml.loads):
+        data = parse(text)
+        assert data["unit"] == "none", parse
+        assert data["empty"] is None and data["tilde"] is None, parse
+
+
+@pytest.mark.parametrize("venue", available_venues())
+def test_both_parsers_read_a_venue_pack_the_same_way(venue):
+    import json
+    import os
+
+    from mechcheck.config import VENUE_DIR
+
+    raw = open(os.path.join(VENUE_DIR, venue + ".yaml"), encoding="utf-8").read()
+    # PyYAML types a bare date; compare through a stable rendering.
+    render = lambda d: json.dumps(d, default=str, sort_keys=True)
+    assert render(minyaml.loads_builtin(raw)) == render(minyaml.loads(raw))
+
+
 def test_builtin_parser_survives_malformed_input():
     assert isinstance(minyaml.loads_builtin("::::\n  - \n\t\tbad"), dict)
 

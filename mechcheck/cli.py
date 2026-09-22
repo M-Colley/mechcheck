@@ -223,8 +223,11 @@ def cmd_venues(_args) -> int:
     for name in names:
         data = load_venue(name)
         print(f"{name:<10} {data.get('name', '')}")
-        if data.get("updated"):
-            print(f"{'':<10} checked against the CFP on {data['updated']} — reverify before you submit")
+        # The packs record this as `verified`; the older key was never written,
+        # so the provenance line never printed for any of them.
+        checked = data.get("verified") or data.get("updated")
+        if checked:
+            print(f"{'':<10} checked against the CFP on {checked} — reverify before you submit")
     return EXIT_OK
 
 
