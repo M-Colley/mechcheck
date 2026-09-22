@@ -8,6 +8,7 @@ Rule id prefixes, one per module, so ids never collide:
     ABB  abbrev.py         abbreviations and acronyms
     TRM  terminology.py    one name per concept, one spelling per name
     STY  style.py          source-level writing mechanics
+    STA  stats.py          recomputing a reported p from its test statistic
     BIB  bib.py            bibliography hygiene (offline)
     BIO  bibonline.py      bibliography verification (Crossref/OpenAlex/DBLP)
     URL  links.py          links in the body, and whether they still resolve
@@ -33,6 +34,7 @@ from mechcheck.rules import (  # noqa: F401
     links,
     metrics,
     policy,
+    stats,
     structure,
     style,
     terminology,

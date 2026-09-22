@@ -19,9 +19,10 @@ const script = html.slice(html.indexOf("<script>") + 8, html.lastIndexOf("</scri
 const engine = script.slice(0, script.indexOf("/* ===================== 7. Interface"));
 
 const module = await import("data:text/javascript;base64," +
-  Buffer.from(engine + "\nexport { runChecks, applyFixes, TexProject, parseBib, similarity, findMainDocument, RULES, SEV, collectFiles, readZip, parseYamlSubset, readProjectConfig, VENUES };").toString("base64"));
+  Buffer.from(engine + "\nexport { runChecks, applyFixes, TexProject, parseBib, similarity, findMainDocument, RULES, SEV, collectFiles, readZip, parseYamlSubset, readProjectConfig, VENUES, pFromT, pFromF, pFromChi2, pFromZ, pFromR };").toString("base64"));
 const { runChecks, applyFixes, parseBib, similarity, findMainDocument, RULES, SEV,
-        parseYamlSubset, readProjectConfig, VENUES } = module;
+        parseYamlSubset, readProjectConfig, VENUES,
+        pFromT, pFromF, pFromChi2, pFromZ, pFromR } = module;
 
 // --- helpers ---------------------------------------------------------------
 function loadDir(dir) {
@@ -787,6 +788,80 @@ console.log("\ndefaults: a CHI paper at submission (the same cases as tests/test
         !c.enabled("VEN001") && !c.enabled("ANON001"));
   c = await cfg(doc("Text here.", "profile: thesis\nenable:\n  - 'VEN*'\n"));
   check("enable undoes a profile's disable", c.enabled("VEN001"));
+}
+
+console.log("\nrecomputing a reported p (the same cases as tests/test_stats.py)");
+{
+  const enc = new TextEncoder();
+  const doc = body => new Map([["main.tex", enc.encode(
+    "\\documentclass{article}\n\\begin{document}\n" + body + "\n\\end{document}\n")]]);
+  const opts = { profile: "paper", venue: null, verify: false, maxPerRule: 0 };
+  const fired = async body => new Set((await runChecks(doc(body), opts)).findings.map(f => f.rule));
+  const only = async (body, id) =>
+    (await runChecks(doc(body), opts)).findings.filter(f => f.rule === id);
+
+  // The arithmetic, against the same table tests/test_stats.py pins. The two
+  // engines agree to the last few bits, so the tolerance is tight on purpose:
+  // a drift large enough to see here is a drift in one of the two.
+  const near = (a, b, tol = 1e-12) => Math.abs(a - b) < tol;
+  check("the t tail matches the Python engine",
+        near(pFromT(2.13, 48), 0.038325242106873) && near(pFromT(1.0, 9), 0.343436396137915),
+        `${pFromT(2.13, 48)} ${pFromT(1.0, 9)}`);
+  check("the F tail matches the Python engine",
+        near(pFromF(4.71, 2, 46), 0.013775270491189), String(pFromF(4.71, 2, 46)));
+  check("the chi-square tail matches",
+        near(pFromChi2(3.84, 1), 0.050043521248705), String(pFromChi2(3.84, 1)));
+  check("the normal tail matches", near(pFromZ(1.96), 0.049995790296441), String(pFromZ(1.96)));
+  check("a correlation goes through its t equivalent",
+        near(pFromR(0.42, 38), 0.006973232419529), String(pFromR(0.42, 38)));
+  check("the tails run the right way",
+        near(pFromT(0, 10), 1) && pFromT(50, 10) < 1e-10 && near(pFromChi2(0, 3), 1));
+
+  // The rule, in the negative first.
+  for (const body of [
+    "The effect held, t(48) = 2.13, p = .038, d = 0.61.",
+    "There was an effect, F(2, 46) = 4.71, p = .014.",
+    "The test was significant, \\chi^2(1) = 3.84, p = .05.",
+    "The difference held, z = 1.96, p = .05.",
+    "They correlated, r(38) = .42, p = .007.",
+    "It held, F(2, 46) = 4.71, eta^2 = .17, p = .014.",
+    "Welch corrected, t(23.4) = 2.51, p = .019.",
+    "Close to the line, t(18) = 2.10, p = .050.",
+  ]) check("STA001 leaves a correct test alone: " + body.slice(0, 34), !(await fired(body)).has("STA001"));
+
+  check("STA001 catches a wrong t",
+        (await only("The effect held, t(48) = 2.13, p = .0038.", "STA001"))[0].message.includes("0.0383"));
+  check("STA001 catches a wrong F",
+        (await only("There was an effect, F(2, 46) = 4.71, p = .14.", "STA001"))[0].message.includes("0.0138"));
+  check("STA001 catches a wrong chi-square",
+        (await fired("The test was significant, \\chi^2(1) = 3.84, p = .001.")).has("STA001"));
+  check("STA001 says when the decision changes",
+        (await only("There was an effect, F(2, 46) = 4.71, p = .14.", "STA001"))[0]
+          .message.includes("changes whether the result is significant"));
+  check("STA001 does not call a one-tailed p an error",
+        !(await fired("One-tailed, t(48) = 2.13, p = .019.")).has("STA001"));
+  check("STA001 gives F no one-tailed allowance",
+        (await fired("It held, F(2, 46) = 4.71, p = .0069.")).has("STA001"));
+  check("STA001 needs degrees of freedom",
+        !(await fired("The effect held, t = 2.13, p = .0038.")).has("STA001"));
+  check("STA001 does not pair across a sentence",
+        !(await fired("We used t(48) = 2.13. Separately, p = .9 described something else.")).has("STA001"));
+  check("STA001 reads statistics inside maths",
+        (await fired("The effect held, $t(48) = 2.13$, $p = .0038$.")).has("STA001"));
+  check("STA001 reads a chi-square with a sample size",
+        (await fired("The association held, \\chi^2(1, N = 100) = 3.84, p = .001.")).has("STA001"));
+  {
+    const f = await fired("The room was 21 degrees. Table 2 lists results over 48 trials.");
+    check("STA001 leaves ordinary prose alone", !f.has("STA001") && !f.has("STA002"), [...f].join(","));
+  }
+  check("STA002 catches p = .000",
+        (await only("It was significant, t(48) = 9.9, p = .000.", "STA002"))[0].message.includes("exactly zero"));
+  check("STA002 catches a p above one",
+        (await fired("Reported oddly, p = 1.4 in that table.")).has("STA002"));
+  for (const body of ["The result was clear, p < .001 throughout.",
+                      "It was not significant, p = .87 in that condition.",
+                      "Exactly at the boundary, p = 1 for the saturated model."])
+    check("STA002 leaves an ordinary p alone: " + body.slice(0, 30), !(await fired(body)).has("STA002"));
 }
 
 console.log("\nreview-screening checks (the same cases as tests/test_review_rules.py)");
