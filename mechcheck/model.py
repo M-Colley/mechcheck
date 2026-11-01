@@ -32,6 +32,10 @@ class Severity(enum.IntEnum):
     def parse(cls, value: object, default: "Severity" = None) -> "Severity":
         if isinstance(value, Severity):
             return value
+        # YAML 1.1 reads a bare `off` or `no` as False: that is "never", not
+        # the integer 0 the check below would make of it.
+        if isinstance(value, bool):
+            return cls.NEVER if not value else (default or cls.ERROR)
         if isinstance(value, int):
             try:
                 return cls(value)
@@ -257,8 +261,17 @@ class RuleContext:
         if mapped is None:
             return None
         path, a, b = mapped
+        was = self.project.raw_text(path)[a:b]
+        # The rule saw the code view; the file is what gets rewritten. If the
+        # two differ the span holds a comment or masked code, and if the braces
+        # no longer balance the edit would take markup with it:
+        # "the \emph{the}" must never become "the}".
+        if was != self.project.text[start:end]:
+            return None
+        if was.count("{") - was.count("}") != replacement.count("{") - replacement.count("}"):
+            return None
         return Edit(file=path, start=a, end=b, replacement=replacement,
-                    describe=describe or f"{self.project.raw_text(path)[a:b]} -> {replacement}")
+                    describe=describe or f"{was} -> {replacement}")
 
     def finding(self, rule_id: str, message: str, **kw) -> Finding:
         sev = self.config.severity_for(rule_id)

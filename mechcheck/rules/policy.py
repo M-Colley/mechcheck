@@ -187,6 +187,41 @@ def keywords(ctx):
     yield ctx.finding("POL009", "no \\keywords{...} found", file=ctx.project.main)
 
 
+#: Values copied from acmart's sample-sigconf.tex. Each is distinctive enough
+#: that no real paper contains it.
+_ACM_SAMPLE_VALUES = (
+    (re.compile(r"Make sure to enter the correct conference title", re.IGNORECASE),
+     "the sample conference title in \\acmConference"),
+    (re.compile(r"Woodstock\s*'18|Neural Gaze Detection"), "the sample conference (Woodstock '18)"),
+    (re.compile(r"XXXXXXX\.XXXXXXX"), "the sample DOI XXXXXXX.XXXXXXX"),
+    (re.compile(r"978-1-4503-XXXX-X"), "the sample ISBN"),
+    (re.compile(r"\\received(?:\[[^\]]*\])?\s*\{\s*(?:20 February 2007|12 March 2009|5 June 2009)\s*\}"),
+     "the sample \\received dates"),
+    (re.compile(r"Do Not Use This Code"), "the sample CCS concept"),
+    (re.compile(r"Do,\s*Not,\s*Us,\s*This,\s*Code"), "the sample keywords"),
+    (re.compile(r"The Name of the Title Is Hope"), "the sample title"),
+    (re.compile(r"Ben Trovato|Institute for Clarity in Documentation|trovato@corporation\.com"),
+     "the sample author block"),
+)
+
+
+@rule("POL012", "acmart sample values left in the document", Category.POLICY, Severity.WARN,
+      rationale="acmart's sample file fills the reference block, the DOI and the 'Received' line with placeholders, and a review PDF prints them: 'Make sure to enter the correct conference title...', https://doi.org/XXXXXXX.XXXXXXX, 'Received 20 February 2007'. A reviewer reads them as a template nobody finished.",
+      fix="Delete the sample \\acmConference, \\acmDOI, \\acmISBN and \\received lines, or replace them with the values from your rights e-mail; for review, \\settopmatter{printacmref=false} drops the reference block.")
+def acm_sample_values(ctx):
+    cls, _ = ctx.project.documentclass()
+    if cls.lower() != "acmart":
+        return
+    text = ctx.project.text
+    for pattern, what in _ACM_SAMPLE_VALUES:
+        m = pattern.search(text)
+        if not m:
+            continue
+        f, line, col = ctx.project.locate(m.start())
+        yield ctx.finding("POL012", f"{what} is still in the document",
+                          file=f, line=line, col=col, context=ctx.project.excerpt(m.start()))
+
+
 #: Colour specifications that come out white, by model.
 _WHITE_BY_MODEL = {
     "rgb": ("1,1,1", "1.0,1.0,1.0", "1, 1, 1"),

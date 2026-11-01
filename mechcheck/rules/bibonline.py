@@ -96,6 +96,10 @@ def unresolvable_doi(ctx):
         # publishers live elsewhere. Ask OpenAlex before calling it broken.
         if net.openalex_by_doi(fetcher, doi):
             continue
+        # A timeout, a proxy or a 5xx is not an answer: only a 404 from both
+        # registries says the DOI does not exist.
+        if not net.doi_absent(fetcher, doi):
+            continue
         yield ctx.finding("BIO001", f"`{entry.key}`: DOI {doi} does not resolve",
                           file=ctx.project.rel(entry.file), line=entry.line_of("doi"),
                           context=entry.title[:70],

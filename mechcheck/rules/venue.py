@@ -183,6 +183,13 @@ def required_statements(ctx):
                           fix=str(spec.get("fix") or f"Add a {label}."))
 
 
+#: What a compile leaves behind. Nobody uploads main.synctex.gz, and its
+#: second dot failed the build as a file name TAPS rejects.
+_BUILD_ARTEFACTS = (".synctex.gz", ".synctex", ".synctex(busy)", ".synctex.gz(busy)", ".run.xml",
+                    ".fdb_latexmk", ".fls", ".aux", ".log", ".blg", ".out", ".toc", ".lof", ".lot",
+                    ".bcf", ".xdv", ".nav", ".snm", ".vrb", ".auxlock")
+
+
 @rule("VEN006", "File name unsafe for the publisher's pipeline", Category.POLICY, Severity.ERROR,
       rationale="ACM's TAPS rejects source packages whose file names contain spaces or characters outside letters, digits, dash and underscore.",
       fix="Rename the file to use only A-Z a-z 0-9 - _ and a single dot before the extension.")
@@ -195,7 +202,7 @@ def unsafe_filenames(ctx):
     for dirpath, dirnames, filenames in os.walk(ctx.root):
         dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in ("build", "out")]
         for name in filenames:
-            if name.startswith("."):
+            if name.startswith(".") or name.lower().endswith(_BUILD_ARTEFACTS):
                 continue
             if allowed.match(name):
                 continue

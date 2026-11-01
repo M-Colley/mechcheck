@@ -220,7 +220,10 @@ def write_baseline(path: str, result: RunResult) -> int:
     payload = {
         "note": "Findings frozen when mechcheck was adopted. Delete a line to start enforcing it.",
         "created": time.strftime("%Y-%m-%d"),
-        "fingerprints": sorted(list(fingerprint(f)) for f in result.findings + result.suppressed),
+        # The per-rule cap only shortens what is printed; a finding it held
+        # back still fails the run, so it has to be frozen too.
+        "fingerprints": sorted(list(fingerprint(f))
+                               for f in result.findings + result.truncated + result.suppressed),
     }
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=1, ensure_ascii=False)
@@ -237,7 +240,7 @@ def _find_build_outputs(root: str, build_dir: str | None, project: TexProject):
     for d in search:
         if not d or not os.path.isdir(d):
             continue
-        for name in (stem + ".log", "main.log"):
+        for name in (stem + ".log", "main.log", "output.log"):
             cand = os.path.join(d, name)
             if log_text is None and os.path.isfile(cand):
                 try:
@@ -245,19 +248,23 @@ def _find_build_outputs(root: str, build_dir: str | None, project: TexProject):
                         log_text = fh.read()
                 except OSError:
                     pass
-        for name in (stem + ".pdf", "main.pdf"):
+        for name in (stem + ".pdf", "main.pdf", "output.pdf"):
             cand = os.path.join(d, name)
             if pdf_path is None and os.path.isfile(cand):
                 pdf_path = cand
         if log_text is None:
             for fn in sorted(os.listdir(d)):
                 if fn.endswith(".log"):
+                    # The engine names itself on the first line; reading a
+                    # 300 MB data log in full to find that out cost seconds.
                     try:
                         with open(os.path.join(d, fn), "r", encoding="utf-8", errors="replace") as fh:
-                            head = fh.read()
+                            head = fh.read(4096)
+                            if ("This is pdfTeX" in head or "This is LuaHBTeX" in head
+                                    or "This is XeTeX" in head):
+                                log_text = head + fh.read()
                     except OSError:
                         continue
-                    if "This is pdfTeX" in head or "This is LuaHBTeX" in head or "This is XeTeX" in head:
-                        log_text = head
+                    if log_text is not None:
                         break
     return log_text, pdf_path

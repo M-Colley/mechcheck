@@ -23,12 +23,24 @@ _IDENTIFYING_HOSTS = re.compile(
     r"github\.com/[\w.\-]+|gitlab\.com/[\w.\-]+|bitbucket\.org/[\w.\-]+|"
     r"osf\.io/\w+|figshare\.com/\S+|zenodo\.org/\S+|"
     r"[\w\-]+\.github\.io|researchgate\.net/\S+|linkedin\.com/\S+|"
-    r"[\w\-]*\.uni-[\w\-]+\.de\S*|[\w\-]*\.ac\.[a-z]{2}\S*|[\w\-]*\.edu\S*"
+    # Any depth of subdomain: hci.stanford.edu and www.cs.ucl.ac.uk as well.
+    r"(?:[\w\-]+\.)*uni-[\w\-]+\.de\S*|(?:[\w\-]+\.)*[\w\-]+\.ac\.[a-z]{2}\S*"
+    r"|(?:[\w\-]+\.)*[\w\-]+\.edu\S*"
     r")", re.IGNORECASE)
 
+#: Code hosts name an account in the path; whose account decides the severity.
+_CODE_HOST_OWNER = re.compile(
+    r"https?://(?:www\.)?(?:github\.com|gitlab\.com|bitbucket\.org)/([\w.\-]+)"
+    r"|https?://([\w\-]+)\.github\.io", re.IGNORECASE)
+
 _FUNDING = re.compile(
-    r"\b(funded by|grant (?:no\.?|number)|supported by the|Deutsche Forschungsgemeinschaft|"
+    r"\b(funded by|grant (?:no\.?|number)|Deutsche Forschungsgemeinschaft|"
     r"DFG|BMBF|European Union'?s? Horizon|ERC|NSF (?:grant|award))\b", re.IGNORECASE)
+#: "supported by the interview data" is an argument, not a grant: the phrase
+#: counts only when what follows is a funder.
+_SUPPORTED_BY = re.compile(
+    r"\b[Ss]upported\s+(?:in\s+part\s+)?by\s+(?:a\s+|an\s+|the\s+)?(?:[A-Z][\w&.\-]*\s+){0,6}"
+    r"(?:[Gg]rants?|Foundation|Council|Fund|Agency|Ministry|Programme|Program|Award|Fellowship)\b")
 
 
 #: Environments acmart itself removes from an anonymous build. From the class:
@@ -71,8 +83,14 @@ def _is_anonymous_stage(ctx) -> bool:
     _cls, options = ctx.project.documentclass()
     if "anonymous" in [o.lower() for o in options]:
         return True
+    # The camera-ready version is not reviewed anonymously: telling its
+    # author to remove their name contradicts ANON007.
+    if ctx.config.stage == "final":
+        return False
+    # Matched as a whole model, not a substring: "single-anonymous" (TRF)
+    # contains the word and names the authors.
     model = str(ctx.config.venue_field("anonymity", "model", default="") or "").lower()
-    return "double" in model or "anonymous" in model
+    return model.startswith(("double", "triple")) or model == "anonymous"
 
 
 @rule("ANON001", "Author identity present in an anonymous submission", Category.ANONYMITY,
@@ -129,6 +147,7 @@ def identifying_link(ctx):
     if not _is_anonymous_stage(ctx):
         return
     allow = [str(a).lower() for a in (ctx.opt("ANON003", "allow", []) or [])]
+    tokens = _author_tokens(ctx)
     for m in _IDENTIFYING_HOSTS.finditer(ctx.project.text):
         url = m.group(0)
         if any(a in url.lower() for a in allow):
@@ -138,8 +157,30 @@ def identifying_link(ctx):
         if _is_suppressed(ctx, m.start()):
             continue
         f, line, col = ctx.project.locate(m.start())
-        yield ctx.finding("ANON003", f"identifying link: {url[:70]}",
-                          file=f, line=line, col=col, context=ctx.project.excerpt(m.start()))
+        # github.com/pytorch/pytorch is somebody else's account. Only an
+        # account that matches an author is certain; any other is worth a look.
+        owner = _CODE_HOST_OWNER.match(url)
+        severity = None
+        message = f"identifying link: {url[:70]}"
+        if owner:
+            name = (owner.group(1) or owner.group(2) or "").lower()
+            if not any(t in name for t in tokens):
+                severity = Severity.WARN
+                message = f"repository link under the account `{name}`; if it is yours, it identifies you: {url[:60]}"
+        yield ctx.finding("ANON003", message, file=f, line=line, col=col,
+                          context=ctx.project.excerpt(m.start()),
+                          severity=severity or ctx.config.severity_for("ANON003"))
+
+
+def _author_tokens(ctx) -> set:
+    """Surnames, given names and e-mail local parts from the author block."""
+    tokens = set()
+    for name in ("author", "email"):
+        for cmd in ctx.project.commands(name, 1):
+            for part in re.split(r"[^A-Za-z]+", cmd.arg(0).split("@")[0]):
+                if len(part) >= 3:
+                    tokens.add(part.lower())
+    return tokens
 
 
 @rule("ANON004", "Funding statement in an anonymous submission", Category.ANONYMITY, Severity.WARN,
@@ -150,7 +191,9 @@ def funding_statement(ctx):
         return
     # One finding per line: a funding sentence trips several patterns at once.
     seen_lines = set()
-    for m in _FUNDING.finditer(ctx.project.prose):
+    hits = sorted([*_FUNDING.finditer(ctx.project.prose), *_SUPPORTED_BY.finditer(ctx.project.prose)],
+                  key=lambda m: m.start())
+    for m in hits:
         if _is_suppressed(ctx, m.start()):
             continue
         f, line, col = ctx.project.locate(m.start())

@@ -52,11 +52,20 @@ _TEST_REPORT = re.compile(r"""
     \s* = \s*
     (?P<value>[-\u2212+]?\d*\.\d+|[-\u2212+]?\d+)
     (?P<gap>(?:(?!\.\s+[A-Z])[^\n]){0,60}?)
-    (?<![A-Za-z])p\s*(?P<op>[<>=])\s*(?P<p>\d*\.\d+|\d+)
+    (?<![A-Za-z_^\\])p\s*(?P<op>[<>=])\s*(?P<p>\d*\.\d+|\d+)
+    (?!\.?\d)(?!\s*(?:\\times|\\cdot|\u00d7|[eE][-\u2212+]?\d))
 """, re.VERBOSE)
 
-#: Any p-value at all, for the impossible-value check.
-_ANY_P = re.compile(r"(?<![A-Za-z])p\s*(?P<op>[<>=])\s*(?P<p>\d*\.\d+|\d+)")
+#: Any p-value at all, for the impossible-value check. Not the p of L_p or
+#: eta^2_p, and not the mantissa of 1.8 \times 10^{-5} or 7.6e-7.
+_ANY_P = re.compile(r"(?<![A-Za-z_^\\])p\s*(?P<op>[<>=])\s*(?P<p>\d*\.\d+|\d+)"
+                    r"(?!\.?\d)(?!\s*(?:\\times|\\cdot|\u00d7|[eE][-\u2212+]?\d))")
+
+#: What makes a p a p-value rather than a norm or a probability in a model:
+#: a test or the word "significant" shortly before it.
+_TEST_CONTEXT = re.compile(
+    r"(?<![A-Za-z\\])(?:[tFrzWUHQ]\s*[(=]|\\chi|\u03c7)|[Ss]ignifican|[Tt]est|ANOVA|[Rr]egression"
+    r"|[Cc]orrelat|Wilcoxon|Friedman|Kruskal|Mann|Fisher")
 
 #: How each statistic is written back in a finding.
 _DISPLAY = {"t": "t", "F": "F", "r": "r", "z": "z", "chi2": "chi²"}
@@ -180,6 +189,11 @@ def impossible_p_value(ctx):
             reason = "a p-value cannot be greater than 1"
             fix = "Check the number against your output."
         else:
+            continue
+        # "the L_p distance with p = 2" is not a p-value. A whole number is
+        # how a norm or a model parameter is written; software prints decimals.
+        if "." not in text and not _TEST_CONTEXT.search(ctx.project.text, max(0, m.start() - 120),
+                                                          m.start()):
             continue
         f, line, col = ctx.project.locate(m.start())
         yield ctx.finding("STA002", f"p {op} {text}: {reason}",

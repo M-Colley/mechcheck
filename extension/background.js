@@ -82,7 +82,8 @@ chrome.runtime.onInstalled.addListener(async ({ reason }) => {
   const existing = await chrome.storage.sync.get("settings");
   if (!existing.settings) {
     await chrome.storage.sync.set({
-      settings: { profile: "thesis", stage: "submission", venue: "", verify: false, autorun: false },
+      // The same defaults as the popup, the panel, the page and the CLI: a CHI paper.
+      settings: { profile: "paper", stage: "submission", venue: "chi", verify: false, autorun: false },
     });
   }
 });

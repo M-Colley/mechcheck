@@ -64,9 +64,21 @@ def test_prefixed_reference_becomes_autoref(tmp_path):
 
 
 def test_name_before_cite_becomes_citet(tmp_path):
-    root = build(tmp_path, "Colley et al.~" + BS + "cite{a} showed this.")
+    root = build(tmp_path, "Colley et al.~" + BS + "cite{a} showed this." + "\n" + BS + "bibliography{refs}")
+    (tmp_path / "refs.bib").write_text(
+        "@article{a,\n  author = {Colley, Mark and Rukzio, Enrico},\n  title = {T},\n"
+        "  journal = {J},\n  year = {2020},\n}\n", encoding="utf-8")
     do_fix(root)
     assert BS + "citet{a}" in body_of(root)
+
+
+def test_a_product_name_before_cite_is_not_rewritten(tmp_path):
+    """'Unity and Blender~\\cite{a}' names two tools, not the authors of a."""
+    root = build(tmp_path, "We built it in Unity and Blender~" + BS + "cite{a}." + "\n" + BS + "bibliography{refs}")
+    (tmp_path / "refs.bib").write_text(
+        "@misc{a,\n  author = {Doe, Jane},\n  title = {T},\n  year = {2020},\n}\n", encoding="utf-8")
+    do_fix(root)
+    assert "Unity and Blender~" + BS + "cite{a}" in body_of(root)
 
 
 def test_space_before_punctuation_is_closed_up(tmp_path):

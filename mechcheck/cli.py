@@ -23,6 +23,7 @@ from mechcheck.runner import run, write_baseline
 EXIT_OK = 0
 EXIT_FINDINGS = 1
 EXIT_USAGE = 2
+EXIT_INTERNAL = 3
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -126,9 +127,15 @@ def cmd_check(args) -> int:
 
     config = Config.load(root, explicit=args.config, overrides=_overrides(args))
     baseline = None if args.no_baseline else os.path.join(root, args.baseline)
+    if _bad_usage(root, args, config):
+        return EXIT_USAGE
 
     result = run(root, config, only=args.only, offline=args.offline,
                  build_dir=args.build_dir, baseline=baseline, main=args.main)
+    if not result.project.files or result.project.files[0].missing:
+        print(f"mechcheck: no main document found in {root} (looked for {result.project.main}); "
+              "pass --main", file=sys.stderr)
+        return EXIT_USAGE
 
     text = reporters.RENDERERS[args.format](result)
     if args.output:
@@ -136,7 +143,9 @@ def cmd_check(args) -> int:
     else:
         print(text)
     if getattr(args, "show_skipped", False) and result.skipped:
-        print(reporters.render_skipped(result))
+        # On stdout it would follow the JSON or SARIF document and break it.
+        machine = args.format in ("json", "sarif", "github") and not args.output
+        print(reporters.render_skipped(result), file=sys.stderr if machine else sys.stdout)
 
     for spec in args.also:
         fmt, _, path = spec.partition("=")
@@ -158,6 +167,19 @@ def cmd_check(args) -> int:
     if getattr(args, "fail_on", None) == "never":
         return EXIT_OK
     return EXIT_FINDINGS if result.should_fail() else EXIT_OK
+
+
+def _bad_usage(root: str, args, config) -> bool:
+    """An unknown --only rule or a --main that does not exist used to run nothing and pass."""
+    unknown = [r for r in getattr(args, "only", []) or [] if REGISTRY.get(r.strip().upper()) is None]
+    if unknown:
+        print(f"mechcheck: no such rule: {', '.join(unknown)} (see `mechcheck rules`)", file=sys.stderr)
+        return True
+    main = getattr(args, "main", None) or config.data.get("main")
+    if main and not os.path.isfile(os.path.join(root, main)):
+        print(f"mechcheck: main document not found: {main}", file=sys.stderr)
+        return True
+    return False
 
 
 def _write(path: str, text: str) -> None:
@@ -246,6 +268,8 @@ def cmd_fix(args) -> int:
         print(f"mechcheck: not a directory: {root}", file=sys.stderr)
         return EXIT_USAGE
     config = Config.load(root, explicit=args.config, overrides=_overrides(args))
+    if _bad_usage(root, args, config):
+        return EXIT_USAGE
     report = fixer.fix(root, config, run, only=args.only, offline=True,
                        dry_run=args.dry_run)
     print(fixer.render(report))
@@ -308,6 +332,12 @@ def main(argv=None) -> int:
         return handlers[args.command](args)
     except KeyboardInterrupt:
         return EXIT_USAGE
+    except Exception as exc:  # exit 1 means "findings"; a crash must not look like that
+        import traceback
+
+        traceback.print_exc()
+        print(f"mechcheck: internal error: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return EXIT_INTERNAL
 
 
 if __name__ == "__main__":

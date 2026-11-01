@@ -460,3 +460,78 @@ def test_the_probe_reports_only_what_it_was_told(monkeypatch):
 
     fetcher = net.Fetcher(cache_dir=None, offline=True)
     assert fetcher.url_status("https://example.net/x") is None
+
+
+# --------------------------------------------------------------------------- #
+# STY001 placeholders and POL012 — unfinished-manuscript markers a screen reads
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize("text", [
+    "Prior systems bind models to cards (cite) and stop there.",
+    "This is well established [citation needed] in the field.",
+    "Earlier work showed the same [ref].",
+    "Coding agreement was substantial (k=[]).",
+    "Agreement was high, " + BS + "(" + BS + "kappa = []" + BS + ").",
+    "We recruited N = XX participants.",
+    "Ratings averaged M = X.XX on the scale.",
+    "The effect was significant, p = ?, in both groups.",
+    "We release the pipeline (Github-link) under MIT.",
+    "Materials are available at [URL].",
+    "See " + BS + "url{} for the code.",
+])
+def test_a_placeholder_for_missing_content_is_reported(tmp_path, text):
+    result = check(build(tmp_path, text), only=["STY001"])
+    assert "STY001" in fired(result)
+    assert result.findings[0].severity == Severity.ERROR
+
+
+@pytest.mark.parametrize("text", [
+    "The reference condition (Ref) was shown first.",
+    "In the REF condition (REF) participants waited.",
+    "We cite prior work where it applies, and link it in the text.",
+    "Let $x = y$ and $Y = X$ hold.",
+    "Participants (N = 24) rated the XXL size.",
+    "% (cite) a note to self that never prints" + NL + "Ordinary text.",
+    BS + "begin{verbatim}" + NL + "results = [] # (cite)" + NL + BS + "end{verbatim}",
+    BS + "begin{algorithmic}" + NL + BS + "State $Q = []$" + NL + BS + "end{algorithmic}",
+    "The code is at " + BS + "url{https://osf.io/abcde} (link checked).",
+])
+def test_ordinary_text_is_not_a_placeholder(tmp_path, text):
+    result = check(build(tmp_path, text), only=["STY001"])
+    assert "STY001" not in fired(result), [f.message for f in result.findings]
+
+
+@pytest.mark.parametrize("preamble", [
+    BS + "acmConference[Conference acronym 'XX]{Make sure to enter the correct conference title "
+    "from your rights confirmation email}{June 03--05, 2018}{Woodstock, NY}" + NL,
+    BS + "acmDOI{XXXXXXX.XXXXXXX}" + NL,
+    BS + "acmISBN{978-1-4503-XXXX-X/2018/06}" + NL,
+])
+def test_acmart_sample_values_in_the_preamble_are_reported(tmp_path, preamble):
+    result = check(build(tmp_path, "Text.", preamble=preamble), only=["POL012"])
+    assert "POL012" in fired(result)
+
+
+def test_the_sample_received_dates_are_reported(tmp_path):
+    body = ("Text." + NL + BS + "received{20 February 2007}" + NL
+            + BS + "received[revised]{12 March 2009}" + NL + BS + "received[accepted]{5 June 2009}")
+    result = check(build(tmp_path, body), only=["POL012"])
+    assert len(of(result, "POL012")) == 1
+    assert "received" in result.findings[0].message
+
+
+def test_real_rights_values_are_not_sample_values(tmp_path):
+    preamble = (BS + "acmConference[CHI '27]{CHI Conference on Human Factors in Computing Systems}"
+                "{April 2027}{Barcelona, Spain}" + NL + BS + "acmDOI{10.1145/3706598.3713000}" + NL)
+    body = "Text." + NL + BS + "received{1 March 2027}"
+    assert "POL012" not in fired(check(build(tmp_path, body, preamble=preamble), only=["POL012"]))
+
+
+def test_a_commented_sample_value_does_not_print(tmp_path):
+    preamble = "% " + BS + "acmDOI{XXXXXXX.XXXXXXX}" + NL
+    assert "POL012" not in fired(check(build(tmp_path, "Text.", preamble=preamble), only=["POL012"]))
+
+
+def test_sample_values_matter_only_in_acmart(tmp_path):
+    root = build(tmp_path, "The DOI XXXXXXX.XXXXXXX is fictional.", cls="article", options="")
+    assert "POL012" not in fired(check(root, only=["POL012"]))

@@ -153,7 +153,14 @@ def _initials_match(initials: str, acronym: str) -> bool:
 def redefined_abbreviation(ctx):
     if _managed_by_package(ctx):
         return
+    # The abstract is read on its own, so style guides ask for abbreviations
+    # to be introduced again in the body. Doing so is not a second definition,
+    # and the auto-fix deleted the body's.
+    abstract = [(e.start, e.end) for e in ctx.project.environments("abstract")]
     for acronym, occurrences in _definitions(ctx).items():
+        body = [o for o in occurrences if not any(a <= o[0] < b for a, b in abstract)]
+        if len(body) < len(occurrences):
+            occurrences = body
         if len(occurrences) < 2:
             continue
         first_offset = occurrences[0][0]

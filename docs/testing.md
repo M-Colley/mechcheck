@@ -167,8 +167,8 @@ So you know where the gaps are rather than re-testing what is covered:
 
 | | Verified how |
 |---|---|
-| 157 rules, Python | 861 tests |
-| 157 rules, browser engine | 327 checks in Node, same fixtures |
+| 158 rules, Python | 961 tests |
+| 158 rules, browser engine | 399 checks in Node, same fixtures |
 | Both agree on this exact document | asserted in both suites, 37 findings |
 | Extension panel, zip reading, filters, editor markers, inline notes | 61 checks in a real browser |
 | `mechcheck.sty` | 14 checks against TeX Live 2026 |

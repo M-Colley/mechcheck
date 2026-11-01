@@ -38,6 +38,17 @@ def _required(ctx) -> bool:
     return _uses_acmart(ctx)
 
 
+#: Every environment that holds a figure. acmart's teaserfigure is not a float,
+#: so a figure-only scan missed the one image almost every CHI paper has.
+_FIGURE_ENVS = ("figure", "figure*", "teaserfigure", "wrapfigure", "sidewaysfigure",
+                "marginfigure", "SCfigure", "wrapfloat")
+
+
+def _figures(ctx) -> list:
+    out = [e for name in _FIGURE_ENVS for e in ctx.project.environments(name)]
+    return sorted(out, key=lambda e: e.start)
+
+
 @rule("ACC001", "Figure without a \\Description", Category.ACCESSIBILITY, Severity.ERROR,
       rationale="ACM requires alt text for every figure and validates it in TAPS; at ASSETS an inaccessible submission is desk-rejected.",
       fix="Add \\Description{...} inside the figure: say what the figure shows and what the reader should conclude from it.")
@@ -45,9 +56,7 @@ def missing_description(ctx):
     if not _required(ctx):
         return
     text = ctx.project.text
-    for env in ctx.project.floats():
-        if not env.name.startswith("figure"):
-            continue
+    for env in _figures(ctx):
         if parse_commands(env.body(text), "Description", 1):
             continue
         f, line, col = ctx.project.locate(env.start)
@@ -64,7 +73,11 @@ def missing_description(ctx):
 def placeholder_description(ctx):
     text = ctx.project.text
     minimum = int(ctx.opt("ACC002", "min_words", 8) or 8)
-    for env in ctx.project.floats():
+    seen = set()
+    for env in sorted(list(ctx.project.floats()) + _figures(ctx), key=lambda e: e.start):
+        if env.start in seen:
+            continue
+        seen.add(env.start)
         for cmd in parse_commands(env.body(text), "Description", 1):
             body = cmd.arg(0).strip()
             words = [w for w in re.split(r"\s+", body) if w]

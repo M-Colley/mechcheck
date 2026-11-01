@@ -162,21 +162,24 @@ def parse_file(path: str) -> list:
 def parse(text: str, path: str = "") -> list:
     entries = []
     line_starts = _line_index(text)
+    skip_until = 0
     for m in _ENTRY_START.finditer(text):
+        if m.start() < skip_until:
+            continue        # inside an @comment{...}: an entry commented out
         etype = m.group("type").lower()
-        if etype in ("comment", "preamble"):
-            continue
         opener = text[m.end() - 1]
         closer = "}" if opener == "{" else ")"
         body, end = _read_until_close(text, m.end() - 1, opener, closer)
+        if etype in ("comment", "preamble", "string"):
+            skip_until = end
+            continue
         if body is None:
             continue
         raw = text[m.start():end]
         line = _line_of(line_starts, m.start())
-        if etype == "string":
-            continue
         key, fields, field_offsets = _parse_body(body)
-        field_lines = {name: _line_of(line_starts, m.end() - 1 + off)
+        # body[0] is text[m.end()]; each offset is the field name's first letter.
+        field_lines = {name: _line_of(line_starts, m.end() + off)
                        for name, off in field_offsets.items()}
         entries.append(BibEntry(key=key, type=etype, fields=fields, field_lines=field_lines,
                                 line=line, file=path, raw=raw))
@@ -232,11 +235,13 @@ def _parse_body(body: str):
         eq = _find_top_level(rest, "=", pos)
         if eq == -1:
             break
-        name = rest[pos:eq].strip().strip(",").strip().lower()
+        segment = rest[pos:eq]
+        name = segment.strip().strip(",").strip().lower()
         value, after = _read_value(rest, eq + 1)
         if name and name.isascii() and re.match(r"^[a-z][a-z0-9_\-:]*$", name):
             fields[name] = value
-            offsets[name] = base + pos
+            # Not the comma before it, which sits on the previous field's line.
+            offsets[name] = base + pos + len(segment) - len(segment.lstrip(" \t\r\n,"))
         pos = after
         nxt = _find_top_level(rest, ",", pos)
         pos = (nxt + 1) if nxt != -1 else n

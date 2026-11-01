@@ -408,13 +408,17 @@ def mixed_capitalisation(ctx):
     if not ctx.config.language.lower().startswith("en"):
         return
     prose = ctx.project.prose
-    titles = _title_spans(ctx)
+    from mechcheck.texsource import sentence_starts_at
+
+    # One lookup per word: scanning every heading span for every word took
+    # 32 s on a 1.3 MB thesis.
+    in_title = bytearray(len(prose) + 1)
+    for a, b in _title_spans(ctx):
+        in_title[a:b] = b"\x01" * max(0, b - a)
     minimum = int(ctx.opt("TRM004", "min_occurrences", 2) or 2)
 
     def eligible(start: int) -> bool:
-        from mechcheck.texsource import sentence_starts_at
-
-        if any(a <= start < b for a, b in titles):
+        if in_title[start]:
             return False
         return not sentence_starts_at(prose, start)
 

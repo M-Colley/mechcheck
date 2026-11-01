@@ -11,7 +11,7 @@ import os
 import re
 
 from mechcheck.model import Category, Severity, rule
-from mechcheck.texsource import parse_commands
+from mechcheck.texsource import parse_commands, parse_environments
 
 _LABEL_PREFIX = {
     "figure": ("fig", "figure"),
@@ -30,13 +30,46 @@ _REF_CMDS = ["ref", "cref", "Cref", "autoref", "vref", "pageref", "eqref", "name
              "labelcref", "subref", "Autoref"]
 
 
+#: Panels inside a float carry their own \caption and \label; those belong to
+#: the panel, not to the float.
+_SUB_ENVS = ("subfigure", "subfigure*", "subtable", "subtable*")
+_SUB_COMMANDS = (("subcaptionbox", 2), ("subfloat", 1))
+
+
+def _panel_spans(body: str) -> list:
+    spans = [(e.start, e.end) for name in _SUB_ENVS for e in parse_environments(body, name)]
+    spans += [(c.start, c.end) for name, n in _SUB_COMMANDS for c in parse_commands(body, name, n)]
+    return spans
+
+
+def _top_level(body: str, name: str) -> list:
+    r"""``\name`` commands of the float itself, not of one of its panels."""
+    spans = _panel_spans(body)
+    out = []
+    for c in parse_commands(body, name, 1):
+        if any(a <= c.start < b for a, b in spans):
+            continue
+        # \subcaption{Left}\label{fig:a}: the label belongs to the panel.
+        if name == "label":
+            before = body[:c.start].rstrip()
+            sub = [s for s in parse_commands(body[:c.start], "subcaption", 1) if s.end == len(before)]
+            if sub:
+                continue
+        out.append(c)
+    return out
+
+
+def _all_labels(env, text: str) -> list:
+    return [c.arg(0).strip() for c in parse_commands(env.body(text), "label", 1) if c.arg(0).strip()]
+
+
 def _label_of(env, text: str):
-    labels = parse_commands(env.body(text), "label", 1)
-    return labels[0].arg(0).strip() if labels else None
+    labels = _top_level(env.body(text), "label")
+    return labels[-1].arg(0).strip() if labels else None
 
 
 def _captions_of(env, text: str):
-    return parse_commands(env.body(text), "caption", 1)
+    return _top_level(env.body(text), "caption")
 
 
 def _referenced_labels(ctx) -> set:
@@ -69,7 +102,7 @@ def no_caption(ctx):
       fix="Add \\label{fig:...} directly after the \\caption.")
 def no_label(ctx):
     for env in ctx.project.floats():
-        if _label_of(env, ctx.project.text):
+        if _all_labels(env, ctx.project.text):
             continue
         f, line, col = ctx.project.locate(env.start)
         yield ctx.finding("FIG002", f"\\begin{{{env.name}}} has no \\label",
@@ -84,7 +117,8 @@ def unreferenced_float(ctx):
     referenced = _referenced_labels(ctx)
     for env in ctx.project.floats():
         label = _label_of(env, ctx.project.text)
-        if not label or label in referenced:
+        # Referring to one panel ("Figure 3b") is referring to the figure.
+        if not label or referenced & set(_all_labels(env, ctx.project.text)):
             continue
         f, line, col = ctx.project.locate(env.start)
         yield ctx.finding("FIG003", f"{env.name} `{label}` is never referenced in the text",
@@ -100,8 +134,8 @@ def label_before_caption(ctx):
     text = ctx.project.text
     for env in ctx.project.floats():
         body = env.body(text)
-        caps = parse_commands(body, "caption", 1)
-        labs = parse_commands(body, "label", 1)
+        caps = _top_level(body, "caption")
+        labs = _top_level(body, "label")
         if not caps or not labs:
             continue
         if labs[0].start < caps[0].start:

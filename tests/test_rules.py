@@ -195,8 +195,12 @@ def test_disabled_rules_do_not_run(tmp_path):
 # reference style: prefer \autoref and \citet
 # --------------------------------------------------------------------------- #
 
+#: \autoref is hyperref's; REF008 only advises it where it exists.
+HYPERREF = BS + "documentclass{article}" + chr(10) + BS + "usepackage{hyperref}" + chr(10)
+
+
 def test_prefixed_ref_suggests_autoref(tmp_path):
-    root = build(tmp_path, "As shown in Figure~" + BS + "ref{fig:a}, it holds.")
+    root = build(tmp_path, "As shown in Figure~" + BS + "ref{fig:a}, it holds.", preamble=HYPERREF)
     result = check(root, only=["REF008"])
     assert "REF008" in rules_fired(result)
     assert "autoref" in result.findings[0].message
@@ -221,7 +225,7 @@ def test_word_before_cref_is_a_doubled_word(tmp_path):
 
 def test_ref004_defers_to_ref008(tmp_path):
     """Both look at 'Figure \ref'; only the better advice should appear."""
-    root = build(tmp_path, "As shown in Figure " + BS + "ref{fig:a}.")
+    root = build(tmp_path, "As shown in Figure " + BS + "ref{fig:a}.", preamble=HYPERREF)
     fired = rules_fired(check(root))
     assert "REF008" in fired
     assert "REF004" not in fired

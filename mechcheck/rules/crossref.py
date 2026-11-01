@@ -12,6 +12,7 @@ from collections import defaultdict
 
 from mechcheck import bibtex
 from mechcheck.model import Category, Severity, rule
+from mechcheck.texsource import read_group
 
 REF_CMDS = ["ref", "cref", "Cref", "crefrange", "Crefrange", "autoref", "vref",
             "pageref", "nameref", "labelcref", "subref", "eqref"]
@@ -32,12 +33,25 @@ _UNREFERENCED_LABEL_EXEMPT = {
 }
 
 
+#: listings and minted take the label as an option, not as \label.
+_OPTION_LABEL_HOST = re.compile(
+    r"\\(?:begin\s*\{(?:lstlisting|minted)\}|lstinputlisting|inputminted)\s*\[")
+_OPTION_LABEL = re.compile(r"(?:^|,)\s*label\s*=\s*\{?\s*([^,{}\]]+?)\s*\}?\s*(?=,|$)")
+
+
 def _labels(ctx) -> dict:
     out = defaultdict(list)
     for cmd in ctx.project.commands("label", 1):
         key = cmd.arg(0).strip()
         if key:
             out[key].append(cmd.start)
+    text = ctx.project.text
+    for m in _OPTION_LABEL_HOST.finditer(text):
+        grp = read_group(text, m.end() - 1, "[", "]")
+        for lm in _OPTION_LABEL.finditer(grp[0] if grp else ""):
+            out[lm.group(1)].append(m.start())
+    for offsets in out.values():
+        offsets.sort()
     return out
 
 
@@ -56,7 +70,8 @@ def _cites(ctx) -> dict:
     for cmd in ctx.project.any_commands(CITE_CMDS, 1):
         for key in cmd.arg(0).split(","):
             key = key.strip()
-            if key and "\\" not in key:
+            # \nocite{*} adds every entry; it names no key.
+            if key and key != "*" and "\\" not in key:
                 out[key].append(cmd.start)
     return out
 
@@ -213,8 +228,9 @@ def inconsistent_ref_style(ctx):
 
 
 #: Words \autoref reproduces exactly, so writing them by hand is duplication.
-_AUTOREF_EXACT = ("Figure", "Fig.", "Figures", "Table", "Tables",
-                  "Chapter", "Chap.", "Equation", "Eq.", "Part")
+#: Only these: \autoref prints "Figure 1 and 2" for "Figures~\ref{a} and~\ref{b}",
+#: "Figure" for "Fig.", and hyperref's chapter name is lower case.
+_AUTOREF_EXACT = ("Figure", "Table", "Equation", "Part")
 
 #: Words \autoref would replace with a *different* one, so writing them by
 #: hand is a decision rather than a mistake.
@@ -229,7 +245,8 @@ _AUTOREF_EXACT = ("Figure", "Fig.", "Figures", "Table", "Tables",
 #: Documents that have redefined \subsectionautorefname and friends can opt
 #: back in with `rules: {REF008: {sections: true}}`.
 _AUTOREF_VARIES = ("Section", "Sec.", "Sections", "Subsection",
-                   "Appendix", "Algorithm", "Listing")
+                   "Appendix", "Algorithm", "Listing",
+                   "Fig.", "Figures", "Tables", "Chapter", "Chap.", "Eq.")
 
 _AUTOREF_WORDS = _AUTOREF_EXACT + _AUTOREF_VARIES
 
@@ -271,6 +288,10 @@ def _autoref_applies(ctx, word: str) -> bool:
     simply a different word -- so there the written-out form is a choice, and
     a checker has no business overriding it.
     """
+    # \autoref is hyperref's: without it the advice would break the build.
+    cls, _ = ctx.project.documentclass()
+    if "hyperref" not in ctx.project.packages() and cls.lower() != "acmart":
+        return False
     if word in _AUTOREF_EXACT:
         return True
     return bool(ctx.opt("REF008", "sections", False))
@@ -331,6 +352,7 @@ def prefer_citet(ctx):
     from mechcheck.texsource import read_group, skip_space
 
     command = _textual_cite_command(ctx)
+    entries = _bib_keys(ctx)
     for m in _NAME_BEFORE_CITE.finditer(ctx.project.text):
         name = m.group("name")
         if name.lower() in _NOT_A_NAME:
@@ -344,11 +366,19 @@ def prefer_citet(ctx):
         # ALL-CAPS before a citation is an acronym (VR, ANOVA, ADMS), never a surname.
         if name.isupper():
             continue
-        shown = (name + " " + rest).strip()
-        f, line, col = ctx.project.locate(m.start())
         group = read_group(ctx.project.text, skip_space(ctx.project.text, m.end()))
         key = group[0] if group else None
         arg_end = group[1] if group else m.end()
+        # "Unity and Blender~\cite{a}" is two products, not two authors. When
+        # the bibliography shows the name is not an author, this is not a
+        # case; when it cannot show either way, report it but rewrite nothing.
+        cited = [entries.get(k.strip()) for k in (key or "").split(",")]
+        surnames = {s.lower() for e in cited if e for s in e.author_surnames()}
+        verified = name.lower() in surnames
+        if surnames and not verified:
+            continue
+        shown = (name + " " + rest).strip()
+        f, line, col = ctx.project.locate(m.start())
         if command:
             advice = f"Replace '{shown}~\\{cmd}{{key}}' with {command}{{key}}."
         else:
@@ -360,7 +390,7 @@ def prefer_citet(ctx):
                           fix=advice, data={"name": name},
                           edit=(ctx.edit_span(m.start(), arg_end, f"{command}{{{key}}}",
                                               f"{shown}~{BS}{cmd}{{{key}}} -> {command}{{{key}}}")
-                                if command and key else None))
+                                if command and key and verified and "," not in key else None))
 
 _ADJACENT_CITES = re.compile(
     r"\\(?P<cmd>cite|citep|citet|citealp|parencite|textcite|autocite)"

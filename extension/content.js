@@ -312,11 +312,15 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
 
     for (const sel of [".profile", ".stage", ".venue", ".verify"]) {
       q(sel).addEventListener("change", async () => {
-        const settings = {
-          profile: q(".profile").value, stage: q(".stage").value,
-          venue: q(".venue").value, verify: q(".verify").checked,
-        };
-        try { await chrome.storage.sync.set({ settings }); } catch (err) { /* ignore */ }
+        // Merge into what is stored: writing only these four dropped autorun,
+        // markers and notes every time a dropdown changed.
+        try {
+          const stored = (await chrome.storage.sync.get("settings")).settings || {};
+          await chrome.storage.sync.set({ settings: {
+            ...stored, profile: q(".profile").value, stage: q(".stage").value,
+            venue: q(".venue").value, verify: q(".verify").checked,
+          } });
+        } catch (err) { /* ignore */ }
         if (lastResult) run();
       });
     }
@@ -665,7 +669,8 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
     for (const f of (result.findings || []).concat(result.truncated || [])) {
       if (!f.line) continue;
       // The tree shows a basename; a finding carries the project-relative path.
-      if (fileName && f.file && f.file.split("/").pop() !== fileName) continue;
+      // Without a name every finding would be drawn on whatever file is open.
+      if (!fileName || !f.file || f.file.split("/").pop() !== fileName) continue;
       if (!byLine.has(f.line)) byLine.set(f.line, []);
       byLine.get(f.line).push(f);
     }

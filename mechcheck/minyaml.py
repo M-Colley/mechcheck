@@ -230,7 +230,10 @@ def loads(text: str) -> dict:
     except ImportError:
         pass
     except Exception:
-        return {}
+        # A tab or "note: Fix: later" is fine for the documented subset and
+        # fatal to PyYAML. Dropping the whole file over it silently undid the
+        # project's profile and fail_on; read it the way the page does instead.
+        pass
     return loads_builtin(text)
 
 

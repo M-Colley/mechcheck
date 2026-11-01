@@ -12,13 +12,19 @@ import re
 
 from mechcheck.model import Category, Severity, rule
 
-_TODO = re.compile(r"(?<![\w])(TODO|FIXME|XXX|TBD|HACK|REWRITE|CITATION NEEDED|\?\?\?)(?![\w])",
-                   re.IGNORECASE)
+#: In capitals only: "we rewrite each query" and "attackers hack the device"
+#: are English, and failed the build as unfinished work.
+_TODO = re.compile(r"(?<![\w])(TODO|FIXME|XXX|TBD|HACK|REWRITE|CITATION NEEDED|\?\?\?)(?![\w])")
+#: A note in lower case is still a note when it ends in a colon ("todo: fix"),
+#: and todonotes' \todo{...} and \missingfigure print a box in the margin.
+_TODO_NOTE = re.compile(r"(?<![\w])(todo|fixme)(?=\s*:)|(?<=\\)(todo|missingfigure)(?=\s*[\[{])",
+                        re.IGNORECASE)
 
 _DOUBLE_WORD = re.compile(r"(?<![\w])([A-Za-z]{2,})\s+\1(?![\w])", re.IGNORECASE)
 
-#: Words that legitimately repeat.
-_DOUBLE_OK = {"had", "that", "long", "sehr"}
+#: Words that legitimately repeat. German articles repeat by grammar:
+#: "Die Personen, die die Aufgabe gelöst haben".
+_DOUBLE_OK = {"had", "that", "long", "sehr", "die", "das", "der", "den", "dem"}
 
 _US_UK = [
     ("behavior", "behaviour"), ("color", "colour"), ("modeling", "modelling"),
@@ -39,18 +45,96 @@ _CONTRACTIONS = re.compile(
       fix="Resolve it, or move it to your issue tracker.")
 def todo_marker(ctx):
     for line in ctx.project.lines:
-        for m in _TODO.finditer(line.raw):
+        hits = sorted([*_TODO.finditer(line.raw), *_TODO_NOTE.finditer(line.raw)], key=lambda m: m.start())
+        taken = set()
+        for m in hits:
+            if m.start() in taken:      # "% TODO: x" is one marker, not two
+                continue
+            taken.add(m.start())
             # A marker inside a comment is a private note; still worth flagging
-            # before submission, but not while drafting.
-            in_comment = "%" in line.raw[:m.start()] and not line.raw[:m.start()].rstrip().endswith("\\")
-            severity = None
+            # before submission, but not while drafting. "%\todo{...}" is in a
+            # comment even though a backslash comes right before the match.
+            comment = _comment_start(line.raw)
+            in_comment = 0 <= comment < m.start()
             if in_comment and ctx.config.stage == "draft":
                 continue
-            yield ctx.finding("STY001",
-                              f"`{m.group(1)}` left in the source" + (" (in a comment)" if in_comment else ""),
+            # '# TODO: handle errors' in a code listing is part of the code
+            # being shown; worth a look, not a failed build.
+            where = " (in a comment)" if in_comment else " (in a code listing)" if line.verbatim else ""
+            yield ctx.finding("STY001", f"`{m.group(m.lastindex)}` left in the source" + where,
                               file=line.file, line=line.lineno, col=m.start() + 1,
                               context=line.raw.strip()[:90],
-                              severity=severity or ctx.config.severity_for("STY001"))
+                              severity=Severity.INFO if line.verbatim and not in_comment
+                              else ctx.config.severity_for("STY001"))
+    yield from _placeholders(ctx)
+
+
+def _comment_start(raw: str) -> int:
+    """Index of the first unescaped % on a line, or -1."""
+    i = 0
+    while i < len(raw):
+        if raw[i] == "\\":
+            i += 2
+            continue
+        if raw[i] == "%":
+            return i
+        i += 1
+    return -1
+
+
+#: A bracket standing in for a citation that was never added: to a desk-reject
+#: screen, '(cite)' in the argument is an unfinished manuscript. 'ref' is matched
+#: in lower case only: '(Ref)' and '(REF)' are how an abbreviation is introduced.
+_PLACEHOLDER_CITE = re.compile(
+    r"[(\[]\s*(?:cites?|citations?|(?:citation|reference|source)s?\s+needed"
+    r"|add\s+(?:a\s+)?(?:cite|citation|ref|reference)|missing\s+(?:citation|reference))\s*[)\]]",
+    re.IGNORECASE)
+_PLACEHOLDER_REF = re.compile(r"[(\[]\s*refs?(?:\s+needed)?\s*[)\]]")
+#: '(Github-link)', '[URL]': the artifact link a reviewer is promised.
+_PLACEHOLDER_LINK = re.compile(
+    r"[(\[]\s*(?:(?:github|gitlab|osf|zenodo|repo|repository|project|code|data|supplementary"
+    r"|anonymi[sz]ed)[\s-]+)?(?:link|url)\s*[)\]]", re.IGNORECASE)
+#: A statistic whose value was never filled in: '(k=[])', 'N = XX', 'M = X.XX',
+#: 'p = ?'. The name on the left is a symbol (one to three letters or a macro
+#: such as \kappa), never a word, so 'results = []' in a code sample is quiet.
+_PLACEHOLDER_VALUE = re.compile(
+    r"(?:(?<![\w\\])[A-Za-z]{1,3}|\\[A-Za-z]+)\s*=\s*"
+    r"(?:\[\s*\]|\?(?![?\w])|(?:XX+|X+\.X+|\.X{2,}|x+\.x+|\.x{2,})(?![\w]))")
+#: Pseudo-code legitimately initialises an empty list, and so does inline code.
+_CODE_ENVS = ("algorithm", "algorithmic", "algorithmicx", "algorithm2e", "pseudocode")
+_CODE_COMMANDS = (("texttt", 1), ("code", 1), ("lstinline", 1), ("mintinline", 2),
+                  ("path", 1), ("url", 1), ("href", 2))
+
+
+def _placeholders(ctx):
+    """Brackets and values that stand in for content, on the code view.
+
+    The code view is what prints: a placeholder inside a % comment is a note
+    to self, and the TODO check above already reports those.
+    """
+    code_spans = ([(e.start, e.end) for name in _CODE_ENVS for e in ctx.project.environments(name)]
+                  + [(c.start, c.end) for name, n in _CODE_COMMANDS for c in ctx.project.commands(name, n)])
+    checks = ((_PLACEHOLDER_CITE, "stands in for a citation that was never added"),
+              (_PLACEHOLDER_REF, "stands in for a citation that was never added"),
+              (_PLACEHOLDER_LINK, "stands in for a link that was never added"),
+              (_PLACEHOLDER_VALUE, "is a value that was never filled in"))
+    for line in ctx.project.lines:
+        if line.verbatim or not line.code.strip():
+            continue
+        for pattern, what in checks:
+            for m in pattern.finditer(line.code):
+                if pattern is _PLACEHOLDER_VALUE and any(
+                        a <= line.offset + m.start() < b for a, b in code_spans):
+                    continue
+                yield ctx.finding("STY001", f"`{m.group(0).strip()}` {what}",
+                                  file=line.file, line=line.lineno, col=m.start() + 1,
+                                  context=line.raw.strip()[:90])
+    for name, nargs in (("url", 1), ("href", 2)):
+        for c in ctx.project.commands(name, nargs):
+            if c.args and not c.arg(0).strip():
+                f, line, col = ctx.project.locate(c.start)
+                yield ctx.finding("STY001", f"empty \\{name}{{}} stands in for a link that was never added",
+                                  file=f, line=line, col=col, context=ctx.project.excerpt(c.start))
 
 
 @rule("STY002", "Forced line break in running text", Category.STYLE, Severity.WARN,
@@ -89,9 +173,14 @@ def forced_linebreak_in_prose(ctx):
       rationale="'the the' survives every spell-checker and every read-through, because the eye supplies the correct text.",
       fix="Delete the duplicate.")
 def repeated_word(ctx):
+    text = ctx.project.text
     for m in _DOUBLE_WORD.finditer(ctx.project.prose):
         word = m.group(1).lower()
         if word in _DOUBLE_OK:
+            continue
+        # "\paragraph{Latency} Latency was measured": a heading and the first
+        # word of its text, not a slip. A group closes between the two words.
+        if "}" in text[m.start(1) + len(m.group(1)):m.end() - len(m.group(1))]:
             continue
         f, line, col = ctx.project.locate(m.start())
         yield ctx.finding("STY003", f"repeated word: '{m.group(0).strip()}'",
@@ -149,7 +238,8 @@ def citation_spacing(ctx):
       rationale="A range takes an en dash (--) in LaTeX; a single hyphen prints too short.",
       fix="Write 10--20.")
 def numeric_range_hyphen(ctx):
-    for m in re.finditer(r"(?<![\d\-])(\d{1,4})\s?-\s?(\d{1,4})(?![\d\-])", ctx.project.prose):
+    # Not inside a time or a decimal: "10:00-12:00" became "10:0--12:00".
+    for m in re.finditer(r"(?<![\d\-:.,])(\d{1,4})\s?-\s?(\d{1,4})(?![\d\-:])", ctx.project.prose):
         a, b = int(m.group(1)), int(m.group(2))
         if b <= a:
             continue
@@ -158,10 +248,12 @@ def numeric_range_hyphen(ctx):
         if len(m.group(2)) - len(m.group(1)) > 1:
             continue  # not a range: more likely a subtraction or an identifier
         f, line, col = ctx.project.locate(m.start())
-        yield ctx.finding("STY007", f"'{m.group(0)}' should use an en dash: {a}--{b}",
+        # The digits as typed: int() turned "05-09" into "5--9".
+        dashed = f"{m.group(1)}--{m.group(2)}"
+        yield ctx.finding("STY007", f"'{m.group(0)}' should use an en dash: {dashed}",
                           file=f, line=line, col=col, context=ctx.project.excerpt(m.start()),
-                          edit=ctx.edit_span(m.start(), m.end(), f"{a}--{b}",
-                                             f"{m.group(0)} -> {a}--{b}"))
+                          edit=ctx.edit_span(m.start(), m.end(), dashed,
+                                             f"{m.group(0)} -> {dashed}"))
 
 
 @rule("STY008", "Mixed British and American spelling", Category.STYLE, Severity.WARN,
@@ -233,8 +325,12 @@ def eg_ie_comma(ctx):
 def long_sentence(ctx):
     limit = int(ctx.opt("STY012", "max_words", 45) or 45)
     prose = ctx.project.prose
-    for m in re.finditer(r"[^.!?]{40,}[.!?]", prose):
+    # One pass, sentence by sentence. "[^.!?]{40,}[.!?]" was retried from every
+    # position of a long tail with no full stop -- 43 s for a listing appendix.
+    for m in re.finditer(r"[^.!?]+(?:[.!?]|\Z)", prose):
         chunk = m.group(0)
+        if len(chunk) <= 40 or chunk[-1] not in ".!?":
+            continue
         words = [w for w in re.split(r"\s+", chunk.strip()) if w]
         if len(words) <= limit:
             continue

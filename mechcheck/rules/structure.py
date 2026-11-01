@@ -33,12 +33,20 @@ def headings(ctx) -> list:
       rationale="A missing \\input is a chapter that silently is not in the PDF -- the failure mode nobody notices until the printed copy.",
       fix="Fix the path, or commit the file.")
 def missing_input(ctx):
-    from mechcheck.texsource import is_absolute_path
+    from mechcheck.texsource import conditional_spans, is_absolute_path
 
+    text = ctx.project.text
+    # \iffalse ... \fi is how a chapter is switched off; LaTeX never looks
+    # for the file, so neither may this.
+    off = [(a, b) for a, b in conditional_spans(text) if text.startswith("\\iffalse", a)]
+    starts = {(ln.file, ln.lineno): ln.offset for ln in ctx.project.lines}
     for path, line, target in ctx.project.missing_inputs:
         # A file that exists under another capitalisation, or an absolute
         # path, is STR013's finding, with the more useful message.
         if is_absolute_path(target) or _case_variant(ctx, target):
+            continue
+        at = starts.get((path, line))
+        if at is not None and any(a <= at < b for a, b in off):
             continue
         yield ctx.finding("STR001", f"\\input{{{target}}} could not be resolved",
                           file=path, line=line,

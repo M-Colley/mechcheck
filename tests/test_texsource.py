@@ -71,7 +71,8 @@ def test_prose_view_keeps_text_inside_formatting_commands():
 
 class TestProject:
     @pytest.fixture(scope="class")
-    def project(self):
+    @classmethod
+    def project(cls):
         return TexProject.load(os.path.join(FIXTURES, "sample"))
 
     def test_follows_input_files(self, project):

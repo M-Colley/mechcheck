@@ -7,8 +7,9 @@ name: mirror from Overleaf
 # GitHub can react to a student's edit on its own.
 #
 # This workflow closes that gap from the other side: it pulls from Overleaf's
-# git bridge on a schedule and commits any change into this repository, which
-# then triggers the mechcheck workflow like any other push. Students keep
+# git bridge on a schedule and commits any change into this repository, then
+# starts the mechcheck workflow on it. (A push made with GITHUB_TOKEN does not
+# trigger `on: push` workflows, so the start is explicit.) Students keep
 # working in Overleaf and never touch git; the checks still run.
 #
 # Requirements
@@ -34,6 +35,7 @@ on:
 
 permissions:
   contents: write
+  actions: write        # to start the mechcheck workflow after a mirror
 
 concurrency:
   group: overleaf-mirror
@@ -116,6 +118,12 @@ jobs:
             git push
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Start the checks on the mirrored version
+        if: steps.commit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run mechcheck.yml --ref "$GITHUB_REF_NAME"
 
       - name: Report what happened
         if: steps.setup.outputs.configured == 'true'

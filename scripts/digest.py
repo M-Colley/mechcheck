@@ -149,10 +149,13 @@ def main(argv=None) -> int:
                 except ValueError:
                     days_left = None
 
+            # A check that crashed or could not start returns no counts at all;
+            # showing that as zero errors put a green tick on a broken thesis.
+            failed = result.get("error")
             rows.append({
                 "name": name,
                 "repo": repo,
-                "status": status_icon(counts.get("error", 0), stale),
+                "status": "🚫" if failed else status_icon(counts.get("error", 0), stale),
                 "errors": counts.get("error", 0),
                 "warnings": counts.get("warn", 0),
                 "words": words,
@@ -162,7 +165,8 @@ def main(argv=None) -> int:
                 "due": due,
                 "days_left": days_left,
                 "topic": entry.get("topic", ""),
-                "top": _top_rules(result.get("findings", [])),
+                "top": ("check failed: " + str(failed)[:80]) if failed
+                       else _top_rules(result.get("findings", [])),
             })
     finally:
         if not args.keep:
@@ -171,6 +175,11 @@ def main(argv=None) -> int:
     markdown = render(rows, today)
     with open(args.out, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(markdown)
+    # The table carries emoji; a cp1252 console would raise on printing it.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
     print(markdown)
     return 0
 

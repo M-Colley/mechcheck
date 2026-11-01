@@ -6,7 +6,7 @@
 Mechanical checks for LaTeX theses and papers: the boring layer of review,
 automated, so supervision time goes to the argument instead of the formatting.
 
-157 rules across figures, cross-references, abbreviations, prose mechanics,
+158 rules across figures, cross-references, abbreviations, prose mechanics,
 bibliography hygiene, **bibliography verification against Crossref/OpenAlex/DBLP**,
 compile-log analysis, accessibility, anonymity, reporting conventions,
 **p-values recomputed from the test statistic**, **one name per concept**,
@@ -79,7 +79,7 @@ Confirm it landed:
 mechcheck rules | tail -1
 ```
 
-prints `157 rules`. Then run it on the self-test document, whose answer is
+prints `158 rules`. Then run it on the self-test document, whose answer is
 known in advance:
 
 ```bash
@@ -246,13 +246,19 @@ main.tex
   ! warn  STY021:19  'Section ??' reads as an unresolved reference
   ! warn  MET001      13,900 words of main text, limit 12000 (references and floats excluded)
   i info  VEN010      2 of 61 references cite SIGCHI/HCI venues (this pack expects at least 4)
+  x error STY001:31   `(cite)` stands in for a citation that was never added
+  ! warn  POL012:12   the sample DOI XXXXXXX.XXXXXXX is still in the document
 ```
 
 Those mirror the cards a CHI screening report raises: a masked reference and
 an author name in either of the PDF's two metadata blocks are desk-reject
 grounds, hidden text addressed to an automated reviewer is a
 research-integrity matter, and the length and scope items are advisory
-counts, never verdicts. `mechcheck check . --venue chi` runs the lot before
+counts, never verdicts. Placeholders are the other card: a `(cite)` left in
+the argument, a blank statistic or a Lorem ipsum appendix is what an
+unfinished manuscript looks like to the person screening it. acmart's sample
+DOI and 'Received 2007' line are only untidy, but they print, so they are
+reported too. `mechcheck check . --venue chi` runs the lot before
 you submit rather than after.
 
 And against the numbers in the results section, which no amount of reading
@@ -482,10 +488,10 @@ tests/                the Python suite, and the fixtures both engines are checke
 
 ## Status
 
-Python side: 861 tests passing, and the bibliography verification has been run
+Python side: 961 tests passing, and the bibliography verification has been run
 against the live Crossref, OpenAlex and DBLP APIs.
 
-Browser side: 327 checks passing (`node browser/test-engine.mjs`) against the
+Browser side: 399 checks passing (`node browser/test-engine.mjs`) against the
 same fixtures as the Python suite — including the assertion that both engines
 produce exactly the same findings on the self-test document, and that both
 readers of `mechcheck.yaml` agree on this repository's own configuration.

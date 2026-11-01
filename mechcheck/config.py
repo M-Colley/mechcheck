@@ -219,20 +219,18 @@ class Config:
         rule = REGISTRY.get(rule_id)
         base = rule.meta.severity if rule else Severity.WARN
 
-        overrides = self.data.get("severity") or {}
-        if rule_id in overrides:
-            return Severity.parse(overrides[rule_id], base)
-        for pattern, value in overrides.items():
-            if _glob(rule_id, str(pattern)):
-                return Severity.parse(value, base)
+        own = self._own_severity(rule_id)
+        if own is not None:
+            base = Severity.parse(own, base)
 
         # A venue pack may raise the stakes on a rule -- ASSETS desk-rejects an
         # inaccessible submission, so it makes the accessibility rules errors.
         # This was read by the browser engine and not here, which meant the two
         # gave different answers for the same venue. The project's own file
-        # still wins, and the stage still applies on top.
+        # still wins, and the stage still applies on top of either: a rule
+        # the project made an error still blocks nothing in a draft.
         venue_severity = self.venue_data.get("severity")
-        if isinstance(venue_severity, dict) and venue_severity:
+        if own is None and isinstance(venue_severity, dict) and venue_severity:
             if rule_id in venue_severity:
                 base = Severity.parse(venue_severity[rule_id], base)
             else:
@@ -248,12 +246,28 @@ class Config:
             return Severity.INFO if base >= Severity.WARN else base
         return base
 
+    def _own_severity(self, rule_id: str):
+        """The project's `severity:` entry for a rule; an exact id beats a pattern."""
+        overrides = self.data.get("severity") or {}
+        if not isinstance(overrides, dict):
+            return None
+        if rule_id in overrides:
+            return overrides[rule_id]
+        for pattern, value in overrides.items():
+            if _glob(rule_id, str(pattern)):
+                return value
+        return None
+
     def enabled(self, rule_id: str) -> bool:
         enable = [str(p) for p in (self.data.get("enable") or [])]
         disable = [str(p) for p in (self.data.get("disable") or [])]
         if any(_glob(rule_id, p) for p in enable):
             return True
         if any(_glob(rule_id, p) for p in disable):
+            return False
+        # `severity: {STY003: off}` is a way of saying "never report this".
+        own = self._own_severity(rule_id)
+        if own is not None and Severity.parse(own, Severity.WARN) is Severity.NEVER:
             return False
         return True
 
@@ -270,7 +284,9 @@ class Config:
 def _glob(value: str, pattern: str) -> bool:
     import fnmatch
 
-    return fnmatch.fnmatch(value, pattern) or value == pattern
+    # Case-sensitive on every platform: fnmatch() follows the OS, so on
+    # Windows `[ref001]` switched off REF001 and the page disagreed.
+    return fnmatch.fnmatchcase(value, pattern) or value == pattern
 
 
 def _merge(base: dict, extra: dict) -> dict:

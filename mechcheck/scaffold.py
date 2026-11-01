@@ -100,9 +100,8 @@ jobs:
             --also markdown=mechcheck-report.md \\
             --also sarif=mechcheck.sarif
 
-      - name: Publish the summary
-        if: always()
-        run: cat mechcheck-report.md >> "$GITHUB_STEP_SUMMARY"
+      # mechcheck writes the job summary itself when it runs inside Actions;
+      # appending the markdown report here as well printed it twice.
 
       - name: Upload findings to code scanning
         if: always()

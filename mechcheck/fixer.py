@@ -70,6 +70,32 @@ def apply_to_text(text: str, pairs: list, report: FixReport, path: str) -> str:
     return text
 
 
+def _apply_to_original(original: str, text: str, pairs: list, updated: str) -> str:
+    """Replay the applied edits on the file with its own line endings."""
+    if original == text:
+        return updated
+    import bisect
+
+    # Positions in ``text`` of every "\n" that was a "\r\n" on disk.
+    dropped, removed = [], 0
+    for i, ch in enumerate(original):
+        if ch == "\r" and original.startswith("\n", i + 1):
+            dropped.append(i - removed)
+            removed += 1
+
+    def back(pos: int) -> int:
+        return pos + bisect.bisect_left(dropped, pos)
+
+    out = original
+    written_from = len(text)
+    for _finding, edit in pairs:   # the same right-to-left order, the same refusals
+        if edit.end > written_from or not (0 <= edit.start <= edit.end <= len(text)):
+            continue
+        out = out[:back(edit.start)] + edit.replacement + out[back(edit.end):]
+        written_from = edit.start
+    return out
+
+
 def fix(root: str, config, run_checks, only=None, offline: bool = True,
         dry_run: bool = False, baseline: str | None = None) -> FixReport:
     """Check, apply every safe fix, then check again to prove it helped.
@@ -89,18 +115,27 @@ def fix(root: str, config, run_checks, only=None, offline: bool = True,
         report.after = report.before
         return report
 
+    real_root = os.path.realpath(root)
     for path, pairs in sorted(by_file.items()):
         full = os.path.join(root, path)
+        # \input{../shared/ack} is read, but it is not this project's to rewrite.
+        real = os.path.realpath(full)
+        if os.path.commonpath([real_root, real]) != real_root:
+            report.skipped.append(("-", path, "outside the project; left untouched"))
+            continue
         try:
             with open(full, "r", encoding="utf-8", newline="") as fh:
                 original = fh.read()
+        except UnicodeDecodeError:
+            report.skipped.append(("-", path, "not UTF-8; left untouched"))
+            continue
         except OSError as exc:
             report.skipped.append(("-", path, f"could not read: {exc}"))
             continue
 
-        # The parser works on text split by "\n"; normalise so offsets line up,
-        # and restore the file's own line endings afterwards.
-        crlf = "\r\n" in original
+        # The parser drops the "\r" of each "\r\n"; map its offsets back onto
+        # the file as it is, so every line keeps its own ending -- a file with
+        # both kinds stays a file with both kinds.
         text = original.replace("\r\n", "\n")
         updated = apply_to_text(text, pairs, report, path)
         if updated == text:
@@ -108,9 +143,10 @@ def fix(root: str, config, run_checks, only=None, offline: bool = True,
         report.files_changed.append(path)
         if dry_run:
             continue
+        rewritten = _apply_to_original(original, text, pairs, updated)
         try:
             with open(full, "w", encoding="utf-8", newline="") as fh:
-                fh.write(updated.replace("\n", "\r\n") if crlf else updated)
+                fh.write(rewritten)
         except OSError as exc:
             report.skipped.append(("-", path, f"could not write: {exc}"))
 

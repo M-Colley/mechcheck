@@ -24,8 +24,14 @@ DEFAULT_CACHE = os.path.join(os.path.expanduser("~"), ".cache", "mechcheck", "ht
 CACHE_TTL_S = 30 * 24 * 3600     # bibliographic metadata is essentially static
 MIN_INTERVAL_S = 0.12
 TIMEOUT_S = 20
+#: Consecutive transport failures after which a host is left alone for the
+#: rest of the run. Without it an outage cost about 20 s per reference.
+MAX_HOST_FAILURES = 3
 
 _last_call: dict = {}
+
+#: Answers that say the resource does not exist, as opposed to "could not tell".
+_ABSENT = (404, 410)
 
 
 class Fetcher:
@@ -36,11 +42,19 @@ class Fetcher:
         self.offline = offline
         self.ttl = ttl
         self.stats = {"hit": 0, "miss": 0, "error": 0, "skipped": 0}
+        #: Full URLs the server answered 404/410 for: the only failures that
+        #: may be reported as "does not exist".
+        self.absent: set = set()
+        self._host_failures: dict = {}
 
     # -- public ------------------------------------------------------------ #
 
     def get_json(self, url: str, params: dict | None = None, headers: dict | None = None):
-        """Return parsed JSON, or ``None`` on any failure. Never raises."""
+        """Return parsed JSON, or ``None`` on any failure. Never raises.
+
+        ``None`` alone does not say the resource is missing: :meth:`is_absent`
+        does, and only when the server said so.
+        """
         full = _with_params(url, params)
         cached = self._read_cache(full)
         if cached is not None:
@@ -61,6 +75,10 @@ class Fetcher:
         self._write_cache(full, data)
         self.stats["miss"] += 1
         return data
+
+    def is_absent(self, url: str, params: dict | None = None) -> bool:
+        """True only if the server answered 404/410 for this request."""
+        return _with_params(url, params) in self.absent
 
     def url_status(self, url: str):
         """What a bare URL answers: an HTTP status, ``"dns"``, or ``None``.
@@ -87,9 +105,13 @@ class Fetcher:
         return status
 
     def _probe(self, url: str, attempts: int = 2):
+        import http.client
         import socket
 
-        host = urllib.parse.urlparse(url).netloc
+        try:
+            host = urllib.parse.urlparse(url).netloc
+        except ValueError:          # 'http://[::1/x' -- not a URL at all
+            return None
         for attempt in range(attempts):
             self._throttle(host)
             # HEAD first; plenty of servers answer it with 405, so fall back.
@@ -112,7 +134,9 @@ class Fetcher:
                     if isinstance(exc.reason, socket.gaierror):
                         return "dns"        # the host itself does not exist
                     return None
-                except (TimeoutError, OSError, ValueError):
+                # InvalidURL (a URL wrapped across lines) and IncompleteRead
+                # are http.client errors, not OSErrors.
+                except (TimeoutError, OSError, ValueError, http.client.HTTPException):
                     return None
         return None
 
@@ -125,8 +149,15 @@ class Fetcher:
         return f"mechcheck/{__version__}{contact}"
 
     def _fetch(self, url: str, headers: dict, attempts: int = 3):
-        host = urllib.parse.urlparse(url).netloc
+        import http.client
+
+        try:
+            host = urllib.parse.urlparse(url).netloc
+        except ValueError:
+            return None
         for attempt in range(attempts):
+            if self._host_failures.get(host, 0) >= MAX_HOST_FAILURES:
+                return None             # this host is down for the run
             self._throttle(host)
             req = urllib.request.Request(url, headers={
                 "User-Agent": self._user_agent(),
@@ -135,16 +166,23 @@ class Fetcher:
             })
             try:
                 with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
-                    return resp.read().decode("utf-8", errors="replace")
+                    body = resp.read().decode("utf-8", errors="replace")
+                self._host_failures[host] = 0
+                return body
             except urllib.error.HTTPError as exc:
+                self._host_failures[host] = 0       # the host answered
                 if exc.code in (429, 500, 502, 503, 504) and attempt < attempts - 1:
                     retry_after = exc.headers.get("Retry-After") if exc.headers else None
                     delay = float(retry_after) if (retry_after or "").isdigit() else 2.0 * (attempt + 1)
                     time.sleep(min(delay, 10.0))
                     continue
+                if exc.code in _ABSENT:
+                    self.absent.add(url)
                 return None
-            except (urllib.error.URLError, TimeoutError, OSError):
-                if attempt < attempts - 1:
+            except (urllib.error.URLError, TimeoutError, OSError, ValueError,
+                    http.client.HTTPException):
+                self._host_failures[host] = self._host_failures.get(host, 0) + 1
+                if attempt < attempts - 1 and self._host_failures[host] < MAX_HOST_FAILURES:
                     time.sleep(1.0 * (attempt + 1))
                     continue
                 return None
@@ -210,14 +248,27 @@ OPENALEX_QUERY = "https://api.openalex.org/works"
 DBLP_QUERY = "https://dblp.org/search/publ/api"
 
 
+def _crossref_doi_request(fetcher: Fetcher, doi: str):
+    return CROSSREF_WORK + urllib.parse.quote(doi, safe=""), {"mailto": fetcher.mailto or None}
+
+
+def _openalex_doi_request(fetcher: Fetcher, doi: str):
+    return OPENALEX_DOI + urllib.parse.quote(doi, safe="/"), {"mailto": fetcher.mailto or None}
+
+
 def crossref_by_doi(fetcher: Fetcher, doi: str):
     if not doi:
         return None
-    url = CROSSREF_WORK + urllib.parse.quote(doi, safe="")
-    data = fetcher.get_json(url, {"mailto": fetcher.mailto or None})
+    data = fetcher.get_json(*_crossref_doi_request(fetcher, doi))
     if not isinstance(data, dict):
         return None
     return data.get("message")
+
+
+def doi_absent(fetcher: Fetcher, doi: str) -> bool:
+    """Both registries answered "no such DOI" -- not a timeout, not a 5xx."""
+    return (fetcher.is_absent(*_crossref_doi_request(fetcher, doi))
+            and fetcher.is_absent(*_openalex_doi_request(fetcher, doi)))
 
 
 def crossref_search(fetcher: Fetcher, title: str, author: str = "", rows: int = 3):
@@ -238,8 +289,7 @@ def crossref_search(fetcher: Fetcher, title: str, author: str = "", rows: int = 
 def openalex_by_doi(fetcher: Fetcher, doi: str):
     if not doi:
         return None
-    url = OPENALEX_DOI + urllib.parse.quote(doi, safe="/")
-    data = fetcher.get_json(url, {"mailto": fetcher.mailto or None})
+    data = fetcher.get_json(*_openalex_doi_request(fetcher, doi))
     return data if isinstance(data, dict) else None
 
 

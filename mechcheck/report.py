@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.parse
 from collections import Counter, defaultdict
 
 from mechcheck.model import REGISTRY, Severity
@@ -100,7 +101,10 @@ def render_github(result) -> str:
         level = {Severity.ERROR: "error", Severity.WARN: "warning", Severity.INFO: "notice"}[f.severity]
         props = []
         if f.file:
-            props.append(f"file={f.file}")
+            # A property value ends at ',' and the properties at '::', so a
+            # file named "intro, v2:final.tex" must be escaped like the message.
+            props.append("file=" + f.file.replace("%", "%25").replace("\r", "%0D")
+                         .replace("\n", "%0A").replace(":", "%3A").replace(",", "%2C"))
         if f.line:
             props.append(f"line={f.line}")
         if f.col:
@@ -140,7 +144,8 @@ def render_markdown(result, title: str = "mechcheck", max_rows: int = 60) -> str
         bits.append("|---|---|---|---|")
         for f in result.findings[:max_rows]:
             where = f"`{f.location}`" if f.file else ""
-            msg = f.message.replace("|", "\\|")
+            # A newline ends the table row; keep each finding on one.
+            msg = f.message.replace("|", "\\|").replace("\r", " ").replace("\n", " ")
             bits.append(f"| {_MD_ICON[f.severity]} | `{f.rule}` | {where} | {msg} |")
         if len(result.findings) > max_rows:
             bits.append(f"\n_…and {len(result.findings) - max_rows} more. Run `mechcheck check` locally for the full list._")
@@ -194,7 +199,9 @@ def render_sarif(result) -> str:
     """SARIF 2.1.0, so GitHub code scanning can track findings over time."""
     rules_used = {}
     results = []
-    for f in result.findings:
+    # Code scanning tracks findings over time, so it gets all of them: the
+    # per-rule cap is for people reading a terminal.
+    for f in result.findings + list(getattr(result, "truncated", [])):
         rule = REGISTRY.get(f.rule)
         if f.rule not in rules_used:
             rules_used[f.rule] = {
@@ -218,7 +225,8 @@ def render_sarif(result) -> str:
         if f.file:
             entry["locations"] = [{
                 "physicalLocation": {
-                    "artifactLocation": {"uri": f.file},
+                    # SARIF uris are URI references: "my chapter#1.tex" is not one.
+                    "artifactLocation": {"uri": urllib.parse.quote(f.file, safe="/")},
                     "region": {"startLine": max(1, f.line or 1),
                                **({"startColumn": f.col} if f.col else {})},
                 }

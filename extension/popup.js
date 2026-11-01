@@ -32,7 +32,9 @@ async function load() {
 }
 
 async function save() {
-  const settings = {};
+  // Merge: the panel stores markers and notes, which this form does not show.
+  let settings = {};
+  try { settings = { ...((await chrome.storage.sync.get("settings")).settings || {}) }; } catch (err) { /* first run */ }
   for (const id of FIELDS) {
     const node = $(id);
     settings[id] = node.type === "checkbox" ? node.checked : node.value;

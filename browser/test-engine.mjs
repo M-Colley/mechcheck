@@ -94,7 +94,9 @@ console.log("\nfixture: sample (thesis)");
   check("follows \\input across files", r.stats.files === 2, String(r.stats.files));
   check("FIG003 unreferenced figure", fired.has("FIG003"));
   check("REF001 undefined label", fired.has("REF001"));
-  check("ABB001 abbreviation reintroduced", fired.has("ABB001"));
+  // The fixture defines ADS in the abstract and again in the body, which is
+  // what APA and ACM style ask for: the abstract is read on its own.
+  check("ABB001 lets the body introduce again what the abstract introduced", !fired.has("ABB001"));
   check("FIG002 table without a label", fired.has("FIG002"));
   const verbatimLeak = r.findings.some(f => (f.context || "").includes("fig:notreal"));
   check("verbatim content ignored", !verbatimLeak);
@@ -366,9 +368,13 @@ Later the Automated Driving System (ADS) appears again here.
 As shown in Figure~\ref{fig:a} and Table~\ref{tab:b}.
 Colley et al.~\cite{a} showed this. Bazilinskyy~\cite{b} did too.
 This is is repeated, with a space before , this comma, and 10-20 people.
+\bibliography{refs}
 \end{document}
 `;
-  const load = text => new Map([["main.tex", enc.encode(text)]]);
+  // REF009 rewrites only a name the bibliography confirms is an author.
+  const bib = "@article{a,\n  author = {Colley, Mark and Rukzio, Enrico},\n  title = {T},\n  journal = {J},\n  year = {2020},\n}\n"
+            + "@article{b,\n  author = {Bazilinskyy, Pavlo},\n  title = {U},\n  journal = {J},\n  year = {2020},\n}\n";
+  const load = text => new Map([["main.tex", enc.encode(text)], ["refs.bib", enc.encode(bib)]]);
   const opts = { profile: "paper", verify: false, maxPerRule: 0 };
 
   const before = await runChecks(load(source), opts);
@@ -1012,6 +1018,209 @@ console.log("\nreview-screening checks (the same cases as tests/test_review_rule
             && (pack.uncertain || []).length >= 1,
             JSON.stringify({ verified: pack.verified, source: pack.source_url }));
     }
+  }
+
+  // STY001 placeholders and POL012 — unfinished-manuscript markers a screen reads
+  for (const body of ["Prior systems bind models to cards (cite) and stop there.",
+                      "This is well established [citation needed] in the field.",
+                      "Earlier work showed the same [ref].",
+                      "Coding agreement was substantial (k=[]).",
+                      String.raw`Agreement was high, \(\kappa = []\).`,
+                      "We recruited N = XX participants.",
+                      "Ratings averaged M = X.XX on the scale.",
+                      "The effect was significant, p = ?, in both groups.",
+                      "We release the pipeline (Github-link) under MIT.",
+                      "Materials are available at [URL].",
+                      String.raw`See \url{} for the code.`]) {
+    const hits = await only(doc(body), "STY001");
+    check("STY001 placeholder: " + body.slice(0, 36), hits.length > 0 && hits[0].severity === SEV.error);
+  }
+  for (const body of ["The reference condition (Ref) was shown first.",
+                      "In the REF condition (REF) participants waited.",
+                      "We cite prior work where it applies, and link it in the text.",
+                      "Let $x = y$ and $Y = X$ hold.",
+                      "Participants (N = 24) rated the XXL size.",
+                      "% (cite) a note to self that never prints\nOrdinary text.",
+                      "\\begin{verbatim}\nresults = [] # (cite)\n\\end{verbatim}",
+                      "\\begin{algorithmic}\n\\State $Q = []$\n\\end{algorithmic}",
+                      String.raw`The code is at \url{https://osf.io/abcde} (link checked).`])
+    check("STY001 not a placeholder: " + body.slice(0, 36), !(await fired(doc(body))).has("STY001"));
+
+  for (const body of [String.raw`\acmConference[Conference acronym 'XX]{Make sure to enter the correct conference title from your rights confirmation email}{June 03--05, 2018}{Woodstock, NY}`,
+                      String.raw`\acmDOI{XXXXXXX.XXXXXXX}`, String.raw`\acmISBN{978-1-4503-XXXX-X/2018/06}`])
+    check("POL012 sample value: " + body.slice(1, 30), (await fired(doc("Text.\n" + body))).has("POL012"));
+  {
+    const hits = await only(doc(String.raw`Text.
+\received{20 February 2007}
+\received[revised]{12 March 2009}
+\received[accepted]{5 June 2009}`), "POL012");
+    check("POL012 the sample received dates, once", hits.length === 1 && hits[0].message.includes("received"));
+  }
+  check("POL012 real rights values are not sample values",
+        !(await fired(doc(String.raw`\acmConference[CHI '27]{CHI Conference on Human Factors in Computing Systems}{April 2027}{Barcelona, Spain}
+\acmDOI{10.1145/3706598.3713000}
+Text.
+\received{1 March 2027}`))).has("POL012"));
+  check("POL012 a commented sample value does not print",
+        !(await fired(doc("% \\acmDOI{XXXXXXX.XXXXXXX}\nText."))).has("POL012"));
+  check("POL012 sample values matter only in acmart",
+        !(await fired(doc("The DOI XXXXXXX.XXXXXXX is fictional.", { cls: "article", options: "" }))).has("POL012"));
+}
+
+console.log("\nreview fixes, October 2026 (the same cases as tests/test_review_fixes.py)");
+{
+  const enc = new TextEncoder();
+  const project = entries => new Map(Object.entries(entries).map(([k, v]) => [k, typeof v === "string" ? enc.encode(v) : v]));
+  const doc = (body, cls = "article", options = "") =>
+    `\\documentclass${options ? `[${options}]` : ""}{${cls}}\n\\begin{document}\n${body}\n\\end{document}\n`;
+  const run = async (files, o = {}) => runChecks(files, { profile: "paper", verify: false, maxPerRule: 0, ...o });
+  const rules = async (files, o) => new Set((await run(files, o)).findings.map(f => f.rule));
+  const hits = async (files, id, o) => (await run(files, o)).findings.filter(f => f.rule === id);
+
+  // the reader
+  {
+    const p = new module.TexProject(new Map([["main.tex", doc("\\input{chapters/intro}\nClosing words.")],
+                                      ["chapters/intro.tex", "Opening words of the chapter."]]), "main.tex");
+    const t = p.text;
+    check("an \\input file is read where it is input",
+          t.indexOf("Opening words") < t.indexOf("Closing words") && t.indexOf("Closing words") < t.indexOf("\\end{document}"));
+  }
+  {
+    const p = new module.TexProject(new Map([["main.tex", doc("Run \\begin{verbatim}make\\end{verbatim} first.\nThen \\label{sec:later}the rest.")]]), "main.tex");
+    check("a one-line verbatim hides nothing after it", p.commands("label", 1).map(c => c.arg(0)).join() === "sec:later");
+  }
+  {
+    const p = new module.TexProject(new Map([["main.tex", doc("Text one.\r\\label{a}\r\nText two.")]]), "main.tex");
+    check("a lone CR ends a line", p.lineAt(p.commands("label", 1)[0].start).lineno === 4);
+  }
+  check("a standalone figure is not the main document",
+        findMainDocument(new Map([["paper.tex", doc("The paper.")], ["figures/main.tex", doc("A figure.", "standalone")]])) === "paper.tex");
+  check("build/ and dot-folders are not searched for the main document",
+        findMainDocument(new Map([["paper.tex", doc("The paper.")], ["build/main.tex", doc("Old.")], [".old/main.tex", doc("Older.")]])) === "paper.tex");
+  {
+    const p = new module.TexProject(new Map([["paper/main.tex", doc("\\input{chapters/intro}")],
+                                      ["paper/chapters/intro.tex", "Chapter text."]]), "paper/main.tex");
+    check("inputs resolve from the main file's folder", p.text.includes("Chapter text.") && !p.missingInputs.length);
+  }
+
+  // what the user drops in
+  {
+    const fakeFile = (name, text) => ({ name, webkitRelativePath: name, arrayBuffer: async () => enc.encode(text).buffer });
+    const files = await module.collectFiles([fakeFile("thesis/main.tex", doc("\\input{chapters/intro}")),
+                                             fakeFile("thesis/chapters/intro.tex", "Chapter."),
+                                             fakeFile("thesis/._main.tex", "junk")]);
+    check("a dropped folder loses its wrapper and its Mac junk",
+          files.has("main.tex") && files.has("chapters/intro.tex") && files.size === 2, [...files.keys()].join(", "));
+  }
+  {
+    // A stored zip whose entry name is CP437 (no UTF-8 flag): "Einführung.tex".
+    const name = new Uint8Array([...enc.encode("Einf"), 0x81, ...enc.encode("hrung.tex")]);
+    const data = enc.encode("Hello.");
+    const local = new Uint8Array(30 + name.length), central = new Uint8Array(46 + name.length), end = new Uint8Array(22);
+    const lv = new DataView(local.buffer), cv = new DataView(central.buffer), ev = new DataView(end.buffer);
+    lv.setUint32(0, 0x04034b50, true); lv.setUint32(18, data.length, true); lv.setUint32(22, data.length, true);
+    lv.setUint16(26, name.length, true); local.set(name, 30);
+    cv.setUint32(0, 0x02014b50, true); cv.setUint32(20, data.length, true); cv.setUint32(24, data.length, true);
+    cv.setUint16(28, name.length, true); cv.setUint32(42, 0, true); central.set(name, 46);
+    const cdOffset = local.length + data.length;
+    ev.setUint32(0, 0x06054b50, true); ev.setUint16(8, 1, true); ev.setUint16(10, 1, true);
+    ev.setUint32(12, central.length, true); ev.setUint32(16, cdOffset, true);
+    const zip = new Uint8Array([...local, ...data, ...central, ...end]);
+    const entries = await module.readZip(zip.buffer);
+    check("a zip name without the UTF-8 flag is read as CP437", entries.has("Einführung.tex"), [...entries.keys()].join(", "));
+  }
+  {
+    const files = project({ "main.tex": doc("Text."), "teaser.pdf": "%PDF-1.5\n/Author (Jane Doe)\n%%EOF\n" });
+    check("a figure PDF in the root is not the compiled PDF", !(await rules(files, { profile: "all" })).has("ANON006"));
+  }
+
+  // configuration
+  {
+    const files = project({ "main.tex": doc("This is the the result."), "mechcheck.yaml": "severity:\n  STY003: off\n" });
+    check("severity off switches a rule off", !(await rules(files)).has("STY003"));
+  }
+  {
+    const files = project({ "main.tex": doc("This is the the result."), "mechcheck.yaml": "stage: draft\nseverity:\n  STY003: error\n" });
+    const h = await hits(files, "STY003");
+    check("a draft blocks nothing, even for a rule made an error", h.length && h.every(f => f.severity === SEV.info));
+  }
+  {
+    const files = project({ "main.tex": doc("See \\ref{nowhere}."), "mechcheck.yaml": "disable: [\"REF00?\"]\n" });
+    check("a ? glob matches as it does on the command line", !(await rules(files)).has("REF001"));
+  }
+  {
+    const files = project({ "main.tex": doc("Text."), "template/mechcheck.yaml": "profile: thesis\n" });
+    check("only the root mechcheck.yaml is read", readProjectConfig(files) === null);
+  }
+
+  // rules
+  for (const body of ["We rewrite each query before execution.", "Attackers hack the device in minutes.",
+                      "The buffer starts empty, \\texttt{buf = []}, and grows.", "\\mintinline{python}{xs = []} is idiomatic."])
+    check("not unfinished work: " + body.slice(0, 30), !(await rules(project({ "main.tex": doc(body) }))).has("STY001"));
+  {
+    const h = await hits(project({ "main.tex": doc("\\begin{lstlisting}\n# TODO: handle errors\n\\end{lstlisting}") }), "STY001");
+    check("a TODO in a code listing is a note", h.length && h.every(f => f.severity === SEV.info));
+  }
+  check("a time range is not a numeric range",
+        !(await rules(project({ "main.tex": doc("Sessions ran 10:00-12:00 each day.") }))).has("STY007"));
+  {
+    const h = await hits(project({ "main.tex": doc("Weeks 05-09 were quiet.") }), "STY007");
+    check("a range keeps its digits as typed", h.length && h[0].edit && h[0].edit.replacement === "05--09");
+  }
+  check("the body may introduce again what the abstract introduced",
+        !(await rules(project({ "main.tex": doc("\\begin{abstract}\nAn Automated Driving System (ADS) is studied.\n\\end{abstract}\nThe Automated Driving System (ADS) drives. The ADS stops.") }))).has("ABB001"));
+  check("a todonotes command is a marker",
+        (await rules(project({ "main.tex": doc("Results \\todo{better connect the two studies} follow.") }))).has("STY001"));
+  check("one marker is one finding",
+        (await hits(project({ "main.tex": doc("Text. % TODO: fill in the venue once announced.") }), "STY001")).length === 1);
+  check("a subfigure label is not the figure label",
+        !(await rules(project({ "main.tex": doc("\\begin{figure}\n\\begin{subfigure}{.4\\linewidth}\n\\subcaption{Left}\\label{fig:a}\n\\end{subfigure}\n\\caption{Both panels.}\\label{fig:main}\n\\end{figure}\nSee Figure~\\ref{fig:main}.") }))).has("FIG004"));
+  check("a listing label given as an option is defined",
+        !(await rules(project({ "main.tex": doc("\\begin{lstlisting}[caption={Code},label={lst:code}]\nx = 1\n\\end{lstlisting}\nSee Listing~\\ref{lst:code}.") }))).has("REF001"));
+  check("\\nocite{*} names no key",
+        !(await rules(project({ "main.tex": doc("Text\\cite{a}. \\nocite{*}\n\\bibliography{refs}"), "refs.bib": "@misc{a,\n  title = {T},\n  year = {2020},\n}\n" }))).has("REF005"));
+  {
+    const r = await rules(project({ "main.tex": doc("\\author{Jane Doe}\nText.", "acmart", "format=manuscript,review=true,anonymous=true") }), { venue: "chi" });
+    check("acmart key=value options are understood", !r.has("VEN002") && !r.has("ANON001"));
+  }
+  check("single-anonymous review names its authors",
+        !(await rules(project({ "main.tex": doc("\\author{Jane Doe}\nText.", "elsarticle") }), { venue: "trf" })).has("ANON001"));
+  check("build artefacts are not upload file names",
+        !(await rules(project({ "main.tex": doc("Text.", "acmart", "manuscript,review,anonymous"), "main.synctex.gz": "x", "main.run.xml": "x" }), { venue: "chi" })).has("VEN006"));
+  check("plural and abbreviated words are not autoref cases",
+        !(await rules(project({ "main.tex": "\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\nFigures~\\ref{fig:a} and~\\ref{fig:b} show it. Fig.~\\ref{fig:a} again.\n\\end{document}\n" }))).has("REF008"));
+  check("autoref is not advised without hyperref",
+        !(await rules(project({ "main.tex": doc("As shown in Figure~\\ref{fig:a}.") }))).has("REF008"));
+  for (const body of ["Die Personen, die die Aufgabe gelöst haben, wurden befragt.", "\\paragraph{Latency} Latency was measured per trial."])
+    check("not a repeated word: " + body.slice(0, 30), !(await rules(project({ "main.tex": doc(body) }))).has("STY003"));
+  {
+    const h = await hits(project({ "main.tex": doc("This is the \\emph{the} result.") }), "STY003");
+    check("a repeated word across markup is reported but not rewritten", h.length && h.every(f => !f.edit));
+  }
+  for (const body of ["We found $t(100) = 4.50$, $p = 1.8 \\times 10^{-5}$, as expected.",
+                      "We found t(100) = 4.50, p = 7.6e-7, as expected.",
+                      "$F(1, 20) = 5.00$, $\\eta^2_p = .20$, $p = .037$.",
+                      "We use the $L_p$ distance with $p = 2$ throughout."]) {
+    const r = await rules(project({ "main.tex": doc(body) }));
+    check("p read as written: " + body.slice(0, 34), !r.has("STA001") && !r.has("STA002"));
+  }
+  check("a teaser figure needs alt text too",
+        (await rules(project({ "main.tex": doc("\\begin{teaserfigure}\n\\includegraphics[width=\\textwidth]{teaser}\n\\caption{Our system.}\n\\end{teaserfigure}", "acmart", "manuscript,review,anonymous") }), { venue: "chi" })).has("ACC001"));
+  {
+    const h = await hits(project({ "main.tex": doc("\\author{Jane Doe}\nWe build on \\url{https://github.com/pytorch/pytorch}.", "acmart", "manuscript,review") }), "ANON003", { venue: "chi" });
+    check("someone else's repository is not an error", h.length && h.every(f => f.severity === SEV.warn));
+    const own = await hits(project({ "main.tex": doc("\\author{Jane Doe}\nCode: \\url{https://github.com/janedoe/tool}.", "acmart", "manuscript,review") }), "ANON003", { venue: "chi" });
+    check("the authors' own repository is an error", own.length && own[0].severity === SEV.error);
+  }
+  check("supported by the data is not funding",
+        !(await rules(project({ "main.tex": doc("This interpretation is supported by the interview data.", "acmart", "manuscript,review") }), { venue: "chi" })).has("ANON004"));
+  check("an \\input inside \\iffalse is not missing",
+        !(await rules(project({ "main.tex": doc("\\iffalse\n\\input{old_chapter}\n\\fi") }))).has("STR001"));
+  {
+    const bib = parseBib("@article{k,\n  title = {T},\n  pages = {1-2},\n  year = {2020},\n}\n")[0];
+    check("a bib field is reported on its own line", bib.lineOf("pages") === 3 && bib.lineOf("title") === 2);
+    check("an entry inside @comment is not an entry",
+          parseBib("@comment{ @article{old, title = {Gone}, year = {1999}} }\n@misc{kept,\n  year = {2020},\n}\n").map(e => e.key).join() === "kept");
   }
 }
 

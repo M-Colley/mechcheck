@@ -19,6 +19,9 @@ VERBATIM_ENVS = {
     "verbatim", "verbatim*", "Verbatim", "Verbatim*", "lstlisting", "minted",
     "alltt", "semiverbatim", "comment", "filecontents", "filecontents*",
     "sagesilent", "asy", "pycode", "codeblock",
+    # acmart excludes it like a comment: the CCS XML is never typeset, and
+    # read as prose it defined 'HCI' before the paper did.
+    "CCSXML",
 }
 
 # Environments that are mathematics: masked out of the prose view.
@@ -136,6 +139,8 @@ class TexFile:
     abspath: str
     lines: list = field(default_factory=list)
     missing: bool = False
+    #: (index into ``lines``, TexFile) for every file \input on that line
+    children: list = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
@@ -189,6 +194,29 @@ def _mask_inline_verb(line: str) -> str:
 
 _BEGIN_ENV = re.compile(r"\\begin\s*\{([^}]*)\}")
 _END_ENV = re.compile(r"\\end\s*\{([^}]*)\}")
+_END_OF: dict = {}
+
+
+def _verbatim_head_end(code: str, pos: int, env: str) -> int:
+    r"""End of ``[options]`` (and minted's ``{language}``) after ``\begin{lstlisting}``.
+
+    They are LaTeX, not verbatim text: ``label=lst:x`` in them defines a label.
+    """
+    groups = (("[", "]"), ("{", "}")) if env == "minted" else (("[", "]"),)
+    for open_ch, close_ch in groups:
+        nxt = skip_space(code, pos)
+        if nxt < len(code) and code[nxt] == open_ch:
+            grp = read_group(code, nxt, open_ch, close_ch)
+            if grp:
+                pos = grp[1]
+    return pos
+
+
+def _end_of(env: str):
+    r"""The ``\end{env}`` that closes one particular environment."""
+    if env not in _END_OF:
+        _END_OF[env] = re.compile(r"\\end\s*\{\s*" + re.escape(env) + r"\s*\}")
+    return _END_OF[env]
 
 
 # --------------------------------------------------------------------------- #
@@ -228,10 +256,18 @@ class TexProject:
         options = [cand]
         if not cand.lower().endswith(".tex"):
             options.append(cand + ".tex")
+        # LaTeX runs in the main file's folder: paper/main.tex inputs
+        # paper/chapters/intro.tex as chapters/intro.
+        base = os.path.dirname(self.main.replace("\\", "/"))
+        if base:
+            options = [base + "/" + o for o in options] + options
         for opt in options:
             full = os.path.normpath(os.path.join(self.root, opt))
             if os.path.isfile(full):
-                return os.path.relpath(full, self.root).replace(os.sep, "/")
+                try:
+                    return os.path.relpath(full, self.root).replace(os.sep, "/")
+                except ValueError:  # another drive on Windows: no relative path exists
+                    return full.replace(os.sep, "/")
         return None
 
     def _read_file(self, relpath: str, seen: set, encoding: str, _depth: int = 0) -> None:
@@ -254,27 +290,42 @@ class TexProject:
             raw = raw.rstrip("\r")
             if verbatim_env is not None:
                 code = _mask(raw)
-                m = _END_ENV.search(raw)
-                if m and m.group(1).strip() == verbatim_env:
+                m = _end_of(verbatim_env).search(raw)
+                if m:
                     verbatim_env = None
-                    code = raw  # keep the \end{...} visible to the parser
+                    # Keep the \end{...} visible to the parser; what follows it
+                    # on the line is LaTeX again, comments included.
+                    code = (_mask(raw[:m.start()]) + raw[m.start():m.end()]
+                            + strip_comments_line(_mask_inline_verb(raw[m.end():])))
                 tf.lines.append(SourceLine(relpath, i, raw, code, verbatim=True))
                 continue
 
             code = _mask_inline_verb(raw)
             code = strip_comments_line(code)
+            # Any \begin on the line may open a verbatim environment, and the
+            # environment may close again before the line ends.
+            mb = next((b for b in _BEGIN_ENV.finditer(code) if b.group(1).strip() in VERBATIM_ENVS), None)
+            if mb:
+                env = mb.group(1).strip()
+                head = _verbatim_head_end(code, mb.end(), env)   # [label=lst:x] stays readable
+                me = _end_of(env).search(raw, head)
+                if me:
+                    code = (code[:head] + _mask(raw[head:me.start()]) + raw[me.start():me.end()]
+                            + strip_comments_line(_mask_inline_verb(raw[me.end():])))
+                else:
+                    code = code[:head] + _mask(raw[head:])
+                    verbatim_env = env
             tf.lines.append(SourceLine(relpath, i, raw, code))
-
-            mb = _BEGIN_ENV.search(code)
-            if mb and mb.group(1).strip() in VERBATIM_ENVS:
-                verbatim_env = mb.group(1).strip()
 
             for child in self._child_inputs(code):
                 resolved = self._resolve(child)
                 if resolved:
-                    self._read_file(resolved, seen, encoding, _depth + 1)
+                    included = self._read_file(resolved, seen, encoding, _depth + 1)
+                    if included is not None:
+                        tf.children.append((len(tf.lines) - 1, included))
                 elif not _looks_like_variable(child):
                     self.missing_inputs.append((relpath, i, child))
+        return tf
 
     @staticmethod
     def _child_inputs(code: str) -> list:
@@ -293,18 +344,33 @@ class TexProject:
         return out
 
     def _finalise(self) -> None:
-        chunks = []
-        offset = 0
         for tf in self.files:
             local = 0
             for ln in tf.lines:
-                ln.offset = offset
                 ln.file_offset = local
+                local += len(ln.raw) + 1
+        # An \input file's text goes where LaTeX reads it: after the line that
+        # inputs it, not after the rest of its parent. Grouped by file, every
+        # chapter landed behind \end{document} and out of the word count.
+        chunks = []
+        offset = 0
+
+        def emit(tf) -> None:
+            nonlocal offset
+            children: dict = {}
+            for index, child in tf.children:
+                children.setdefault(index, []).append(child)
+            for index, ln in enumerate(tf.lines):
+                ln.offset = offset
                 self.lines.append(ln)
                 self._line_offsets.append(offset)
                 chunks.append(ln.code)
                 offset += len(ln.code) + 1  # +1 for the joining newline
-                local += len(ln.raw) + 1
+                for child in children.get(index, ()):
+                    emit(child)
+
+        if self.files:
+            emit(self.files[0])
         self.text = "\n".join(chunks)
         self.prose = build_prose_view(self.text)
 
@@ -396,8 +462,7 @@ class TexProject:
         if not cmds:
             return ("", [])
         c = cmds[0]
-        opts = [o.strip() for o in c.opt(0).split(",") if o.strip()]
-        return (c.arg(0).strip(), opts)
+        return (c.arg(0).strip(), normalise_class_options(c.opt(0)))
 
     def packages(self) -> dict:
         out: dict = {}
@@ -430,6 +495,12 @@ class TexProject:
         first, last = self.line_at(start), self.line_at(max(start, end - 1))
         if first.file != last.file or first.verbatim or last.verbatim:
             return None
+        # An \input file now sits inside its parent's text, so a span can
+        # begin and end in one file with another file's lines between.
+        lo = bisect_right(self._line_offsets, start) - 1
+        hi = bisect_right(self._line_offsets, max(start, end - 1)) - 1
+        if any(ln.file != first.file for ln in self.lines[max(lo, 0):hi + 1]):
+            return None
         return (first.file,
                 first.file_offset + (start - first.offset),
                 last.file_offset + (end - last.offset))
@@ -439,6 +510,34 @@ class TexProject:
             return os.path.relpath(path, self.root).replace(os.sep, "/")
         except ValueError:
             return path
+
+
+def normalise_class_options(spec: str) -> list:
+    """acmart also takes its options as keys.
+
+    ``review=true`` is ``review``, ``anonymous=false`` is no option at all, and
+    ``format=manuscript`` is ``manuscript``. Read literally, a correctly
+    anonymised paper was told it had no ``anonymous`` option.
+    """
+    out = []
+    for raw in (spec or "").split(","):
+        o = raw.strip()
+        if not o:
+            continue
+        key, eq, value = o.partition("=")
+        if not eq:
+            out.append(o)
+            continue
+        key, value = key.strip(), value.strip()
+        if value.startswith("{") and value.endswith("}"):
+            value = value[1:-1].strip()
+        if key.lower() == "format":
+            out.append(value)
+        elif value.lower() == "true":
+            out.append(key)
+        elif value.lower() != "false":
+            out.append(o)
+    return out
 
 
 def _looks_like_variable(name: str) -> bool:
@@ -580,6 +679,7 @@ def build_prose_view(text: str) -> str:
 
 _MAIN_HINTS = ("main.tex", "thesis.tex", "paper.tex", "root.tex", "master.tex",
                "document.tex", "manuscript.tex", "dissertation.tex", "report.tex")
+_DOCUMENTCLASS = re.compile(r"^[^%\n]*\\documentclass\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}", re.MULTILINE)
 
 
 def find_main_document(root: str):
@@ -603,6 +703,11 @@ def find_main_document(root: str):
             except OSError:
                 continue
             if "\\documentclass" not in head or "\\begin{document}" not in head:
+                continue
+            # A standalone figure or a subfiles chapter compiles on its own but
+            # is not the document: figures/main.tex must not beat paper.tex.
+            cls = _DOCUMENTCLASS.search(head)
+            if cls and cls.group(1).strip() in ("standalone", "subfiles"):
                 continue
             rel = os.path.relpath(full, root).replace(os.sep, "/")
             hint = _MAIN_HINTS.index(fn.lower()) if fn.lower() in _MAIN_HINTS else len(_MAIN_HINTS)
