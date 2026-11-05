@@ -390,3 +390,133 @@ def test_the_technology_list_holds_only_matchable_entries():
     import re
     bad = [w for w in _TECHNOLOGY if not re.fullmatch(r"[A-Z]{2,9}", w)]
     assert not bad, bad
+
+
+
+# --------------------------------------------------------------------------- #
+# STY003: maths between two words is text the reader sees (#3)
+# --------------------------------------------------------------------------- #
+
+def test_words_either_side_of_maths_are_not_a_repeat(tmp_path):
+    body = ("The intervals were $[0.1, 0.2]$ for one arm, and $[0.3, 0.4]$ and "
+            "$[0.5, 0.6]$ for the others, and " + BS + "(x" + BS + ") and " + BS + "(y" + BS + ").")
+    assert "STY003" not in fired(check(build(tmp_path, body), only=["STY003"]))
+
+
+def test_a_repeat_next_to_maths_is_still_reported(tmp_path):
+    body = "The value $x$ is the the largest."
+    assert "STY003" in fired(check(build(tmp_path, body), only=["STY003"]))
+
+
+# --------------------------------------------------------------------------- #
+# ACC006: a catalog in a compressed object stream is still a catalog (#4)
+# --------------------------------------------------------------------------- #
+
+def _pdf(catalog: bytes, compressed: bool) -> bytes:
+    import zlib
+    if not compressed:
+        return b"%PDF-1.4\n1 0 obj\n" + catalog + b"\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n"
+    body = zlib.compress(b"1 0 " + catalog)
+    return (b"%PDF-1.7\n2 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Filter /FlateDecode /Length "
+            + str(len(body)).encode() + b" >>\nstream\n" + body + b"\nendstream\nendobj\n"
+            b"3 0 obj\n<< /Type /XRef /Root 1 0 R >>\nendobj\n%%EOF\n")
+
+
+TAGGED = b"<< /Type /Catalog /MarkInfo << /Marked true >> /StructTreeRoot 5 0 R >>"
+UNTAGGED = b"<< /Type /Catalog /Pages 4 0 R >>"
+
+
+def test_the_marked_flag_is_found_inside_an_object_stream():
+    from mechcheck.rules.accessibility import pdf_declares_tagged
+    assert pdf_declares_tagged(_pdf(TAGGED, compressed=True))
+    assert pdf_declares_tagged(_pdf(TAGGED, compressed=False))
+    assert not pdf_declares_tagged(_pdf(UNTAGGED, compressed=True))
+    assert not pdf_declares_tagged(_pdf(UNTAGGED, compressed=False))
+
+
+def test_a_tagged_pdf_with_object_streams_is_not_reported(tmp_path):
+    root = build(tmp_path, "Hello.")
+    (tmp_path / "main.pdf").write_bytes(_pdf(TAGGED, compressed=True))
+    assert "ACC006" not in fired(check(root, only=["ACC006"]))
+    (tmp_path / "main.pdf").write_bytes(_pdf(UNTAGGED, compressed=True))
+    assert "ACC006" in fired(check(root, only=["ACC006"]))
+
+
+# --------------------------------------------------------------------------- #
+# BIO002: Crossref keeps the subtitle in its own field (#5)
+# --------------------------------------------------------------------------- #
+
+def _with_record(tmp_path, monkeypatch, bib_title: str, record: dict):
+    from mechcheck.rules import bibonline
+    root = build(tmp_path, "See " + BS + "cite{peng2018}." + "\n" + BS + "bibliography{refs}")
+    (tmp_path / "refs.bib").write_text(
+        "@article{peng2018,\n  title = {" + bib_title + "},\n  author = {Peng, Xue Bin},\n"
+        "  year = {2018},\n  doi = {10.1145/3197517.3201311}\n}\n", encoding="utf-8", newline="\n")
+    monkeypatch.setattr(bibonline, "_resolved", lambda ctx: {"10.1145/3197517.3201311": record})
+    # online, so the rule runs; _resolved is the only network access and it is replaced above
+    config = Config.load(root, overrides={"max_per_rule": 0})
+    result = run(root, config, only=["BIO002"], offline=False, baseline=None)
+    assert "BIO002" not in result.skipped
+    return result
+
+
+DEEPMIMIC = {"title": ["DeepMimic"],
+             "subtitle": ["example-guided deep reinforcement learning of physics-based character skills"]}
+
+
+def test_a_title_with_its_crossref_subtitle_matches(tmp_path, monkeypatch):
+    title = "{DeepMimic}: Example-Guided Deep Reinforcement Learning of Physics-Based Character Skills"
+    assert "BIO002" not in fired(_with_record(tmp_path, monkeypatch, title, DEEPMIMIC))
+
+
+def test_a_title_without_the_subtitle_still_matches(tmp_path, monkeypatch):
+    assert "BIO002" not in fired(_with_record(tmp_path, monkeypatch, "{DeepMimic}", DEEPMIMIC))
+
+
+def test_a_different_work_is_still_reported(tmp_path, monkeypatch):
+    title = "Knitting Patterns of the Nineteenth Century"
+    assert "BIO002" in fired(_with_record(tmp_path, monkeypatch, title, DEEPMIMIC))
+
+
+# --------------------------------------------------------------------------- #
+# ignore_paths is applied by the rules that walk the tree (#6)
+# --------------------------------------------------------------------------- #
+
+def test_ignore_patterns_read_like_gitignore():
+    from mechcheck.config import path_ignored
+    pats = ["**/__pycache__/**", "build/**", "*.cpython-313.pyc", "authors.tex", "figs/raw/"]
+    assert path_ignored("scripts/__pycache__/plot.cpython-313.pyc", pats)
+    assert path_ignored("__pycache__/x.pyc", pats)
+    assert path_ignored("build/main.log", pats)
+    assert path_ignored("deep/dir/a.cpython-313.pyc", pats)
+    assert path_ignored("authors.tex", pats) and path_ignored("sub/authors.tex", pats)
+    assert path_ignored("figs/raw/a b.png", pats)
+    assert not path_ignored("figs/plot.pdf", pats)
+    assert not path_ignored("mybuild/main.log", pats)
+    assert not path_ignored("sections/main.tex", ["*/x/*.tex"])
+    assert path_ignored("sections/x/a.tex", ["*/x/*.tex"])
+
+
+def test_ignored_files_are_not_reported_as_unsafe_names(tmp_path):
+    root = build(tmp_path, "Hello.")
+    cache = tmp_path / "scripts" / "__pycache__"
+    cache.mkdir(parents=True)
+    (cache / "plot.cpython-313.pyc").write_bytes(b"")
+    (tmp_path / "my figure.png").write_bytes(b"")
+    hits = [f.file for f in check(root, only=["VEN006"], venue="chi").findings]
+    assert hits == ["my figure.png"]                      # the default list skips the cache
+    (tmp_path / "mechcheck.yaml").write_text("ignore_paths:\n  - 'my figure.png'\n", encoding="utf-8")
+    hits = [f.file for f in check(root, only=["VEN006"], venue="chi").findings]
+    assert hits == ["scripts/__pycache__/plot.cpython-313.pyc"]  # a project list replaces it
+
+
+def test_an_ignored_file_is_not_taken_for_the_main_document(tmp_path):
+    from mechcheck.texsource import find_main_document
+    build(tmp_path, "Hello.")
+    old = tmp_path / "attic"
+    old.mkdir()
+    (old / "main.tex").write_text(BS + "documentclass{article}" + BS + "begin{document}x" + BS + "end{document}",
+                                  encoding="utf-8")
+    (tmp_path / "main.tex").rename(tmp_path / "paper.tex")
+    assert find_main_document(str(tmp_path)) == "attic/main.tex"
+    assert find_main_document(str(tmp_path), lambda rel: rel.startswith("attic/")) == "paper.tex"

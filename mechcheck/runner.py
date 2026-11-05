@@ -128,7 +128,7 @@ def run(root: str, config: Config, only=None, offline: bool = False,
         build_dir: str | None = None, baseline: str | None = None,
         main: str | None = None) -> RunResult:
     started = time.time()
-    project = TexProject.load(root, main or config.data.get("main"))
+    project = TexProject.load(root, main or config.data.get("main"), ignore=config.ignores)
     result = RunResult(project=project, config=config)
 
     log_text, pdf_path = _find_build_outputs(root, build_dir, project)

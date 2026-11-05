@@ -9,6 +9,7 @@ and the ones most worth catching months before the deadline.
 from __future__ import annotations
 
 import re
+import zlib
 
 from mechcheck.model import Category, Severity, rule
 from mechcheck.texsource import parse_commands
@@ -150,6 +151,39 @@ def table_without_description(ctx):
                           file=f, line=line, col=col)
 
 
+#: Read the whole PDF: the catalog of a large file can sit near its end.
+_PDF_READ_LIMIT = 200_000_000
+_MARKED = re.compile(rb"/Marked\s*true")
+_OBJSTM = re.compile(rb"/Type\s*/ObjStm")
+_STREAM = re.compile(rb"stream\r?\n")
+
+
+def pdf_declares_tagged(data: bytes) -> bool:
+    """Does the PDF set ``/MarkInfo << /Marked true >>``?
+
+    Since PDF 1.5 the catalog can live in a compressed object stream
+    (``/Type /ObjStm``, FlateDecode), which is what pdfTeX writes by default
+    and what LaTeX tagging produces; the raw bytes then never show
+    ``/Marked true`` (#4). Inflate those streams and look inside.
+    """
+    if _MARKED.search(data):
+        return True
+    for m in _OBJSTM.finditer(data):
+        s = _STREAM.search(data, m.end(), m.end() + 4096)
+        if not s:
+            continue
+        end = data.find(b"endstream", s.end())
+        if end < 0:
+            continue
+        try:
+            inflated = zlib.decompressobj().decompress(data[s.end():end])
+        except zlib.error:
+            continue
+        if _MARKED.search(inflated):
+            return True
+    return False
+
+
 @rule("ACC006", "PDF is not tagged", Category.ACCESSIBILITY, Severity.WARN, needs_build=True,
       rationale="An untagged PDF has no reading order, so assistive technology cannot navigate it. ASSETS requires an accessible PDF at submission.",
       fix="Compile with a recent acmart (which sets pdfmanagement/tagging), or run the publisher's accessibility pipeline.")
@@ -159,10 +193,10 @@ def untagged_pdf(ctx):
         return
     try:
         with open(path, "rb") as fh:
-            data = fh.read(4_000_000)
+            data = fh.read(_PDF_READ_LIMIT)
     except OSError:
         return
-    if re.search(rb"/Marked\s*true", data):
+    if pdf_declares_tagged(data):
         return
     yield ctx.finding("ACC006", "the compiled PDF does not declare itself as tagged (/MarkInfo /Marked true)",
                       file=ctx.project.rel(path),

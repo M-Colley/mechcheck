@@ -207,7 +207,8 @@ def unsafe_filenames(ctx):
             if allowed.match(name):
                 continue
             rel = os.path.relpath(os.path.join(dirpath, name), ctx.root).replace(os.sep, "/")
-            if rel in seen:
+            # The project said these are not part of the upload (#6).
+            if rel in seen or ctx.config.ignores(rel):
                 continue
             seen.add(rel)
             reason = "contains a space" if " " in name else "contains characters TAPS rejects"
