@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import copy
 import os
+import re
 from dataclasses import dataclass, field
 
 from mechcheck import minyaml
@@ -82,8 +83,60 @@ DEFAULTS: dict = {
     #: The project's own vocabulary: groups of words that name one concept,
     #: optionally with the one this project uses. See mechcheck/rules/terminology.py.
     "terminology": [],
-    "ignore_paths": ["build/**", "out/**", ".git/**", "**/node_modules/**"],
+    #: Files the rules that walk the project tree leave out (file names, finding
+    #: the main document, the .bib fallback). A file the document itself inputs
+    #: is still read. Patterns are matched against the project-relative path.
+    "ignore_paths": ["build/**", "out/**", ".git/**", "**/node_modules/**", "**/__pycache__/**"],
 }
+
+
+def _ignore_regex(pattern: str):
+    r"""A glob as ``.gitignore`` reads it: ``*`` stays inside one directory,
+    ``**/`` is any number of directories (none included), a trailing ``/``
+    means everything under it."""
+    p = pattern.strip().replace("\\", "/")
+    while p.startswith("./"):
+        p = p[2:]
+    if p.endswith("/"):
+        p += "**"
+    out, i = [], 0
+    while i < len(p):
+        if p.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif p.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif p[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif p[i] == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(p[i]))
+            i += 1
+    return re.compile("".join(out))
+
+
+def path_ignored(rel: str, patterns) -> bool:
+    """Does a project-relative path match one of ``patterns``?
+
+    A pattern without a ``/`` matches the file name in any directory, as in
+    ``.gitignore``: ``*.pyc`` and ``authors.tex`` mean the file wherever it is.
+    """
+    rel = rel.replace("\\", "/")
+    while rel.startswith("./"):
+        rel = rel[2:]
+    name = rel.rsplit("/", 1)[-1]
+    for pattern in patterns or ():
+        pattern = str(pattern).strip()
+        if not pattern:
+            continue
+        rx = _ignore_regex(pattern)
+        if rx.fullmatch(rel) or ("/" not in pattern.rstrip("/") and rx.fullmatch(name)):
+            return True
+    return False
 
 
 def _coerce_shapes(data: dict) -> None:
@@ -212,6 +265,10 @@ class Config:
         if isinstance(ventry, dict) and key in ventry:
             return ventry[key]
         return default
+
+    def ignores(self, rel: str) -> bool:
+        """Is this project-relative path one of the project's ``ignore_paths``?"""
+        return path_ignored(rel, self.data.get("ignore_paths"))
 
     def severity_for(self, rule_id: str) -> Severity:
         from mechcheck.model import REGISTRY

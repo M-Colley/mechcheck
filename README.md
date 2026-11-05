@@ -329,6 +329,25 @@ mechcheck terms .
 It prints what that document calls things, and ends with the `terminology:`
 block ready to paste into your group's configuration.
 
+**Files that are not part of the upload** — a figure script's bytecode cache,
+an author block the anonymous copy leaves out — go under `ignore_paths`:
+
+```yaml
+# mechcheck.yaml
+ignore_paths:
+  - '**/__pycache__/**'
+  - authors.tex
+```
+
+The patterns read as `.gitignore` reads them: `*` stays inside one directory,
+`**/` is any number of directories, a trailing `/` means everything under it,
+and a pattern without a `/` matches that file name anywhere. The rules that
+walk the project tree leave these files out: file names (`VEN006`), finding
+the main document, and the `.bib` search when the document names none. A file
+the document itself inputs is still read. A project's list replaces the
+default one (`build/**`, `out/**`, `.git/**`, `**/node_modules/**`,
+`**/__pycache__/**`), as every list in the file does.
+
 **Where this applies.** `mechcheck.yaml` is now read by every layer — the
 command line, the standalone page and the Chrome extension all honour the same
 file, so a student who drops a project on the page gets the same answer CI

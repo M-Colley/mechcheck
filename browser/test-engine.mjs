@@ -9,6 +9,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { deflateSync } from "node:zlib";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const repo = join(here, "..");
@@ -19,8 +20,8 @@ const script = html.slice(html.indexOf("<script>") + 8, html.lastIndexOf("</scri
 const engine = script.slice(0, script.indexOf("/* ===================== 7. Interface"));
 
 const module = await import("data:text/javascript;base64," +
-  Buffer.from(engine + "\nexport { runChecks, applyFixes, TexProject, parseBib, similarity, findMainDocument, RULES, SEV, collectFiles, readZip, parseYamlSubset, readProjectConfig, VENUES, pFromT, pFromF, pFromChi2, pFromZ, pFromR };").toString("base64"));
-const { runChecks, applyFixes, parseBib, similarity, findMainDocument, RULES, SEV,
+  Buffer.from(engine + "\nexport { runChecks, applyFixes, TexProject, parseBib, similarity, findMainDocument, RULES, SEV, collectFiles, readZip, parseYamlSubset, readProjectConfig, VENUES, pFromT, pFromF, pFromChi2, pFromZ, pFromR, pathIgnored };").toString("base64"));
+const { runChecks, applyFixes, parseBib, similarity, findMainDocument, RULES, SEV, pathIgnored,
         parseYamlSubset, readProjectConfig, VENUES,
         pFromT, pFromF, pFromChi2, pFromZ, pFromR } = module;
 
@@ -1221,6 +1222,73 @@ console.log("\nreview fixes, October 2026 (the same cases as tests/test_review_f
     check("a bib field is reported on its own line", bib.lineOf("pages") === 3 && bib.lineOf("title") === 2);
     check("an entry inside @comment is not an entry",
           parseBib("@comment{ @article{old, title = {Gone}, year = {1999}} }\n@misc{kept,\n  year = {2020},\n}\n").map(e => e.key).join() === "kept");
+  }
+}
+
+console.log("\nfalse positives, November 2026 (the same cases as tests/test_false_positives.py, #3-#6)");
+{
+  const enc = new TextEncoder();
+  const project = entries => new Map(Object.entries(entries).map(([k, v]) => [k, typeof v === "string" ? enc.encode(v) : v]));
+  const doc = body => `\\documentclass{article}\n\\begin{document}\n${body}\n\\end{document}\n`;
+  const run = async (files, o = {}) => runChecks(files, { profile: "paper", verify: false, maxPerRule: 0, ...o });
+  const rules = async (files, o) => new Set((await run(files, o)).findings.map(f => f.rule));
+
+  // STY003: maths between two words is text the reader sees (#3)
+  check("STY003 words either side of maths are not a repeat",
+        !(await rules(project({ "main.tex": doc(String.raw`The intervals were $[0.1, 0.2]$ for one arm, and $[0.3, 0.4]$ and $[0.5, 0.6]$ for the others, and \(x\) and \(y\).`) }))).has("STY003"));
+  check("STY003 a repeat next to maths is still reported",
+        (await rules(project({ "main.tex": doc("The value $x$ is the the largest.") }))).has("STY003"));
+
+  // ACC006: a catalog in a compressed object stream is still a catalog (#4)
+  const pdf = (catalog, compressed) => {
+    if (!compressed) return enc.encode(`%PDF-1.4\n1 0 obj\n${catalog}\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n`);
+    const body = deflateSync(Buffer.from("1 0 " + catalog, "latin1"));
+    const head = enc.encode(`%PDF-1.7\n2 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Filter /FlateDecode /Length ${body.length} >>\nstream\n`);
+    const tail = enc.encode("\nendstream\nendobj\n3 0 obj\n<< /Type /XRef /Root 1 0 R >>\nendobj\n%%EOF\n");
+    return new Uint8Array([...head, ...body, ...tail]);
+  };
+  const TAGGED = "<< /Type /Catalog /MarkInfo << /Marked true >> /StructTreeRoot 5 0 R >>";
+  const UNTAGGED = "<< /Type /Catalog /Pages 4 0 R >>";
+  const acc = async bytes => (await rules(project({ "main.tex": doc("Hello."), "main.pdf": bytes }))).has("ACC006");
+  check("ACC006 a tagged PDF with object streams is not reported", !(await acc(pdf(TAGGED, true))));
+  check("ACC006 a tagged PDF without object streams is not reported", !(await acc(pdf(TAGGED, false))));
+  check("ACC006 an untagged PDF with object streams is reported", await acc(pdf(UNTAGGED, true)));
+
+  // BIO002: Crossref keeps the subtitle in its own field (#5)
+  {
+    const record = { title: ["DeepMimic"],
+                     subtitle: ["example-guided deep reinforcement learning of physics-based character skills"] };
+    const fetchJson = async url => url.startsWith("https://api.crossref.org/works/10.1145") ? { message: record } : null;
+    const bio = async title => (await run(project({
+      "main.tex": doc("See \\cite{peng2018}.\n\\bibliography{refs}"),
+      "refs.bib": `@article{peng2018,\n  title = {${title}},\n  author = {Peng, Xue Bin},\n  year = {2018},\n  doi = {10.1145/3197517.3201311}\n}\n`,
+    }), { verify: true, fetchJson })).findings.some(f => f.rule === "BIO002");
+    check("BIO002 a title with its Crossref subtitle matches",
+          !(await bio("{DeepMimic}: Example-Guided Deep Reinforcement Learning of Physics-Based Character Skills")));
+    check("BIO002 a title without the subtitle still matches", !(await bio("{DeepMimic}")));
+    check("BIO002 a different work is still reported", await bio("Knitting Patterns of the Nineteenth Century"));
+  }
+
+  // ignore_paths is applied by the rules that walk the tree (#6)
+  {
+    const pats = ["**/__pycache__/**", "build/**", "*.cpython-313.pyc", "authors.tex", "figs/raw/"];
+    check("ignore_paths reads like .gitignore",
+          pathIgnored("scripts/__pycache__/plot.cpython-313.pyc", pats) && pathIgnored("__pycache__/x.pyc", pats)
+          && pathIgnored("build/main.log", pats) && pathIgnored("deep/dir/a.cpython-313.pyc", pats)
+          && pathIgnored("authors.tex", pats) && pathIgnored("sub/authors.tex", pats) && pathIgnored("figs/raw/a b.png", pats)
+          && !pathIgnored("figs/plot.pdf", pats) && !pathIgnored("mybuild/main.log", pats)
+          && !pathIgnored("sections/main.tex", ["*/x/*.tex"]) && pathIgnored("sections/x/a.tex", ["*/x/*.tex"]));
+    const files = extra => project({ "main.tex": doc("Hello."), "scripts/__pycache__/plot.cpython-313.pyc": "",
+                                     "my figure.png": "", ...extra });
+    const ven = async f => (await run(f, { venue: "chi" })).findings.filter(x => x.rule === "VEN006").map(x => x.file).join();
+    check("VEN006 the default ignore_paths skip the bytecode cache", (await ven(files({}))) === "my figure.png",
+          await ven(files({})));
+    check("VEN006 a project's ignore_paths replace the default list",
+          (await ven(files({ "mechcheck.yaml": "ignore_paths:\n  - 'my figure.png'\n" }))) === "scripts/__pycache__/plot.cpython-313.pyc");
+    const two = extra => project({ "paper.tex": doc("Hello."), "attic/main.tex": doc("Old."), ...extra });
+    check("an ignored file is not taken for the main document",
+          (await run(two({}))).stats.main === "attic/main.tex"
+          && (await run(two({ "mechcheck.yaml": "ignore_paths:\n  - 'attic/'\n" }))).stats.main === "paper.tex");
   }
 }
 

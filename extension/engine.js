@@ -1883,6 +1883,38 @@ function readProjectConfig(files) {
   }
 }
 
+// ignore_paths, read as .gitignore reads a pattern (the same as
+// mechcheck/config.py): `*` stays inside one directory, `**/` is any number of
+// directories (none included), a trailing `/` means everything under it, and a
+// pattern without a `/` matches the file name in any directory.
+const DEFAULT_IGNORE_PATHS = ["build/**", "out/**", ".git/**", "**/node_modules/**", "**/__pycache__/**"];
+function ignoreRegex(pattern) {
+  let p = String(pattern).trim().replace(/\\/g, "/");
+  while (p.startsWith("./")) p = p.slice(2);
+  if (p.endsWith("/")) p += "**";
+  let out = "";
+  for (let i = 0; i < p.length;) {
+    if (p.startsWith("**/", i)) { out += "(?:.*/)?"; i += 3; }
+    else if (p.startsWith("**", i)) { out += ".*"; i += 2; }
+    else if (p[i] === "*") { out += "[^/]*"; i += 1; }
+    else if (p[i] === "?") { out += "[^/]"; i += 1; }
+    else { out += p[i].replace(/[.*+?^${}()|[\]\\/]/g, "\\$&"); i += 1; }
+  }
+  return new RegExp("^(?:" + out + ")$");
+}
+function pathIgnored(rel, patterns) {
+  rel = String(rel).replace(/\\/g, "/");
+  while (rel.startsWith("./")) rel = rel.slice(2);
+  const name = rel.split("/").pop();
+  for (const raw of patterns || []) {
+    const pattern = String(raw).trim();
+    if (!pattern) continue;
+    const rx = ignoreRegex(pattern);
+    if (rx.test(rel) || (!pattern.replace(/\/+$/, "").includes("/") && rx.test(name))) return true;
+  }
+  return false;
+}
+
 /** A key that must be a list, however the file spelled it. */
 function asConfigList(value) {
   if (Array.isArray(value)) return value;
@@ -1950,7 +1982,14 @@ class Config {
     this.severityOverrides = isPlainObject(this.file.severity) ? this.file.severity : {};
     this.ruleOptions = isPlainObject(this.file.rules) ? this.file.rules : {};
     this.terminology = asConfigList(this.file.terminology);
+    // Files the rules that walk the project leave out (#6); a file the
+    // document inputs is still read. A project's own list replaces the
+    // default one, as every list in the file does.
+    this.ignorePaths = Object.prototype.hasOwnProperty.call(this.file, "ignore_paths")
+      ? asConfigList(this.file.ignore_paths) : DEFAULT_IGNORE_PATHS.slice();
   }
+  /** Is this project-relative path one of the project's ignore_paths? */
+  ignores(path) { return pathIgnored(path, this.ignorePaths); }
   enabled(id) {
     if (this.enable.some(p => globMatch(id, p))) return true;
     if (this.disable.some(p => globMatch(id, p))) return false;
@@ -2758,7 +2797,11 @@ rule({ id:"STY003", title:"Repeated word", cat:"style", sev:SEV.warn,
       if (DOUBLE_OK.has(m[1].toLowerCase())) continue;
       // "\paragraph{Latency} Latency": a heading and the first word of its
       // text, not a slip. A group closes between the two words.
-      if (text.slice(m.index + m[1].length, m.index + m[0].length - m[1].length).includes("}")) continue;
+      const between = text.slice(m.index + m[1].length, m.index + m[0].length - m[1].length);
+      if (between.includes("}")) continue;
+      // "$a$ and $b$ and $c$": the maths between the two words is masked in
+      // the prose view, but the reader sees it, so the words are not adjacent (#3).
+      if (/(?<!\\)\$|\\[(\[]/.test(between)) continue;
       ctx.add("STY003", `repeated word: '${m[0].trim()}'`,
         { at: m.index, context: ctx.project.excerpt(m.index),
           edit: ctx.editSpan(m.index, m.index + m[0].length, m[1], `${m[0]} -> ${m[1]}`) });
@@ -3068,6 +3111,15 @@ rule({ id:"BIB012", title:"Bibliography entry with a suspicious year", cat:"bib"
 /* ---- BIO: verification against Crossref / OpenAlex / DBLP ---- */
 const HARD_MISMATCH = 0.55, SOFT_MISMATCH = 0.80;
 const workTitle = w => !w ? "" : (Array.isArray(w.title) ? (w.title[0] || "") : (w.title || ""));
+/* The title, and the title joined with its subtitle: Crossref keeps the part
+   after the colon in a separate `subtitle` field ("DeepMimic" and
+   "example-guided deep reinforcement learning of ..."), and a bib entry carries
+   both halves, so compare it with both forms (#5). */
+function workTitles(w) {
+  const title = workTitle(w);
+  const sub = !w ? "" : (Array.isArray(w.subtitle) ? (w.subtitle[0] || "") : (w.subtitle || ""));
+  return title && sub ? [title, `${title}: ${sub}`] : [title];
+}
 function workYear(w) {
   for (const k of ["issued","published-print","published-online","created"]) {
     const parts = ((w && w[k] && w[k]["date-parts"]) || [[null]])[0];
@@ -3097,8 +3149,8 @@ rule({ id:"BIO002", title:"Cited title does not match the DOI", cat:"bib-online"
     if (!e.doi || !e.title) continue;
     const work = await ctx.crossrefByDoi(e.doi);
     if (!work) continue;
-    const actual = workTitle(work);
-    const score = similarity(e.title, actual);
+    let score = -1, actual = "";
+    for (const t of workTitles(work)) { const s = similarity(e.title, t); if (s > score) { score = s; actual = t; } }
     if (score >= SOFT_MISMATCH) continue;
     ctx.add("BIO002", `\`${e.key}\`: the DOI resolves to "${cleanLatex(actual).slice(0, 80)}" (similarity ${score.toFixed(2)})`,
       { file: e.file, line: e.lineOf("title"), context: e.title.slice(0, 70),
@@ -3509,12 +3561,45 @@ rule({ id:"ACC005", title:"Complex table without a description", cat:"accessibil
       ctx.add("ACC005", `table with about ${rows} rows has no \\Description`, { at: env.start });
     }}});
 
+/* Since PDF 1.5 the catalog can live in a compressed object stream
+   (/Type /ObjStm, FlateDecode), which is what pdfTeX writes by default and
+   what LaTeX tagging produces; the raw bytes then never show /Marked true.
+   Returns the inflated text of every object stream (latin1, byte for byte). */
+async function inflateObjectStreams(bytes) {
+  const text = new TextDecoder("latin1").decode(bytes);
+  const out = [];
+  const objstm = /\/Type\s*\/ObjStm/g;
+  let m;
+  while ((m = objstm.exec(text)) !== null) {
+    const kw = /stream\r?\n/g;
+    kw.lastIndex = objstm.lastIndex;
+    const s = kw.exec(text);
+    if (!s || s.index - objstm.lastIndex > 4096) continue;
+    const start = s.index + s[0].length;
+    let end = text.indexOf("endstream", start);
+    if (end < 0) continue;
+    while (end > start && (text[end - 1] === "\n" || text[end - 1] === "\r")) end--;
+    out.push(await inflate(bytes.subarray(start, end)));
+  }
+  return out.join("\n");
+}
+async function inflate(bytes) {
+  if (typeof DecompressionStream === "undefined") return "";
+  const reader = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate")).getReader();
+  const chunks = [];
+  try {
+    for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); }
+  } catch (e) { /* junk after the end of the data, or not deflate: keep what came out */ }
+  return chunks.map(c => new TextDecoder("latin1").decode(c)).join("");
+}
+
 rule({ id:"ACC006", title:"PDF is not tagged", cat:"accessibility", sev:SEV.warn, needsBuild:true,
   why:"An untagged PDF has no reading order, so assistive technology cannot navigate it. ASSETS requires an accessible PDF at submission.",
   fix:"Compile with a recent acmart, or run the publisher's accessibility pipeline.",
   run(ctx){ if (!ctx.pdfBytes) return;
-    const text = new TextDecoder("latin1").decode(ctx.pdfBytes.slice(0, 4e6));
-    if (/\/Marked\s*true/.test(text)) return;
+    // The whole file: the catalog of a large PDF can sit near its end.
+    const text = new TextDecoder("latin1").decode(ctx.pdfBytes);
+    if (/\/Marked\s*true/.test(text) || /\/Marked\s*true/.test(ctx.pdfObjects || "")) return;
     ctx.add("ACC006", "the compiled PDF does not declare itself as tagged (/MarkInfo /Marked true)",
       { file: ctx.pdfName || "the PDF" });
   }});
@@ -3964,7 +4049,7 @@ rule({ id:"VEN006", title:"File name unsafe for the publisher's pipeline", cat:"
       const base = path.split("/").pop();
       // What a compile leaves behind; nobody uploads main.synctex.gz.
       if (!base || base.startsWith(".") || BUILD_ARTEFACTS.some(s => base.toLowerCase().endsWith(s))
-          || allowed.test(base)) continue;
+          || allowed.test(base) || ctx.config.ignores(path)) continue;
       ctx.add("VEN006", `\`${path}\` ${base.includes(" ") ? "contains a space" : "contains characters TAPS rejects"}`,
         { file: path, fix: "Rename it: letters, digits, dash and underscore only." });
       if (++n > 25) return;
@@ -5525,6 +5610,13 @@ async function runChecks(files, options) {
   let log = null, pdfBytes = null, pdfName = null;
   const logs = new Map(), pdfs = new Map();
 
+  // The project's own mechcheck.yaml, unless the caller supplied one (or
+  // passed null to say "check this as it stands, ignore the file"). Read
+  // first: its ignore_paths decide which files the main file is chosen from.
+  const projectConfig = options.projectConfig !== undefined
+    ? options.projectConfig : readProjectConfig(files);
+  const config = new Config(options, (projectConfig && projectConfig.data) || {});
+
   for (const [path, bytes] of files) {
     allFiles.set(path, bytes);
     if (/\.(tex|cls|sty)$/i.test(path)) sources.set(path, decodeText(bytes));
@@ -5536,10 +5628,11 @@ async function runChecks(files, options) {
   // Prefer a file that looks like a real root, but never refuse to check
   // something just because the preamble is unusual: fall back to the largest
   // .tex file and say so rather than making the user guess what went wrong.
-  let mainPath = options.main || findMainDocument(sources);
+  const candidates = new Map([...sources].filter(([p]) => !config.ignores(p)));
+  let mainPath = options.main || findMainDocument(candidates);
   let mainGuessed = false;
   if (!mainPath) {
-    const texFiles = [...sources.entries()].filter(([p]) => /\.tex$/i.test(p));
+    const texFiles = [...candidates.entries()].filter(([p]) => /\.tex$/i.test(p));
     if (!texFiles.length) throw new Error("No .tex file in what you dropped in.");
     texFiles.sort((a, b) => b[1].length - a[1].length);
     mainPath = texFiles[0][0];
@@ -5568,18 +5661,17 @@ async function runChecks(files, options) {
   }
 
   const project = new TexProject(sources, mainPath);
-  // The project's own mechcheck.yaml, unless the caller supplied one (or
-  // passed null to say "check this as it stands, ignore the file").
-  const projectConfig = options.projectConfig !== undefined
-    ? options.projectConfig : readProjectConfig(files);
-  const config = new Config(options, (projectConfig && projectConfig.data) || {});
 
   const bib = [];
-  for (const [path, bytes] of files) if (/\.bib$/i.test(path)) bib.push(...parseBib(decodeText(bytes), path));
+  for (const [path, bytes] of files)
+    if (/\.bib$/i.test(path) && !config.ignores(path)) bib.push(...parseBib(decodeText(bytes), path));
+  // ACC006 reads the PDF's catalog, which can sit in a compressed object
+  // stream; the rules are synchronous, so those streams are inflated here (#4).
+  const pdfObjects = pdfBytes ? await inflateObjectStreams(pdfBytes) : "";
 
   const findings = [];
   const ctx = {
-    project, config, bib, log, pdfBytes, pdfName, allFiles,
+    project, config, bib, log, pdfBytes, pdfName, pdfObjects, allFiles,
     cache: {},
     ignoreAcronyms: (options.ignoreAcronyms || [])
       .concat(asList(config.option("ABB001", "ignore", [])))

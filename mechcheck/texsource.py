@@ -234,6 +234,8 @@ class TexProject:
         self.text: str = ""
         self.prose: str = ""
         self.missing_inputs: list = []
+        #: project-relative path -> bool: the configuration's ignore_paths
+        self.ignore = None
         self._line_offsets: list = []
         self._by_path: dict = {}
         self._cmd_cache: dict = {}
@@ -242,10 +244,12 @@ class TexProject:
     # -- construction ------------------------------------------------------ #
 
     @classmethod
-    def load(cls, root: str, main: str | None = None, encoding: str = "utf-8") -> "TexProject":
+    def load(cls, root: str, main: str | None = None, encoding: str = "utf-8",
+             ignore=None) -> "TexProject":
         root = os.path.abspath(root)
-        main = main or find_main_document(root) or "main.tex"
+        main = main or find_main_document(root, ignore) or "main.tex"
         proj = cls(root, main)
+        proj.ignore = ignore
         proj._read_file(main, seen=set(), encoding=encoding)
         proj._finalise()
         return proj
@@ -447,7 +451,10 @@ class TexProject:
                                if not d.startswith(".") and d not in {"node_modules", "build", "out"}]
                 for fn in filenames:
                     if fn.lower().endswith(".bib"):
-                        out.append(os.path.join(dirpath, fn))
+                        full = os.path.join(dirpath, fn)
+                        if self.ignore and self.ignore(os.path.relpath(full, self.root).replace(os.sep, "/")):
+                            continue
+                        out.append(full)
         seen = set()
         uniq = []
         for p in out:
@@ -682,11 +689,13 @@ _MAIN_HINTS = ("main.tex", "thesis.tex", "paper.tex", "root.tex", "master.tex",
 _DOCUMENTCLASS = re.compile(r"^[^%\n]*\\documentclass\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}", re.MULTILINE)
 
 
-def find_main_document(root: str):
+def find_main_document(root: str, ignore=None):
     r"""Pick the main .tex file the way latexmk/Overleaf would.
 
     Preference order: files containing ``\documentclass`` and ``\begin{document}``,
     tie-broken by conventional names, then by shallowest path, then by size.
+    ``ignore`` (project-relative path -> bool) leaves out the project's
+    ``ignore_paths``.
     """
     candidates = []
     for dirpath, dirnames, filenames in os.walk(root):
@@ -697,6 +706,8 @@ def find_main_document(root: str):
             if not fn.lower().endswith(".tex"):
                 continue
             full = os.path.join(dirpath, fn)
+            if ignore and ignore(os.path.relpath(full, root).replace(os.sep, "/")):
+                continue
             try:
                 with open(full, "r", encoding="utf-8", errors="replace") as fh:
                     head = fh.read(200_000)

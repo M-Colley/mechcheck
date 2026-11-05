@@ -22,6 +22,11 @@ _TODO_NOTE = re.compile(r"(?<![\w])(todo|fixme)(?=\s*:)|(?<=\\)(todo|missingfigu
 
 _DOUBLE_WORD = re.compile(r"(?<![\w])([A-Za-z]{2,})\s+\1(?![\w])", re.IGNORECASE)
 
+#: Maths the prose view blanks but the reader sees: ``$...$``, \(...), \[...].
+#: A command that prints between the words closes a group, which the
+#: heading check below already skips.
+_MATH_BETWEEN = re.compile(r"(?<!\\)\$|\\[(\[]")
+
 #: Words that legitimately repeat. German articles repeat by grammar:
 #: "Die Personen, die die Aufgabe gelöst haben".
 _DOUBLE_OK = {"had", "that", "long", "sehr", "die", "das", "der", "den", "dem"}
@@ -180,7 +185,12 @@ def repeated_word(ctx):
             continue
         # "\paragraph{Latency} Latency was measured": a heading and the first
         # word of its text, not a slip. A group closes between the two words.
-        if "}" in text[m.start(1) + len(m.group(1)):m.end() - len(m.group(1))]:
+        between = text[m.start(1) + len(m.group(1)):m.end() - len(m.group(1))]
+        if "}" in between:
+            continue
+        # "$a$ and $b$ and $c$": the maths between the two words is masked in
+        # the prose view, but the reader sees it, so the words are not adjacent (#3).
+        if _MATH_BETWEEN.search(between):
             continue
         f, line, col = ctx.project.locate(m.start())
         yield ctx.finding("STY003", f"repeated word: '{m.group(0).strip()}'",

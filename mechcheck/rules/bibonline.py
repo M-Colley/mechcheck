@@ -61,6 +61,20 @@ def _work_title(work) -> str:
     return title or ""
 
 
+def _work_titles(work) -> list:
+    """The title, and the title joined with its subtitle.
+
+    Crossref keeps the part after the colon in a separate ``subtitle`` field:
+    "DeepMimic" and "example-guided deep reinforcement learning of ...". A bib
+    entry carries both halves, so compare it with both forms (#5).
+    """
+    title = _work_title(work)
+    sub = (work or {}).get("subtitle")
+    if isinstance(sub, list):
+        sub = sub[0] if sub else ""
+    return [title, f"{title}: {sub}"] if title and sub else [title]
+
+
 def _work_year(work):
     if not work:
         return None
@@ -116,8 +130,7 @@ def doi_title_mismatch(ctx):
         work = resolved.get(entry.doi)
         if not work or not entry.title:
             continue
-        actual = _work_title(work)
-        score = bibtex.similarity(entry.title, actual)
+        score, actual = max((bibtex.similarity(entry.title, t), t) for t in _work_titles(work))
         if score >= SOFT_MISMATCH:
             continue
         severity = None if score < HARD_MISMATCH else Severity.WARN
