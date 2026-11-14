@@ -177,6 +177,18 @@ def redefined_abbreviation(ctx):
                               data={"acronym": acronym})
 
 
+def _acronym_uses(ctx) -> dict:
+    """Map uppercase acronym token -> list of match start offsets in prose."""
+    cached = ctx.cache.get("abbrev_uses")
+    if cached is not None:
+        return cached
+    uses = defaultdict(list)
+    for m in _ACRONYM_USE.finditer(ctx.project.prose):
+        uses[m.group(1).upper()].append(m.start())
+    ctx.cache["abbrev_uses"] = uses
+    return uses
+
+
 @rule("ABB002", "Abbreviation used before it is introduced", Category.LANGUAGE, Severity.WARN,
       rationale="A reader meeting 'ADS' before its expansion has to guess or search.",
       fix="Move the definition to the first use, or expand it there.")
@@ -187,28 +199,21 @@ def used_before_defined(ctx):
     if not definitions:
         return
     ignored = _ignored(ctx)
-    prose = ctx.project.prose
+    uses = _acronym_uses(ctx)
     for acronym, occurrences in definitions.items():
         if acronym in ignored:
             continue
         define_at = min(o[2] for o in occurrences)
-        first_use = None
-        for m in _ACRONYM_USE.finditer(prose):
-            token = m.group(1).upper()
-            if token != acronym:
-                continue
-            if m.start() >= define_at:
-                break
-            first_use = m.start()
-            break
-        if first_use is None:
+        positions = uses.get(acronym)
+        if not positions or positions[0] >= define_at:
             continue
+        first_use = positions[0]
         f, line, col = ctx.project.locate(first_use)
         def_f, def_line, _ = ctx.project.locate(define_at)
         yield ctx.finding("ABB002",
                           f"`{acronym}` is used here but only introduced later, at {def_f}:{def_line}",
                           file=f, line=line, col=col, context=ctx.project.excerpt(first_use),
-                          fix=f"Expand it at this first use and shorten the later one.",
+                          fix="Expand it at this first use and shorten the later one.",
                           data={"acronym": acronym})
 
 
@@ -218,19 +223,17 @@ def used_before_defined(ctx):
 def defined_but_unused(ctx):
     if _managed_by_package(ctx):
         return
-    prose = ctx.project.prose
-    uses = defaultdict(int)
-    for m in _ACRONYM_USE.finditer(prose):
-        uses[m.group(1).upper()] += 1
+    uses = _acronym_uses(ctx)
     min_uses = int(ctx.opt("ABB003", "min_uses", 2) or 2)
     for acronym, occurrences in _definitions(ctx).items():
         # The definition itself counts as one occurrence of the token.
-        if uses.get(acronym, 0) >= min_uses:
+        count = len(uses.get(acronym, ()))
+        if count >= min_uses:
             continue
         offset, expansion, _start = occurrences[0][:3]
         f, line, col = ctx.project.locate(offset)
         yield ctx.finding("ABB003",
-                          f"`{acronym}` is introduced but then used {max(0, uses.get(acronym, 1) - 1)} time(s)",
+                          f"`{acronym}` is introduced but then used {max(0, (count or 1) - 1)} time(s)",
                           file=f, line=line, col=col, context=f"{expansion} ({acronym})",
                           fix="Either use the abbreviation from here on, or do not introduce it.")
 
@@ -243,17 +246,16 @@ def used_never_defined(ctx):
         return
     definitions = _definitions(ctx)
     ignored = _ignored(ctx)
-    reported = set()
-    for m in _ACRONYM_USE.finditer(ctx.project.prose):
-        token = m.group(1).upper()
-        if token in definitions or token in ignored or token in reported:
+    uses = _acronym_uses(ctx)
+    for token, positions in uses.items():
+        if token in definitions or token in ignored:
             continue
         if _NOT_ACRONYM.match(token):
             continue
-        reported.add(token)
-        f, line, col = ctx.project.locate(m.start())
+        start = positions[0]
+        f, line, col = ctx.project.locate(start)
         yield ctx.finding("ABB004", f"`{token}` is used but never introduced",
-                          file=f, line=line, col=col, context=ctx.project.excerpt(m.start()),
+                          file=f, line=line, col=col, context=ctx.project.excerpt(start),
                           fix=f"Write it out at first use: Full Term ({token}). "
                               f"If it needs no expansion, add it to rules.ABB004.ignore.",
                           data={"acronym": token})

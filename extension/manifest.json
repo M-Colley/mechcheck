@@ -36,5 +36,12 @@
     "default_icon": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" }
   },
 
+  "commands": {
+    "recheck-project": {
+      "suggested_key": { "default": "Alt+Shift+M", "mac": "Alt+Shift+M" },
+      "description": "Recheck the open Overleaf project"
+    }
+  },
+
   "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" }
 }

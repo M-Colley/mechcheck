@@ -507,15 +507,15 @@ tests/                the Python suite, and the fixtures both engines are checke
 
 ## Status
 
-Python side: 961 tests passing, and the bibliography verification has been run
+Python side: 976 tests passing, and the bibliography verification has been run
 against the live Crossref, OpenAlex and DBLP APIs.
 
-Browser side: 399 checks passing (`node browser/test-engine.mjs`) against the
+Browser side: 420 checks passing (`node browser/test-engine.mjs`) against the
 same fixtures as the Python suite — including the assertion that both engines
 produce exactly the same findings on the self-test document, and that both
 readers of `mechcheck.yaml` agree on this repository's own configuration.
 
-Extension: 61 checks passing in a real browser via `extension/test-harness.html`
+Extension: 67 checks passing in a real browser via `extension/test-harness.html`
 — panel rendering, project-zip reading, filtering, export, error path, and the
 gutter markers and the inline notes — and loaded against a live Overleaf
 project on 2026-08-28, with both editor decorations verified there on

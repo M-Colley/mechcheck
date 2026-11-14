@@ -39,9 +39,26 @@ _US_UK = [
     ("fulfill", "fulfil"), ("judgment", "judgement"), ("license", "licence"),
 ]
 
+_US_UK_CLASSIFY = sorted(
+    [(us, True, uk, idx) for idx, (us, uk) in enumerate(_US_UK) if us != "fulfill"]
+    + [(uk, False, us, idx) for idx, (us, uk) in enumerate(_US_UK) if uk != "fulfil"],
+    key=lambda t: len(t[0]),
+    reverse=True,
+)
+_US_UK_RE = re.compile(
+    r"(?<![\w])(?:"
+    r"behaviou?r\w*|colou?r\w*|modell?ing\w*|analy[zs]e\w*|organi[zs]ation\w*|"
+    r"visuali[zs]ation\w*|cent(?:er|re)\w*|labell?ed\w*|travell?ed\w*|"
+    r"recogni[zs]e\w*|customi[zs]ation\w*|defen[cs]e\w*|"
+    r"fulfill(?:s|ments?)?(?![\w])|fulfil(?:s|ments?)?(?![\w])|"
+    r"judge?ment\w*|licen[cs]e\w*"
+    r")",
+    re.IGNORECASE,
+)
+
 _CONTRACTIONS = re.compile(
-    r"(?<![\w])(don't|doesn't|didn't|can't|won't|isn't|aren't|wasn't|weren't|hasn't|haven't|"
-    r"it's|we've|we're|they're|there's|that's|let's|couldn't|shouldn't|wouldn't)(?![\w])",
+    r"(?<![\w])((?:do(?:es)?|did|ca|wo|is|are|was|were|has|have|could|should|would)n't|"
+    r"(?:it|there|that|let)'s|(?:we|they)'re|we've)(?![\w])",
     re.IGNORECASE)
 
 
@@ -199,6 +216,21 @@ def repeated_word(ctx):
                                              f"{m.group(0)} -> {m.group(1)}"))
 
 
+_STRAIGHT_QUOTE_RE = re.compile(r'(?<![\\=])"')
+_SPACE_BEFORE_PUNCT_RE = re.compile(r"(?<=[\w\)\}])[ \t]+([,.;:!?])(?=[ \t]|$)")
+_CITE_GLUED_RE = re.compile(r"[A-Za-z0-9\)]\\(cite|citep|citet|autocite|parencite)\b")
+_NUMERIC_RANGE_RE = re.compile(r"(?<![\d\-:.,])(\d{1,4})\s?-\s?(\d{1,4})(?![\d\-:])")
+_FIG_LONG_RE = re.compile(r"(?<![\w])Figures?(?![\w])")
+_FIG_SHORT_RE = re.compile(r"(?<![\w])Figs?\.")
+_EG_IE_RE = re.compile(r"(?<![\w])(e\.g\.|i\.e\.|cf\.|et al\.)(?![,)\\])\s")
+_SENTENCE_CHUNK_RE = re.compile(r"[^.!?]+(?:[.!?]|\Z)")
+_MID_SENTENCE_SKIP_RE = re.compile(
+    r"\\(item|end|begin|section|subsection|subsubsection|chapter|paragraph|caption|label|]|\))"
+)
+_LOWER_END_RE = re.compile(r"[a-z]\s*$")
+_UNESCAPED_PCT_RE = re.compile(r"\d\s*%(?!\s*mechcheck)")
+
+
 @rule("STY004", "Straight double quotes", Category.STYLE, Severity.INFO,
       rationale='A typed " renders as two identical marks; LaTeX needs ``opening and closing'' quotes.',
       fix="Use ``like this'' in English, or the csquotes package.")
@@ -206,9 +238,9 @@ def straight_quotes(ctx):
     if "csquotes" in ctx.project.packages():
         return
     for line in ctx.project.lines:
-        if line.verbatim:
+        if line.verbatim or '"' not in line.code:
             continue
-        for m in re.finditer(r'(?<![\\=])"', line.code):
+        for m in _STRAIGHT_QUOTE_RE.finditer(line.code):
             yield ctx.finding("STY004", "straight \" quote; LaTeX renders this as two closing marks",
                               file=line.file, line=line.lineno, col=m.start() + 1,
                               context=line.raw.strip()[:90],
@@ -224,7 +256,7 @@ def space_before_punctuation(ctx):
     for line in ctx.project.lines:
         if line.verbatim:
             continue
-        for m in re.finditer(r"(?<=[\w\)\}])[ \t]+([,.;:!?])(?=[ \t]|$)", line.code):
+        for m in _SPACE_BEFORE_PUNCT_RE.finditer(line.code):
             start = line.offset + m.start()
             yield ctx.finding("STY005", f"space before '{m.group(1)}'",
                               file=line.file, line=line.lineno, col=m.start() + 1,
@@ -237,7 +269,7 @@ def space_before_punctuation(ctx):
       rationale="'shown in[12]' prints without a space; a tie keeps the citation attached but readable.",
       fix="Write word~\\cite{key}.")
 def citation_spacing(ctx):
-    for m in re.finditer(r"[A-Za-z0-9\)]\\(cite|citep|citet|autocite|parencite)\b", ctx.project.text):
+    for m in _CITE_GLUED_RE.finditer(ctx.project.text):
         f, line, col = ctx.project.locate(m.start())
         yield ctx.finding("STY006", "no space or tie before the citation",
                           file=f, line=line, col=col, context=ctx.project.excerpt(m.start()),
@@ -249,7 +281,7 @@ def citation_spacing(ctx):
       fix="Write 10--20.")
 def numeric_range_hyphen(ctx):
     # Not inside a time or a decimal: "10:00-12:00" became "10:0--12:00".
-    for m in re.finditer(r"(?<![\d\-:.,])(\d{1,4})\s?-\s?(\d{1,4})(?![\d\-:])", ctx.project.prose):
+    for m in _NUMERIC_RANGE_RE.finditer(ctx.project.prose):
         a, b = int(m.group(1)), int(m.group(2))
         if b <= a:
             continue
@@ -270,18 +302,24 @@ def numeric_range_hyphen(ctx):
       rationale="Reviewers read inconsistent spelling as carelessness; it is also the commonest artefact of text assembled from several sources.",
       fix="Pick one variety and apply it throughout.")
 def mixed_spelling(ctx):
-    prose = ctx.project.prose.lower()
     us_hits, uk_hits = [], []
-    for us, uk in _US_UK:
-        for m in re.finditer(rf"(?<![\w]){us}\w*", prose):
-            us_hits.append((m.start(), m.group(0), uk))
-        for m in re.finditer(rf"(?<![\w]){uk}\w*", prose):
-            uk_hits.append((m.start(), m.group(0), us))
+    for m in _US_UK_RE.finditer(ctx.project.prose):
+        w = m.group(0).lower()
+        if w.startswith("fulfill"):
+            us_hits.append((12, m.start(), w, "fulfil"))
+        elif w.startswith("fulfil"):
+            uk_hits.append((12, m.start(), w, "fulfill"))
+        else:
+            for stem, is_us, alt, idx in _US_UK_CLASSIFY:
+                if w.startswith(stem):
+                    (us_hits if is_us else uk_hits).append((idx, m.start(), w, alt))
+                    break
     if not us_hits or not uk_hits:
         return
     minority = us_hits if len(us_hits) <= len(uk_hits) else uk_hits
     majority_label = "British" if minority is us_hits else "American"
-    for offset, word, alternative in minority[:12]:
+    minority.sort()
+    for _idx, offset, word, alternative in minority[:12]:
         f, line, col = ctx.project.locate(offset)
         yield ctx.finding("STY008",
                           f"'{word}' is the minority spelling here; the document is mostly {majority_label}",
@@ -304,8 +342,8 @@ def contractions(ctx):
       fix="Use one form; ACM style spells out 'Figure'.")
 def figure_abbreviation(ctx):
     prose = ctx.project.prose
-    long_form = [m.start() for m in re.finditer(r"(?<![\w])Figures?(?![\w])", prose)]
-    short_form = [m.start() for m in re.finditer(r"(?<![\w])Figs?\.", prose)]
+    long_form = [m.start() for m in _FIG_LONG_RE.finditer(prose)]
+    short_form = [m.start() for m in _FIG_SHORT_RE.finditer(prose)]
     if not long_form or not short_form:
         return
     minority = short_form if len(short_form) <= len(long_form) else long_form
@@ -322,7 +360,7 @@ def figure_abbreviation(ctx):
       rationale="'e.g. the' without a comma reads as a sentence break to LaTeX's spacing rules and prints a wide space.",
       fix="Write 'e.g.,' and 'i.e.,' -- or use \\eg macros.")
 def eg_ie_comma(ctx):
-    for m in re.finditer(r"(?<![\w])(e\.g\.|i\.e\.|cf\.|et al\.)(?![,)\\])\s", ctx.project.prose):
+    for m in _EG_IE_RE.finditer(ctx.project.prose):
         f, line, col = ctx.project.locate(m.start())
         yield ctx.finding("STY011", f"'{m.group(1)}' is not followed by a comma",
                           file=f, line=line, col=col, context=ctx.project.excerpt(m.start()),
@@ -337,11 +375,11 @@ def long_sentence(ctx):
     prose = ctx.project.prose
     # One pass, sentence by sentence. "[^.!?]{40,}[.!?]" was retried from every
     # position of a long tail with no full stop -- 43 s for a listing appendix.
-    for m in re.finditer(r"[^.!?]+(?:[.!?]|\Z)", prose):
+    for m in _SENTENCE_CHUNK_RE.finditer(prose):
         chunk = m.group(0)
         if len(chunk) <= 40 or chunk[-1] not in ".!?":
             continue
-        words = [w for w in re.split(r"\s+", chunk.strip()) if w]
+        words = chunk.split()
         if len(words) <= limit:
             continue
         f, line, col = ctx.project.locate(m.start())
@@ -363,12 +401,12 @@ def paragraph_break_mid_sentence(ctx):
         nxt = lines[i + 1]
         if nxt.file != line.file or nxt.code.strip():
             continue
-        stripped = code.rstrip()
+        stripped = code
         if stripped.endswith((".", "!", "?", ":", ";", "}", "]", "%", "\\", "-", ",")):
             continue
-        if re.search(r"\\(item|end|begin|section|subsection|subsubsection|chapter|paragraph|caption|label|]|\))", stripped):
+        if len(stripped) < 25 or not _LOWER_END_RE.search(stripped):
             continue
-        if len(stripped) < 25 or not re.search(r"[a-z]\s*$", stripped):
+        if _MID_SENTENCE_SKIP_RE.search(stripped):
             continue
         yield ctx.finding("STY013", "paragraph ends mid-sentence (blank line follows)",
                           file=line.file, line=line.lineno,
@@ -381,9 +419,9 @@ def paragraph_break_mid_sentence(ctx):
       fix="Write \\% for a percentage.")
 def unescaped_percent(ctx):
     for line in ctx.project.lines:
-        if line.verbatim:
+        if line.verbatim or "%" not in line.raw:
             continue
-        m = re.search(r"\d\s*%(?!\s*mechcheck)", line.raw)
+        m = _UNESCAPED_PCT_RE.search(line.raw)
         if not m:
             continue
         # If the % survived comment-stripping it was escaped; only flag the raw case.

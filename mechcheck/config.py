@@ -13,6 +13,7 @@ the new call for papers.
 from __future__ import annotations
 
 import copy
+import functools
 import os
 import re
 from dataclasses import dataclass, field
@@ -90,6 +91,7 @@ DEFAULTS: dict = {
 }
 
 
+@functools.lru_cache(maxsize=256)
 def _ignore_regex(pattern: str):
     r"""A glob as ``.gitignore`` reads it: ``*`` stays inside one directory,
     ``**/`` is any number of directories (none included), a trailing ``/``

@@ -283,7 +283,7 @@ function endOf(env) {
   const re = END_OF.get(env); re.lastIndex = 0; return re;
 }
 const MATH_ENVS = ["equation","equation*","align","align*","alignat","alignat*","gather","gather*",
-  "multline","multline*","flalign","flalign*","eqnarray","eqnarray*","displaymath","math","split","IEEEeqnarray"];
+  "multline","multline*","flalign","flalign*","eqnarray","eqnarray*","displaymath","math","split","IEEEeqnarray","dmath"];
 const FLOAT_ENVS = ["figure","figure*","table","table*","wrapfigure","sidewaysfigure","sidewaystable",
   "listing","algorithm","algorithm*"];
 const NON_PROSE_COMMANDS = ["label","ref","cref","Cref","autoref","eqref","pageref","vref","cite","citep",
@@ -296,13 +296,12 @@ const NON_PROSE_COMMANDS = ["label","ref","cref","Cref","autoref","eqref","pager
 
 /** Replace every character with a space, keeping newlines and total length. */
 function maskRun(s) {
-  let out = "";
-  for (const ch of s) out += (ch === "\n") ? "\n" : " ";
-  return out;
+  return s.includes("\n") ? s.replace(/[^\n]+/g, m => " ".repeat(m.length)) : " ".repeat(s.length);
 }
 
 /** Mask the comment part of one line without changing its length. */
 function stripComments(line) {
+  if (!line.includes("%")) return line;
   let out = "", i = 0;
   while (i < line.length) {
     const c = line[i];
@@ -313,15 +312,48 @@ function stripComments(line) {
   return out;
 }
 
-const VERB_INLINE = /\\(?:verb\*?|lstinline|mintinline)\s*(\{[^}]*\})?(.)/g;
+const VERB_INLINE_CMD = /^\\(verb\*?|lstinline|mintinline)(?![A-Za-z@])/;
 function maskInlineVerb(line) {
-  let out = line;
-  for (const m of [...line.matchAll(VERB_INLINE)]) {
-    const delim = m[2];
-    if (!delim || /[A-Za-z0-9]/.test(delim) || delim === "{") continue;
-    const close = out.indexOf(delim, m.index + m[0].length);
-    if (close === -1) continue;
-    out = out.slice(0, m.index) + maskRun(out.slice(m.index, close + 1)) + out.slice(close + 1);
+  if (!line.includes("\\verb") && !line.includes("\\lstinline") && !line.includes("\\mintinline")) return line;
+  let out = "", i = 0;
+  const n = line.length;
+  while (i < n) {
+    const c = line[i];
+    if (c === "%") { out += line.slice(i); break; }
+    if (c === "\\") {
+      if (i + 1 < n && line[i + 1] === "\\") { out += "\\\\"; i += 2; continue; }
+      const m = VERB_INLINE_CMD.exec(line.slice(i));
+      if (m) {
+        const cmd = m[1];
+        let j = i + m[0].length;
+        while (j < n && (line[j] === " " || line[j] === "\t")) j++;
+        if ((cmd === "lstinline" || cmd === "mintinline") && j < n && line[j] === "[") {
+          const opt = readGroup(line, j, "[", "]");
+          if (opt) {
+            j = opt.end;
+            while (j < n && (line[j] === " " || line[j] === "\t")) j++;
+          }
+        }
+        if (cmd === "mintinline" && j < n && line[j] === "{") {
+          const lang = readGroup(line, j, "{", "}");
+          if (!lang) { out += c; i++; continue; }
+          j = lang.end;
+          while (j < n && (line[j] === " " || line[j] === "\t")) j++;
+        }
+        if (j < n) {
+          const delim = line[j];
+          if (delim === "{" && (cmd === "lstinline" || cmd === "mintinline")) {
+            const body = readGroup(line, j, "{", "}");
+            if (body) { out += " ".repeat(body.end - i); i = body.end; continue; }
+          } else if (delim !== "{" && !/[A-Za-z0-9\s]/.test(delim)) {
+            const close = line.indexOf(delim, j + 1);
+            if (close !== -1) { out += " ".repeat(close + 1 - i); i = close + 1; continue; }
+          }
+        }
+      }
+      if (i + 1 < n && line[i + 1] === "%") { out += "\\%"; i += 2; continue; }
+    }
+    out += c; i++;
   }
   return out;
 }
@@ -353,11 +385,17 @@ function isEscaped(text, pos) {
 
 function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
+const CMD_RE_CACHE = new Map();
 /** All \name invocations with up to maxArgs brace arguments. */
 function parseCommands(text, name, maxArgs = 1) {
   const out = [];
-  const tail = /[A-Za-z]$/.test(name) ? "(?![A-Za-z@])" : "";
-  const re = new RegExp("\\\\" + escapeRe(name) + tail, "g");
+  let re = CMD_RE_CACHE.get(name);
+  if (!re) {
+    const tail = /[A-Za-z]$/.test(name) ? "(?![A-Za-z@])" : "";
+    re = new RegExp("\\\\" + escapeRe(name) + tail, "g");
+    CMD_RE_CACHE.set(name, re);
+  }
+  re.lastIndex = 0;
   let m;
   while ((m = re.exec(text)) !== null) {
     if (isEscaped(text, m.index)) continue;
@@ -384,11 +422,20 @@ function parseCommands(text, name, maxArgs = 1) {
   return out;
 }
 
+const ENV_RE_CACHE = new Map();
 /** \begin{name}...\end{name} blocks, respecting nesting. */
 function parseEnvironments(text, name) {
   const out = [], stack = [], events = [];
-  const bre = new RegExp("\\\\begin\\s*\\{" + escapeRe(name) + "\\}", "g");
-  const ere = new RegExp("\\\\end\\s*\\{" + escapeRe(name) + "\\}", "g");
+  let pair = ENV_RE_CACHE.get(name);
+  if (!pair) {
+    pair = [
+      new RegExp("\\\\begin\\s*\\{" + escapeRe(name) + "\\}", "g"),
+      new RegExp("\\\\end\\s*\\{" + escapeRe(name) + "\\}", "g"),
+    ];
+    ENV_RE_CACHE.set(name, pair);
+  }
+  const [bre, ere] = pair;
+  bre.lastIndex = 0; ere.lastIndex = 0;
   let m;
   while ((m = bre.exec(text)) !== null) if (!isEscaped(text, m.index)) events.push({ pos: m.index, kind: 0, end: m.index + m[0].length });
   while ((m = ere.exec(text)) !== null) if (!isEscaped(text, m.index)) events.push({ pos: m.index, kind: 1, end: m.index + m[0].length });
@@ -411,26 +458,99 @@ function parseEnvironments(text, name) {
   return out;
 }
 
+const PROSE_DISPLAY_MATH_RE = /\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)/g;
+const PROSE_INLINE_MATH_RE = /(?<!\\)\$\$[\s\S]*?(?<!\\)\$\$|(?<!\\)\$[\s\S]*?(?<!\\)\$/g;
+const PROSE_BODY_ENVS = new Set(["tabular","tabular*","tabularx","longtable","tikzpicture","axis"]);
+const PROSE_ENV_RE = new RegExp(
+  "\\\\(begin|end)\\s*\\{(" + [...MATH_ENVS, ...PROSE_BODY_ENVS].sort((a, b) => b.length - a.length).map(escapeRe).join("|") + ")\\}", "g");
+const NON_PROSE_CMD_RE = new RegExp(
+  "\\\\(?:" + [...NON_PROSE_COMMANDS].sort((a, b) => b.length - a.length).map(escapeRe).join("|") + ")(?![A-Za-z@])", "g");
+const PROSE_ENV_DELIM_RE = /\\(?:begin|end)\s*\{[^}]*\}/g;
+const PROSE_CONTROL_RE = /\\([A-Za-z@]+\*?|[\s\S])/g;
+const PROSE_PUNCT_RE = /[{}\&~^_]/g;
+
 /** Mask maths and markup, keep readable words. Same length as the input. */
 function buildProse(text) {
-  const buf = text.split("");
-  const blank = (a, b) => { for (let i = Math.max(0, a); i < Math.min(buf.length, b); i++) if (buf[i] !== "\n") buf[i] = " "; };
+  const n = text.length;
+  if (!n) return "";
+  const spans = [];
   let m;
-  const displayMath = /\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)/g;
-  while ((m = displayMath.exec(text)) !== null) blank(m.index, m.index + m[0].length);
-  const inlineMath = /(?<!\\)\$\$[\s\S]*?(?<!\\)\$\$|(?<!\\)\$[\s\S]*?(?<!\\)\$/g;
-  while ((m = inlineMath.exec(text)) !== null) blank(m.index, m.index + m[0].length);
-  for (const env of MATH_ENVS) for (const e of parseEnvironments(text, env)) blank(e.start, e.end);
-  for (const env of ["tabular","tabular*","tabularx","longtable","tikzpicture","axis"])
-    for (const e of parseEnvironments(text, env)) blank(e.bodyStart, e.bodyEnd);
-  for (const name of NON_PROSE_COMMANDS)
-    for (const c of parseCommands(text, name, 3)) blank(c.start, c.end);
-  const envDelim = /\\(?:begin|end)\s*\{[^}]*\}/g;
-  while ((m = envDelim.exec(text)) !== null) blank(m.index, m.index + m[0].length);
-  const control = /\\([A-Za-z@]+\*?|[\s\S])/g;
-  while ((m = control.exec(text)) !== null) if (!isEscaped(text, m.index)) blank(m.index, m.index + m[0].length);
-  for (let i = 0; i < buf.length; i++) if ("{}&~^_".includes(buf[i])) buf[i] = " ";
-  return buf.join("");
+  PROSE_DISPLAY_MATH_RE.lastIndex = 0;
+  while ((m = PROSE_DISPLAY_MATH_RE.exec(text)) !== null) spans.push([m.index, m.index + m[0].length]);
+  PROSE_INLINE_MATH_RE.lastIndex = 0;
+  while ((m = PROSE_INLINE_MATH_RE.exec(text)) !== null) spans.push([m.index, m.index + m[0].length]);
+
+  const envStacks = new Map();
+  PROSE_ENV_RE.lastIndex = 0;
+  while ((m = PROSE_ENV_RE.exec(text)) !== null) {
+    if (isEscaped(text, m.index)) continue;
+    const kind = m[1], env = m[2];
+    if (kind === "begin") {
+      if (!envStacks.has(env)) envStacks.set(env, []);
+      envStacks.get(env).push([m.index, m.index + m[0].length]);
+    } else {
+      const stack = envStacks.get(env);
+      if (stack && stack.length) {
+        const [bStart, bEnd] = stack.pop();
+        if (PROSE_BODY_ENVS.has(env)) {
+          let pos = bEnd;
+          while (true) {
+            const nxt = skipSpace(text, pos);
+            if (text[nxt] === "[") { const g = readGroup(text, nxt, "[", "]"); if (!g) break; pos = g.end; continue; }
+            break;
+          }
+          spans.push([pos, m.index]);
+        } else {
+          spans.push([bStart, m.index + m[0].length]);
+        }
+      }
+    }
+  }
+
+  NON_PROSE_CMD_RE.lastIndex = 0;
+  while ((m = NON_PROSE_CMD_RE.exec(text)) !== null) {
+    if (isEscaped(text, m.index)) continue;
+    let pos = m.index + m[0].length;
+    if (text[pos] === "*") pos++;
+    let args = 0;
+    while (args < 3) {
+      const nxt = skipSpace(text, pos);
+      if (text[nxt] === "[") { const g = readGroup(text, nxt, "[", "]"); if (!g) break; pos = g.end; continue; }
+      if (text[nxt] === "{") { const g = readGroup(text, nxt); if (!g) break; args++; pos = g.end; continue; }
+      break;
+    }
+    spans.push([m.index, pos]);
+  }
+
+  PROSE_ENV_DELIM_RE.lastIndex = 0;
+  while ((m = PROSE_ENV_DELIM_RE.exec(text)) !== null) spans.push([m.index, m.index + m[0].length]);
+  PROSE_CONTROL_RE.lastIndex = 0;
+  while ((m = PROSE_CONTROL_RE.exec(text)) !== null) if (!isEscaped(text, m.index)) spans.push([m.index, m.index + m[0].length]);
+
+  let masked = text;
+  if (spans.length) {
+    spans.sort((a, b) => a[0] - b[0]);
+    const chunks = [];
+    let cursor = 0;
+    let [curA, curB] = spans[0];
+    for (let i = 1; i < spans.length; i++) {
+      const [a, b] = spans[i];
+      if (a <= curB) { if (b > curB) curB = b; }
+      else {
+        const lo = Math.max(0, curA), hi = Math.min(n, curB);
+        if (lo > cursor) chunks.push(text.slice(cursor, lo));
+        if (hi > lo) chunks.push(maskRun(text.slice(lo, hi)));
+        cursor = hi;
+        curA = a; curB = b;
+      }
+    }
+    const lo = Math.max(0, curA), hi = Math.min(n, curB);
+    if (lo > cursor) chunks.push(text.slice(cursor, lo));
+    if (hi > lo) chunks.push(maskRun(text.slice(lo, hi)));
+    if (hi < n) chunks.push(text.slice(Math.max(cursor, hi)));
+    masked = chunks.join("");
+  }
+  return masked.replace(PROSE_PUNCT_RE, " ");
 }
 
 const MAIN_HINTS = ["main.tex","thesis.tex","paper.tex","root.tex","master.tex","document.tex",
@@ -461,10 +581,11 @@ class TexProject {
     // paper/chapters/intro.tex as chapters/intro.
     const base = this.main.includes("/") ? this.main.slice(0, this.main.lastIndexOf("/")) : "";
     if (base) options = [...options.map(o => base + "/" + o), ...options];
-    for (const opt of options) {
-      const norm = normalisePath(opt);
-      if (this.sources.has(norm)) return norm;
-      for (const key of this.sources.keys()) if (key.toLowerCase() === norm.toLowerCase()) return key;
+    const norms = options.map(normalisePath);
+    for (const norm of norms) if (this.sources.has(norm)) return norm;
+    for (const norm of norms) {
+      const low = norm.toLowerCase();
+      for (const key of this.sources.keys()) if (key.toLowerCase() === low) return key;
     }
     return null;
   }
@@ -721,15 +842,20 @@ function normaliseTitle(text) {
 }
 
 /** Token overlap blended with a sequence ratio: order-tolerant, 0..1. */
-function similarity(a, b) {
+function similarity(a, b, minScore = 0) {
   const na = normaliseTitle(a), nb = normaliseTitle(b);
   if (!na || !nb) return 0;
   if (na === nb) return 1;
   const ta = new Set(na.split(" ")), tb = new Set(nb.split(" "));
   let inter = 0;
   for (const t of ta) if (tb.has(t)) inter++;
-  const union = new Set([...ta, ...tb]).size;
+  const union = ta.size + tb.size - inter;
   const jaccard = union ? inter / union : 0;
+  if (minScore > 0) {
+    if (0.5 * jaccard + 0.5 < minScore) return 0;
+    const upperRatio = (2 * Math.min(na.length, nb.length)) / (na.length + nb.length);
+    if (0.5 * jaccard + 0.5 * upperRatio < minScore) return 0;
+  }
   return Math.round((0.5 * jaccard + 0.5 * ratio(na, nb)) * 10000) / 10000;
 }
 
@@ -738,15 +864,18 @@ function ratio(a, b) {
   if (!a.length || !b.length) return 0;
   if (a.length > 4000) a = a.slice(0, 4000);
   if (b.length > 4000) b = b.slice(0, 4000);
-  let prev = new Array(b.length + 1).fill(0);
-  for (let i = 1; i <= a.length; i++) {
-    const cur = new Array(b.length + 1).fill(0);
-    for (let j = 1; j <= b.length; j++) {
-      cur[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
+  if (a.length < b.length) { const t = a; a = b; b = t; }
+  const m = a.length, n = b.length;
+  let prev = new Int32Array(n + 1);
+  let cur = new Int32Array(n + 1);
+  for (let i = 0; i < m; i++) {
+    const ca = a.charCodeAt(i);
+    for (let j = 0; j < n; j++) {
+      cur[j + 1] = ca === b.charCodeAt(j) ? prev[j] + 1 : (prev[j + 1] >= cur[j] ? prev[j + 1] : cur[j]);
     }
-    prev = cur;
+    const tmp = prev; prev = cur; cur = tmp;
   }
-  return (2 * prev[b.length]) / (a.length + b.length);
+  return (2 * prev[n]) / (m + n);
 }
 
 const MONTHS = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
@@ -2143,7 +2272,10 @@ function readProjectConfig(files) {
 // directories (none included), a trailing `/` means everything under it, and a
 // pattern without a `/` matches the file name in any directory.
 const DEFAULT_IGNORE_PATHS = ["build/**", "out/**", ".git/**", "**/node_modules/**", "**/__pycache__/**"];
+const IGNORE_RE_CACHE = new Map();
 function ignoreRegex(pattern) {
+  const cached = IGNORE_RE_CACHE.get(pattern);
+  if (cached) return cached;
   let p = String(pattern).trim().replace(/\\/g, "/");
   while (p.startsWith("./")) p = p.slice(2);
   if (p.endsWith("/")) p += "**";
@@ -2155,7 +2287,9 @@ function ignoreRegex(pattern) {
     else if (p[i] === "?") { out += "[^/]"; i += 1; }
     else { out += p[i].replace(/[.*+?^${}()|[\]\\/]/g, "\\$&"); i += 1; }
   }
-  return new RegExp("^(?:" + out + ")$");
+  const rx = new RegExp("^(?:" + out + ")$");
+  IGNORE_RE_CACHE.set(pattern, rx);
+  return rx;
 }
 function pathIgnored(rel, patterns) {
   rel = String(rel).replace(/\\/g, "/");
@@ -2180,22 +2314,28 @@ function asConfigList(value) {
 const isPlainObject = v => !!v && typeof v === "object" && !Array.isArray(v);
 
 /* fnmatchcase, as the command line reads a pattern: * ? [abc] [!abc]. */
+const GLOB_RE_CACHE = new Map();
 function globMatch(value, pattern) {
   if (value === pattern) return true;
-  let re = "^";
-  for (let i = 0; i < pattern.length; i++) {
-    const c = pattern[i];
-    if (c === "*") re += ".*";
-    else if (c === "?") re += ".";
-    else if (c === "[" && pattern.indexOf("]", i + 2) > i) {
-      const close = pattern.indexOf("]", i + 2);
-      let body = pattern.slice(i + 1, close).replace(/\\/g, "\\\\");
-      if (body[0] === "!") body = "^" + body.slice(1);
-      re += "[" + body + "]";
-      i = close;
-    } else re += escapeRe(c);
+  let rx = GLOB_RE_CACHE.get(pattern);
+  if (!rx) {
+    let re = "^";
+    for (let i = 0; i < pattern.length; i++) {
+      const c = pattern[i];
+      if (c === "*") re += ".*";
+      else if (c === "?") re += ".";
+      else if (c === "[" && pattern.indexOf("]", i + 2) > i) {
+        const close = pattern.indexOf("]", i + 2);
+        let body = pattern.slice(i + 1, close).replace(/\\/g, "\\\\");
+        if (body[0] === "!") body = "^" + body.slice(1);
+        re += "[" + body + "]";
+        i = close;
+      } else re += escapeRe(c);
+    }
+    rx = new RegExp(re + "$");
+    GLOB_RE_CACHE.set(pattern, rx);
   }
-  return new RegExp(re + "$").test(value);
+  return rx.test(value);
 }
 
 /* What a document is assumed to be when nothing says otherwise: a paper
@@ -2214,24 +2354,29 @@ class Config {
     const pick = (key, fallback) =>
       (Object.prototype.hasOwnProperty.call(options, key) && options[key] !== undefined)
         ? options[key] : (file[key] !== undefined && file[key] !== null ? file[key] : fallback);
+    const has = (o, k) => o && Object.prototype.hasOwnProperty.call(o, k) && o[k] !== undefined && o[k] !== null;
+    const hasKey = (o, k) => o && Object.prototype.hasOwnProperty.call(o, k) && o[k] !== undefined;
     const profile = pick("profile", DEFAULT_PROFILE);
     const prof = PROFILES[profile] || {};
     this.file = isPlainObject(file) ? file : {};
     this.profile = profile;
-    this.stage = prof.stage || pick("stage", DEFAULT_STAGE);
+    this.stage = has(options, "stage") ? options.stage
+      : has(this.file, "stage") ? this.file.stage
+      : (prof.stage || DEFAULT_STAGE);
     // A thesis is not submitted to a venue, so that profile turns the
     // default venue off; naming one explicitly still wins.
     // By key, not by truthiness: `venue: null` in a project's file is an
     // explicit "no venue" and has to beat the default. Order: what the
     // person chose, then the file, then the profile, then the default.
-    const has = (o, k) => o && Object.prototype.hasOwnProperty.call(o, k) && o[k] !== undefined;
-    this.venueKey = (has(options, "venue") ? options.venue
-      : has(this.file, "venue") ? this.file.venue
-      : has(prof, "venue") ? prof.venue
+    this.venueKey = (hasKey(options, "venue") ? options.venue
+      : hasKey(this.file, "venue") ? this.file.venue
+      : hasKey(prof, "venue") ? prof.venue
       : DEFAULT_VENUE) || "";
     this.venue = this.venueKey ? (VENUES[this.venueKey] || {}) : {};
     this.language = pick("language", "en");
-    this.anonymous = !!prof.anonymous;
+    this.anonymous = Boolean(has(options, "anonymous") ? options.anonymous
+      : has(this.file, "anonymous") ? this.file.anonymous
+      : prof.anonymous);
     this.disable = (prof.disable || []).concat(asConfigList(this.file.disable));
     this.enable = asConfigList(this.file.enable);
     this.severityOverrides = isPlainObject(this.file.severity) ? this.file.severity : {};
@@ -2259,6 +2404,13 @@ class Config {
       if (globMatch(id, String(pattern))) return value;
     return undefined;
   }
+  venueSeverity(id) {
+    const map = this.venue.severity || {};
+    if (map[id] !== undefined) return map[id];
+    for (const [pattern, value] of Object.entries(map))
+      if (globMatch(id, String(pattern))) return value;
+    return undefined;
+  }
   severityFor(id) {
     const rule = RULES_BY_ID[id];
     let base = rule ? rule.sev : SEV.warn;
@@ -2266,8 +2418,8 @@ class Config {
     // of either, so a rule the project made an error blocks nothing in a draft.
     const own = this.ownSeverity(id);
     if (own !== undefined) base = parseSev(own, base);
-    const vsev = (this.venue.severity || {})[id];
-    if (own === undefined && vsev) base = parseSev(vsev, base);
+    const vsev = this.venueSeverity(id);
+    if (own === undefined && vsev !== undefined) base = parseSev(vsev, base);
     const stage = STAGES[this.stage] || STAGES.submission;
     if (stage.promote.some(p => globMatch(id, p)) && base >= SEV.warn) return SEV.error;
     if (stage.demote.some(p => globMatch(id, p)) && base >= SEV.warn) return SEV.info;
@@ -2298,7 +2450,7 @@ const UNREFERENCED_LABEL_EXEMPT = new Set(["fig","figure","tab","table",
   "sec","subsec","subsubsec","section","chap","chapter","part","app","appendix"]);
 
 const REF_CMDS = ["ref","cref","Cref","crefrange","Crefrange","autoref","vref","pageref","nameref","labelcref","subref","eqref"];
-const CITE_CMDS = ["cite","citep","citet","citeauthor","citeyear","citealp","citealt","citenum","parencite",
+const CITE_CMDS = ["cite","citep","citet","citeauthor","citeyear","citeyearpar","citealp","citealt","citenum","parencite",
                    "textcite","autocite","footcite","nocite","citeA","shortcite","fullcite"];
 
 /* ---- helpers shared by several rules ---- */
@@ -2327,9 +2479,15 @@ function referencedLabels(p) {
   return out;
 }
 function closest(key, candidates, cutoff = 0.82) {
+  const kl = key.toLowerCase();
+  if (!kl.length) return null;
   let best = null, bestScore = 0;
   for (const c of candidates) {
-    const s = ratio(key.toLowerCase(), String(c).toLowerCase());
+    const cl = String(c).toLowerCase();
+    if (!cl.length) continue;
+    const minScore = Math.max(cutoff, bestScore);
+    if ((2 * Math.min(kl.length, cl.length)) / (kl.length + cl.length) < minScore) continue;
+    const s = ratio(kl, cl);
     if (s > bestScore) { bestScore = s; best = c; }
   }
   return bestScore >= cutoff ? best : null;
@@ -2686,7 +2844,7 @@ const PREFIXED_REF = new RegExp(
    so without hyperref the advice would break the build. */
 const autorefApplies = (ctx, word) =>
   (ctx.project.packages().has("hyperref") || ctx.project.documentclass().cls.toLowerCase() === "acmart")
-  && (AUTOREF_EXACT_PLAIN.has(word) || !!(ctx.options && ctx.options.autorefSections));
+  && (AUTOREF_EXACT_PLAIN.has(word) || !!ctx.config.option("REF008", "sections", false));
 
 /* Capitalised words that are not surnames, so not a case for \citet. */
 const NOT_A_NAME = new Set(["figure","fig","table","section","sec","chapter","equation","eq",
@@ -2871,24 +3029,33 @@ rule({ id:"ABB001", title:"Abbreviation introduced more than once", cat:"languag
                                `${o.expansion} (${o.asWritten}) -> ${o.asWritten}`) });
     }}});
 
+function abbUses(ctx) {
+  if (ctx.cache.abbUses) return ctx.cache.abbUses;
+  const uses = new Map();
+  ABB_USE.lastIndex = 0;
+  let m;
+  while ((m = ABB_USE.exec(ctx.project.prose)) !== null) {
+    const k = m[1].toUpperCase();
+    if (!uses.has(k)) uses.set(k, []);
+    uses.get(k).push(m.index);
+  }
+  ctx.cache.abbUses = uses;
+  return uses;
+}
+
 rule({ id:"ABB002", title:"Abbreviation used before it is introduced", cat:"language", sev:SEV.warn,
   why:"A reader meeting 'ADS' before its expansion has to guess or search.",
   fix:"Move the definition to the first use, or expand it there.",
   run(ctx){ if (abbManaged(ctx)) return;
     const defs = abbDefinitions(ctx);
     if (!defs.size) return;
-    const prose = ctx.project.prose;
+    const uses = abbUses(ctx);
     for (const [acronym, occ] of defs) {
       if (ABB_COMMON.has(acronym)) continue;
       const defineAt = Math.min(...occ.map(o => o.start));
-      ABB_USE.lastIndex = 0;
-      let m, firstUse = null;
-      while ((m = ABB_USE.exec(prose)) !== null) {
-        if (m[1].toUpperCase() !== acronym) continue;
-        if (m.index >= defineAt) break;
-        firstUse = m.index; break;
-      }
-      if (firstUse === null) continue;
+      const positions = uses.get(acronym);
+      if (!positions || positions[0] >= defineAt) continue;
+      const firstUse = positions[0];
       const at = ctx.project.locate(defineAt);
       ctx.add("ABB002", `\`${acronym}\` is used here but only introduced later, at ${at.file}:${at.line}`,
         { at: firstUse, context: ctx.project.excerpt(firstUse) });
@@ -2898,14 +3065,14 @@ rule({ id:"ABB003", title:"Abbreviation introduced but never used", cat:"languag
   why:"Introducing an abbreviation you then never use costs the reader effort for nothing.",
   fix:"Drop the parenthesised abbreviation and keep writing the term in full.",
   run(ctx){ if (abbManaged(ctx)) return;
-    const uses = new Map();
-    ABB_USE.lastIndex = 0;
-    let m; while ((m = ABB_USE.exec(ctx.project.prose)) !== null) {
-      const k = m[1].toUpperCase(); uses.set(k, (uses.get(k) || 0) + 1);
-    }
-    for (const [acronym, occ] of abbDefinitions(ctx)) {
-      if ((uses.get(acronym) || 0) >= 2) continue;
-      ctx.add("ABB003", `\`${acronym}\` is introduced but then used ${Math.max(0, (uses.get(acronym) || 1) - 1)} time(s)`,
+    const defs = abbDefinitions(ctx);
+    if (!defs.size) return;
+    const uses = abbUses(ctx);
+    const minUses = Number(ctx.config.option("ABB003", "min_uses", 2)) || 2;
+    for (const [acronym, occ] of defs) {
+      const count = (uses.get(acronym) || []).length;
+      if (count >= minUses) continue;
+      ctx.add("ABB003", `\`${acronym}\` is introduced but then used ${Math.max(0, (count || 1) - 1)} time(s)`,
         { at: occ[0].at, context: `${occ[0].expansion} (${acronym})` });
     }}});
 
@@ -2913,15 +3080,12 @@ rule({ id:"ABB004", title:"Abbreviation used without ever being introduced", cat
   why:"Field-specific abbreviations that were never expanded are the commonest reason an outside examiner stumbles.",
   fix:"Expand it at first use, or add it to the ignore list.",
   run(ctx){ if (abbManaged(ctx)) return;
-    const defs = abbDefinitions(ctx), reported = new Set();
+    const defs = abbDefinitions(ctx);
     const ignore = new Set([...ABB_COMMON, ...(ctx.ignoreAcronyms || [])]);
-    ABB_USE.lastIndex = 0;
-    let m; while ((m = ABB_USE.exec(ctx.project.prose)) !== null) {
-      const token = m[1].toUpperCase();
-      if (defs.has(token) || ignore.has(token) || reported.has(token) || NOT_ACRONYM.test(token)) continue;
-      reported.add(token);
+    for (const [token, positions] of abbUses(ctx)) {
+      if (defs.has(token) || ignore.has(token) || NOT_ACRONYM.test(token)) continue;
       ctx.add("ABB004", `\`${token}\` is used but never introduced`,
-        { at: m.index, context: ctx.project.excerpt(m.index),
+        { at: positions[0], context: ctx.project.excerpt(positions[0]),
           fix: `Write it out at first use: Full Term (${token}).` });
     }}});
 
@@ -2944,8 +3108,49 @@ rule({ id:"ABB005", title:"Same abbreviation, different expansions", cat:"langua
 /* ---- STY: source-level writing mechanics ---- */
 const US_UK = [["behavior","behaviour"],["color","colour"],["modeling","modelling"],["analyze","analyse"],
   ["organization","organisation"],["visualization","visualisation"],["center","centre"],["labeled","labelled"],
-  ["recognize","recognise"],["customization","customisation"],["defense","defence"],["fulfill","fulfil"],
-  ["judgment","judgement"],["license","licence"]];
+  ["traveled","travelled"],["recognize","recognise"],["customization","customisation"],["defense","defence"],
+  ["fulfill","fulfil"],["judgment","judgement"],["license","licence"]];
+
+function buildUsUkMatcher() {
+  const byStem = new Map();
+  const stemPat = w => {
+    if (w === "fulfill") return "fulfill(?:s|ments?)?(?![\\w])";
+    if (w === "fulfil") return "fulfil(?:s|ments?)?(?![\\w])";
+    return escapeRe(w) + "\\w*";
+  };
+  for (const [us, uk] of US_UK) {
+    byStem.set(us, ["us", uk]);
+    byStem.set(uk, ["uk", us]);
+  }
+  const branches = [];
+  for (const [us, uk] of US_UK) {
+    if (us === "fulfill") {
+      branches.push(stemPat(us), stemPat(uk));
+      continue;
+    }
+    let k = 0;
+    while (k < us.length && k < uk.length && us[k] === uk[k]) k++;
+    if (k >= 3) {
+      branches.push(`${escapeRe(us.slice(0, k))}(?:${escapeRe(us.slice(k))}|${escapeRe(uk.slice(k))})\\w*`);
+    } else {
+      branches.push(stemPat(us), stemPat(uk));
+    }
+  }
+  return { re: new RegExp("(?<![\\w])(?:" + branches.join("|") + ")", "gi"), byStem };
+}
+const US_UK_MATCHER = buildUsUkMatcher();
+const STY_QUOTE_RE = /(?<![\\=])"/g;
+const STY_SPACE_PUNCT_RE = /(?<=[\w)\}])[ \t]+([,.;:!?])(?=[ \t]|$)/g;
+const STY_CITE_GLUE_RE = /[A-Za-z0-9)]\\(cite|citep|citet|autocite|parencite)\b/g;
+const STY_RANGE_RE = /(?<![\d\-:.,])(\d{1,4})\s?-\s?(\d{1,4})(?![\d\-:])/g;
+const STY_CONTRACTION_RE = /(?<![\w])((?:do(?:es)?|did|ca|wo|is|are|was|were|has|have|could|should|would)n't|(?:it|there|that|let)'s|(?:we|they)'re|we've)(?![\w])/gi;
+const STY_FIG_LONG_RE = /(?<![\w])Figures?(?![\w])/g;
+const STY_FIG_SHORT_RE = /(?<![\w])Figs?\./g;
+const STY_COMMA_RE = /(?<![\w])(e\.g\.|i\.e\.|cf\.|et al\.)(?![,)\\])\s/g;
+const STY_SENTENCE_RE = /[^.!?]+(?:[.!?]|$)/g;
+const STY_MID_SENTENCE_END_RE = /[.!?:;}\]%\\,-]$|\\[)\]]$/;
+const STY_MID_SENTENCE_CMD_RE = /\\(item|end|begin|section|subsection|subsubsection|chapter|paragraph|caption|label)/;
+const STY_PERCENT_RE = /\d\s*%(?!\s*mechcheck)/;
 /* German articles repeat by grammar: "Die Personen, die die Aufgabe gelöst haben". */
 const DOUBLE_OK = new Set(["had","that","long","sehr","die","das","der","den","dem"]);
 
@@ -3032,7 +3237,7 @@ rule({ id:"STY002", title:"Forced line break in running text", cat:"style", sev:
     for (const env of ["tabular","tabular*","tabularx","longtable","tabu","array","matrix","pmatrix","bmatrix",
       "align","align*","gather","gather*","eqnarray","eqnarray*","cases","split","multline","multline*",
       "flalign","flalign*","IEEEeqnarray","tikzpicture","verse","titlepage","center","flushleft","flushright",
-      "minipage","algorithmic","lstlisting","abstract"])
+      "minipage","algorithmic","lstlisting","abstract","addmargin"])
       for (const e of p.environments(env)) protectedSpans.push([e.start, e.end]);
     for (const name of ["author","title","affiliation","address","date","thanks","makecell","shortstack",
       "parbox","caption","institute","email"])
@@ -3067,9 +3272,9 @@ rule({ id:"STY004", title:"Straight double quotes", cat:"style", sev:SEV.info,
   fix:"Write ``like this'' (two backticks, two apostrophes), or use the csquotes package.",
   run(ctx){ if (ctx.project.packages().has("csquotes")) return;
     for (const line of ctx.project.lines) {
-      if (line.verbatim) continue;
-      const re = /(?<![\\=])"/g; let m;
-      while ((m = re.exec(line.code)) !== null)
+      if (line.verbatim || !line.code.includes('"')) continue;
+      STY_QUOTE_RE.lastIndex = 0; let m;
+      while ((m = STY_QUOTE_RE.exec(line.code)) !== null)
         ctx.add("STY004", "straight quote; LaTeX renders this as two closing marks",
           { file: line.file, line: line.lineno, col: m.index + 1, context: line.raw.trim().slice(0, 96) });
     }}});
@@ -3079,8 +3284,8 @@ rule({ id:"STY005", title:"Space before punctuation", cat:"style", sev:SEV.warn,
   fix:"Delete the space.",
   run(ctx){ for (const line of ctx.project.lines) {
     if (line.verbatim) continue;
-    const re = /(?<=[\w)\}])[ \t]+([,.;:!?])(?=[ \t]|$)/g; let m;
-    while ((m = re.exec(line.code)) !== null)
+    STY_SPACE_PUNCT_RE.lastIndex = 0; let m;
+    while ((m = STY_SPACE_PUNCT_RE.exec(line.code)) !== null)
       ctx.add("STY005", `space before '${m[1]}'`,
         { file: line.file, line: line.lineno, col: m.index + 1,
           context: line.raw.trim().slice(0, 96),
@@ -3091,8 +3296,8 @@ rule({ id:"STY005", title:"Space before punctuation", cat:"style", sev:SEV.warn,
 rule({ id:"STY006", title:"Citation glued to the preceding word", cat:"style", sev:SEV.info,
   why:"'shown in[12]' prints without a space; a tie keeps the citation attached but readable.",
   fix:"Write word~\\cite{key}.",
-  run(ctx){ const re = /[A-Za-z0-9)]\\(cite|citep|citet|autocite|parencite)\b/g;
-    let m; while ((m = re.exec(ctx.project.text)) !== null)
+  run(ctx){ STY_CITE_GLUE_RE.lastIndex = 0;
+    let m; while ((m = STY_CITE_GLUE_RE.exec(ctx.project.text)) !== null)
       ctx.add("STY006", "no space or tie before the citation", { at: m.index, context: ctx.project.excerpt(m.index) });
   }});
 
@@ -3100,8 +3305,8 @@ rule({ id:"STY007", title:"Hyphen used for a numeric range", cat:"style", sev:SE
   why:"A range takes an en dash in LaTeX; a single hyphen prints too short.",
   fix:"Write 10--20.",
   // Not inside a time or a decimal: "10:00-12:00" became "10:0--12:00".
-  run(ctx){ const re = /(?<![\d\-:.,])(\d{1,4})\s?-\s?(\d{1,4})(?![\d\-:])/g;
-    let m; while ((m = re.exec(ctx.project.prose)) !== null) {
+  run(ctx){ STY_RANGE_RE.lastIndex = 0;
+    let m; while ((m = STY_RANGE_RE.exec(ctx.project.prose)) !== null) {
       const a = +m[1], b = +m[2];
       if (b <= a) continue;
       // "Core 7-1355" is a product number. Real ranges have endpoints of
@@ -3117,10 +3322,18 @@ rule({ id:"STY007", title:"Hyphen used for a numeric range", cat:"style", sev:SE
 rule({ id:"STY008", title:"Mixed British and American spelling", cat:"style", sev:SEV.warn,
   why:"Reviewers read inconsistent spelling as carelessness; it is also the commonest artefact of text assembled from several sources.",
   fix:"Pick one variety and apply it throughout.",
-  run(ctx){ const prose = ctx.project.prose.toLowerCase(), us = [], uk = [];
-    for (const [a, b] of US_UK) {
-      for (const m of prose.matchAll(new RegExp(`(?<![\\w])${a}\\w*`, "g"))) us.push([m.index, m[0], b]);
-      for (const m of prose.matchAll(new RegExp(`(?<![\\w])${b}\\w*`, "g"))) uk.push([m.index, m[0], a]);
+  run(ctx){ const us = [], uk = [];
+    const { re, byStem } = US_UK_MATCHER;
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(ctx.project.prose)) !== null) {
+      const word = m[0].toLowerCase();
+      for (const [stem, [side, alt]] of byStem) {
+        if (word.startsWith(stem)) {
+          (side === "us" ? us : uk).push([m.index, word, alt]);
+          break;
+        }
+      }
     }
     if (!us.length || !uk.length) return;
     const minority = us.length <= uk.length ? us : uk;
@@ -3133,8 +3346,8 @@ rule({ id:"STY008", title:"Mixed British and American spelling", cat:"style", se
 rule({ id:"STY009", title:"Contraction in formal writing", cat:"style", sev:SEV.info,
   why:"Contractions are out of register for a thesis or an ACM paper.",
   fix:"Write the words out: don't becomes do not.",
-  run(ctx){ const re = /(?<![\w])(don't|doesn't|didn't|can't|won't|isn't|aren't|wasn't|weren't|hasn't|haven't|it's|we've|we're|they're|there's|that's|let's|couldn't|shouldn't|wouldn't)(?![\w])/gi;
-    let m; while ((m = re.exec(ctx.project.prose)) !== null)
+  run(ctx){ STY_CONTRACTION_RE.lastIndex = 0;
+    let m; while ((m = STY_CONTRACTION_RE.exec(ctx.project.prose)) !== null)
       ctx.add("STY009", `contraction '${m[1]}'`, { at: m.index, context: ctx.project.excerpt(m.index) });
   }});
 
@@ -3142,8 +3355,8 @@ rule({ id:"STY010", title:"Inconsistent Figure/Fig. abbreviation", cat:"style", 
   why:"'Figure 1' in one paragraph and 'Fig. 1' in the next is the sort of inconsistency that makes a careful reader distrust the numbers too.",
   fix:"Use one form; ACM style spells out 'Figure'.",
   run(ctx){ const prose = ctx.project.prose;
-    const long = [...prose.matchAll(/(?<![\w])Figures?(?![\w])/g)].map(m => m.index);
-    const short = [...prose.matchAll(/(?<![\w])Figs?\./g)].map(m => m.index);
+    const long = [...prose.matchAll(STY_FIG_LONG_RE)].map(m => m.index);
+    const short = [...prose.matchAll(STY_FIG_SHORT_RE)].map(m => m.index);
     if (!long.length || !short.length) return;
     const minority = short.length <= long.length ? short : long;
     const preferred = minority === short ? "Figure" : "Fig.";
@@ -3155,8 +3368,8 @@ rule({ id:"STY010", title:"Inconsistent Figure/Fig. abbreviation", cat:"style", 
 rule({ id:"STY011", title:"Abbreviation not followed by a comma", cat:"style", sev:SEV.info,
   why:"'e.g. the' without a comma reads as a sentence break to LaTeX's spacing rules and prints a wide space.",
   fix:"Write 'e.g.,' and 'i.e.,'.",
-  run(ctx){ const re = /(?<![\w])(e\.g\.|i\.e\.|cf\.|et al\.)(?![,)\\])\s/g;
-    let m; while ((m = re.exec(ctx.project.prose)) !== null)
+  run(ctx){ STY_COMMA_RE.lastIndex = 0;
+    let m; while ((m = STY_COMMA_RE.exec(ctx.project.prose)) !== null)
       ctx.add("STY011", `'${m[1]}' is not followed by a comma`, { at: m.index, context: ctx.project.excerpt(m.index) });
   }});
 
@@ -3166,8 +3379,8 @@ rule({ id:"STY012", title:"Very long sentence", cat:"style", sev:SEV.info,
   run(ctx){ const limit = ctx.config.option("STY012", "max_words", 45);
     // One pass, sentence by sentence. /[^.!?]{40,}[.!?]/ was retried from every
     // position of a long tail with no full stop: 36 s for an appendix table.
-    const re = /[^.!?]+(?:[.!?]|$)/g; let m;
-    while ((m = re.exec(ctx.project.prose)) !== null) {
+    STY_SENTENCE_RE.lastIndex = 0; let m;
+    while ((m = STY_SENTENCE_RE.exec(ctx.project.prose)) !== null) {
       if (m[0].length <= 40 || !/[.!?]$/.test(m[0])) continue;
       const words = m[0].trim().split(/\s+/).filter(Boolean);
       if (words.length <= limit) continue;
@@ -3183,8 +3396,8 @@ rule({ id:"STY013", title:"Paragraph break inside a sentence", cat:"style", sev:
       const line = lines[i], nxt = lines[i + 1];
       const code = line.code.trimEnd();
       if (!code || line.verbatim || nxt.file !== line.file || nxt.code.trim()) continue;
-      if (/[.!?:;}\]%\\,-]$/.test(code)) continue;
-      if (/\\(item|end|begin|section|subsection|subsubsection|chapter|paragraph|caption|label)/.test(code)) continue;
+      if (STY_MID_SENTENCE_END_RE.test(code)) continue;
+      if (STY_MID_SENTENCE_CMD_RE.test(code)) continue;
       if (code.length < 25 || !/[a-z]\s*$/.test(code)) continue;
       ctx.add("STY013", "paragraph ends mid-sentence (blank line follows)",
         { file: line.file, line: line.lineno, context: code.slice(-70) });
@@ -3194,8 +3407,8 @@ rule({ id:"STY014", title:"Unescaped percent sign", cat:"style", sev:SEV.info,
   why:"A literal % comments out the rest of the line; the loss is silent and often only noticed in print.",
   fix:"Write \\% for a percentage.",
   run(ctx){ for (const line of ctx.project.lines) {
-    if (line.verbatim) continue;
-    const m = /\d\s*%/.exec(line.raw);
+    if (line.verbatim || !line.raw.includes("%")) continue;
+    const m = STY_PERCENT_RE.exec(line.raw);
     if (!m || line.code.trimEnd().length > m.index) continue;
     ctx.add("STY014", "a number followed by an unescaped % — the rest of the line is a comment",
       { file: line.file, line: line.lineno, col: m.index + 1, context: line.raw.trim().slice(0, 96) });
@@ -3210,7 +3423,8 @@ const BIB_REQUIRED = {
 };
 const PROPER_NOUNS = ["Android","iOS","Bayesian","German","English","European","American","Likert","Tesla",
   "Google","Apple","Microsoft","Amazon","Facebook","Twitter","YouTube","Python","Java","LaTeX","Overleaf",
-  "COVID","GDPR","Internet","Web","Bluetooth","WiFi","Wi-Fi"];
+  "COVID","GDPR","Internet","Web","Bluetooth","WiFi","Wi-Fi","Wizard of Oz","AI"];
+const PROPER_NOUN_RES = PROPER_NOUNS.map(w => [w, new RegExp(`(?<![\\w{])${escapeRe(w)}(?![\\w}])`, "g")]);
 
 rule({ id:"BIB001", title:"No bibliography file found", cat:"bib", sev:SEV.warn,
   why:"Without a .bib the citation checks cannot run at all, so a missing file silently disables half the tool.",
@@ -3249,18 +3463,20 @@ rule({ id:"BIB003", title:"Duplicate bibliography entry", cat:"bib", sev:SEV.war
       const sig = group.map(e => e.key).sort().join("|");
       if (reported.has(sig)) continue;
       reported.add(sig);
-      for (const e of group.slice(1))
-        ctx.add("BIB003", `\`${e.key}\` duplicates \`${group[0].key}\` (line ${group[0].line})`,
+      for (const e of group.slice(1)) {
+        const where = group[0].file && group[0].file !== e.file ? `${group[0].file}:` : "";
+        ctx.add("BIB003", `\`${e.key}\` duplicates \`${group[0].key}\` (${where}line ${group[0].line})`,
           { file: e.file, line: e.line, context: e.title.slice(0, 70) });
-    }}});
+      }}}});
 
 rule({ id:"BIB004", title:"Preprint cited where a published version may exist", cat:"bib", sev:SEV.info,
   why:"Citing the arXiv version of a paper that appeared at CHI three years ago reads as not having followed the literature.",
   fix:"Check for the published version and cite that.",
-  run(ctx){ const now = new Date().getFullYear();
+  run(ctx){ const threshold = Number(ctx.config.option("BIB004", "grace_years", 2)) || 2;
+    const now = Number(ctx.config.option("BIB004", "current_year", 0)) || new Date().getFullYear();
     for (const e of ctx.bib) {
       if (!e.isPreprint()) continue;
-      if (e.year && (now - e.year) < 2) continue;
+      if (now && e.year && (now - e.year) < threshold) continue;
       ctx.add("BIB004", `\`${e.key}\` cites a preprint (${e.year || "no year"})`,
         { file: e.file, line: e.line, context: e.title.slice(0, 70) });
     }}});
@@ -3271,25 +3487,29 @@ rule({ id:"BIB005", title:"Unprotected proper noun in a title", cat:"bib", sev:S
   run(ctx){ for (const e of ctx.bib) {
     const raw = e.get("title");
     if (!raw) continue;
-    for (const word of PROPER_NOUNS) {
-      const re = new RegExp(`(?<![\\w{])${escapeRe(word)}(?![\\w}])`, "g");
-      const m = re.exec(raw);
-      if (!m) continue;
-      const before = raw.slice(0, m.index);
-      if ((before.split("{").length - 1) > (before.split("}").length - 1)) continue;
-      ctx.add("BIB005", `\`${e.key}\`: '${word}' in the title is not brace-protected`,
-        { file: e.file, line: e.lineOf("title"), context: raw.slice(0, 70), fix: `Write {${word}}.` });
-      break;
+    for (const [word, re] of PROPER_NOUN_RES) {
+      re.lastIndex = 0;
+      let m, hit = false;
+      while ((m = re.exec(raw)) !== null) {
+        const before = raw.slice(0, m.index);
+        if ((before.split("{").length - 1) > (before.split("}").length - 1)) continue;
+        ctx.add("BIB005", `\`${e.key}\`: '${word}' in the title is not brace-protected`,
+          { file: e.file, line: e.lineOf("title"), context: raw.slice(0, 70), fix: `Write {${word}}.` });
+        hit = true;
+        break;
+      }
+      if (hit) break;
     }}}});
 
 rule({ id:"BIB006", title:"'et al.' inside an author field", cat:"bib", sev:SEV.error,
   why:"BibTeX reads 'et al.' as a person's name and prints it as an author; the abbreviation is the style's job, not yours.",
   fix:"List every author, separated by ' and '.",
   run(ctx){ for (const e of ctx.bib) {
-    const raw = e.get("author") || e.get("editor");
+    const field = e.get("author") ? "author" : "editor";
+    const raw = e.get(field);
     if (!raw || !/\bet\.?\s*al\.?/i.test(raw)) continue;
     ctx.add("BIB006", `\`${e.key}\` has 'et al.' in the author field`,
-      { file: e.file, line: e.lineOf("author"), context: raw.slice(0, 70) });
+      { file: e.file, line: e.lineOf(field), context: raw.slice(0, 70) });
   }}});
 
 rule({ id:"BIB007", title:"Authors separated by commas instead of 'and'", cat:"bib", sev:SEV.error,
@@ -3355,11 +3575,11 @@ rule({ id:"BIB011", title:"Inconsistent venue name for the same conference", cat
 rule({ id:"BIB012", title:"Bibliography entry with a suspicious year", cat:"bib", sev:SEV.warn,
   why:"A year in the future or before 1900 is a typo, and typos in years are how a citation becomes unfindable.",
   fix:"Correct the year.",
-  run(ctx){ const now = new Date().getFullYear();
+  run(ctx){ const now = Number(ctx.config.option("BIB012", "current_year", 0)) || new Date().getFullYear();
     for (const e of ctx.bib) {
       const y = e.year;
       if (y === null) continue;
-      if (y < 1900 || y > now + 1)
+      if (y < 1900 || (now && y > now + 1))
         ctx.add("BIB012", `\`${e.key}\` has year = ${y}`, { file: e.file, line: e.lineOf("year"), context: e.title.slice(0, 70) });
     }}});
 
@@ -3392,6 +3612,7 @@ rule({ id:"BIO001", title:"DOI does not resolve", cat:"bib-online", sev:SEV.erro
     const work = await ctx.crossrefByDoi(e.doi);
     if (work) continue;
     if (await ctx.openAlexByDoi(e.doi)) continue;
+    if (!ctx.doiAbsent(e.doi)) continue;
     ctx.add("BIO001", `\`${e.key}\`: DOI ${e.doi} does not resolve`,
       { file: e.file, line: e.lineOf("doi"), context: e.title.slice(0, 70),
         fix: `Check https://doi.org/${e.doi} — if it fails, replace the DOI.` });
@@ -3444,7 +3665,9 @@ rule({ id:"BIO004", title:"Authors disagree with the record", cat:"bib-online", 
 rule({ id:"BIO005", title:"No record of this work anywhere", cat:"bib-online", sev:SEV.warn, online:true,
   why:"An entry with no DOI that Crossref, OpenAlex and DBLP have all never heard of may not exist. This is how a fabricated reference looks.",
   fix:"Verify the reference by hand. If it is real but simply unindexed, add the URL.",
-  async run(ctx){ const skip = new Set(["online","www","misc","unpublished","techreport","mastersthesis","phdthesis","manual","booklet"]);
+  async run(ctx){
+    const defaultSkip = ["online","www","misc","unpublished","techreport","mastersthesis","phdthesis","manual","booklet"];
+    const skip = new Set(asList(ctx.config.option("BIO005", "skip_types", defaultSkip)).map(t => String(t).toLowerCase()));
     for (const e of ctx.bib) {
       if (e.doi || skip.has(e.type)) continue;
       const title = e.title;
@@ -3459,8 +3682,14 @@ rule({ id:"BIO005", title:"No record of this work anywhere", cat:"bib-online", s
         const s = similarity(title, item.title || "");
         if (s > best) { best = s; bestTitle = item.title || ""; }
       }
+      if (best < SOFT_MISMATCH) for (const item of await ctx.openAlexSearch(title)) {
+        const candidate = item.display_name || item.title || "";
+        const s = similarity(title, candidate);
+        if (s > best) { best = s; bestTitle = candidate; }
+      }
       if (best >= SOFT_MISMATCH) continue;
-      ctx.add("BIO005", `\`${e.key}\` could not be found in Crossref or DBLP.` +
+      if (!ctx.searchAnswered(title, author)) continue;
+      ctx.add("BIO005", `\`${e.key}\` could not be found in Crossref, DBLP or OpenAlex.` +
         (bestTitle ? ` Closest match: "${bestTitle.slice(0, 70)}" (${best.toFixed(2)}).` : ""),
         { file: e.file, line: e.line, context: title.slice(0, 70) });
     }}});
@@ -3491,7 +3720,7 @@ rule({ id:"BIO007", title:"Preprint now has a published version", cat:"bib-onlin
     if (!e.isPreprint() || !e.title) continue;
     for (const item of await ctx.crossrefSearch(e.title, e.authorSurnames()[0] || "")) {
       if (["posted-content","preprint"].includes(String(item.type || "").toLowerCase())) continue;
-      if (similarity(e.title, workTitle(item)) < 0.9) continue;
+      if (similarity(e.title, workTitle(item), 0.9) < 0.9) continue;
       const container = (item["container-title"] || [""])[0] || "";
       ctx.add("BIO007", `\`${e.key}\` is cited as a preprint but appears published${container ? " in " + container.slice(0, 50) : ""}`,
         { file: e.file, line: e.line, context: e.title.slice(0, 70), fix: `Cite the published version (DOI ${item.DOI}).` });
@@ -3559,7 +3788,7 @@ rule({ id:"STR003", title:"Section with exactly one subsection", cat:"structure"
 rule({ id:"STR004", title:"Empty section", cat:"structure", sev:SEV.warn,
   why:"A heading immediately followed by another heading is a placeholder that was never filled in.",
   fix:"Write the section, or delete the heading.",
-  run(ctx){ const items = headings(ctx), minimum = 5;
+  run(ctx){ const items = headings(ctx), minimum = Number(ctx.config.option("STR004", "min_words", 5)) || 5;
     for (let i = 0; i < items.length; i++) {
       // A section opening straight onto a subsection is ordinary writing, not a
       // placeholder. Only an entirely empty subtree is one.
@@ -3648,11 +3877,12 @@ rule({ id:"STR008", title:"No abstract", cat:"structure", sev:SEV.warn,
     ctx.add("STR008", "no abstract environment found", { file: ctx.project.main });
   }});
 
+const VAGUE_REF_RE = /\b(?:as (?:described|discussed|shown|explained) (?:above|below|earlier|previously)|in the (?:previous|next|following|preceding) (?:section|chapter|subsection))\b/gi;
 rule({ id:"STR009", title:"Vague internal reference", cat:"structure", sev:SEV.info,
   why:"'as described above' and 'in the previous chapter' break when sections move; a real cross-reference does not.",
   fix:"Replace with \\Cref{sec:...}.",
-  run(ctx){ const re = /\b(?:as (?:described|discussed|shown|explained) (?:above|below|earlier|previously)|in the (?:previous|next|following|preceding) (?:section|chapter|subsection))\b/gi;
-    let m; while ((m = re.exec(ctx.project.prose)) !== null)
+  run(ctx){ VAGUE_REF_RE.lastIndex = 0;
+    let m; while ((m = VAGUE_REF_RE.exec(ctx.project.prose)) !== null)
       ctx.add("STR009", `vague internal reference: '${m[0]}'`, { at: m.index, context: ctx.project.excerpt(m.index) });
   }});
 
@@ -3782,15 +4012,18 @@ rule({ id:"ACC002", title:"\\Description is a placeholder", cat:"accessibility",
 rule({ id:"ACC003", title:"\\Description repeats the caption", cat:"accessibility", sev:SEV.warn,
   why:"A screen-reader user hears the caption already; repeating it verbatim adds nothing they did not have.",
   fix:"Describe what is visually in the figure, which the caption does not say.",
-  run(ctx){ for (const env of ctx.project.floats()) {
-    const body = env.body();
-    const caps = parseCommands(body, "caption", 1), descs = parseCommands(body, "Description", 1);
-    if (!caps.length || !descs.length) continue;
-    const score = similarity(caps[0].arg(0), descs[0].arg(0));
-    if (score < 0.9) continue;
-    ctx.add("ACC003", `\\Description is essentially the caption again (${score.toFixed(2)} similar)`,
-      { at: env.bodyStart + descs[0].start, context: descs[0].arg(0).slice(0, 70) });
-  }}});
+  run(ctx){
+    const envs = [...new Map([...ctx.project.floats(), ...figuresOf(ctx.project)].map(e => [e.start, e])).values()]
+      .sort((a, b) => a.start - b.start);
+    for (const env of envs) {
+      const body = env.body();
+      const caps = parseCommands(body, "caption", 1), descs = parseCommands(body, "Description", 1);
+      if (!caps.length || !descs.length) continue;
+      const score = similarity(caps[0].arg(0), descs[0].arg(0), 0.9);
+      if (score < 0.9) continue;
+      ctx.add("ACC003", `\\Description is essentially the caption again (${score.toFixed(2)} similar)`,
+        { at: env.bodyStart + descs[0].start, context: descs[0].arg(0).slice(0, 70) });
+    }}});
 
 rule({ id:"ACC004", title:"Meaning carried by colour alone", cat:"accessibility", sev:SEV.warn,
   why:"'the red line' is unreadable to a colour-blind reader and to anyone printing in greyscale — about 8% of male readers.",
@@ -3998,16 +4231,20 @@ rule({ id:"ANON007", title:"Anonymous option left in a camera-ready document", c
   }});
 
 /* ---- POL: required statements and reporting conventions ---- */
-const ETHICS = /\b(ethic(?:s|al)\s+(?:approval|committee|board|review|clearance)|IRB|institutional review board|informed consent|Ethikkommission)\b/i;
+const ETHICS = /\b(ethic(?:s|al)\s+(?:approval|committee|board|review|clearance)|ethics vote|IRB|institutional review board|informed consent|Ethikkommission)\b/i;
 const AI_DISCLOSURE = /\b(generative\s+AI|large language model|LLM|ChatGPT|GPT-[0-9]|Claude|Copilot|AI[- ]assisted|AI writing|künstliche Intelligenz)\b/i;
 const DATA_AVAILABILITY = /\b(data\s+(?:and\s+materials\s+)?(?:are|is)?\s*available|availability statement|open science|supplementary material|we (?:share|provide|release) (?:our|the) (?:data|code|materials)|osf\.io|zenodo|preregist(?:ered|ration))\b/i;
 const BARE_P = /\bp\s*[<>]\s*\.?0*5\b|\bp\s*[<>]\s*0?\.0?5\b/gi;
 const P_VALUE = /\bp\s*[<=>]\s*0?\.\d+/gi;
-const TEST_STAT = /\b([FtχUWHZ]|chi\^?2)\s*(\([^)]{1,30}\))?\s*=\s*-?\d/g;
-const EFFECT_SIZE = /(\\eta|η|eta)[\^_]?2|\bCohen'?s?\s*d\b|\bd\s*=\s*-?\d|\br\s*=\s*-?[01]?\.\d|\bomega\^?2|\bpartial\s+eta|\bCramer'?s?\s*V\b|\bodds ratio\b|\bOR\s*=/i;
-const DEMOGRAPHICS = /\b(aged?\b|M\s*=\s*\d|mean age|years old|Jahre alt|gender|women|men|non-?binary)\b/gi;
+const TEST_STAT = /\b([FtχUWHZ]|chi\^?2)\s*(\([^)]{1,30}\))?\s*=\s*[-−]?\d/g;
+const EFFECT_SIZE = /(\\eta|η|eta)[\^_]?2|\bCohen'?s?\s*d\b|\bd\s*=\s*[-−]?\d|\br\s*=\s*[-−]?[01]?\.\d|\bomega\^?2|\bpartial\s+eta|\bCramer'?s?\s*V\b|\bodds ratio\b|\bOR\s*=/i;
+const DEMOGRAPHICS = /\b(age[ds]?\b|M\s*=\s*\d|mean age|years old|Jahre alt|gender|women|men|non-?binary)\b/gi;
 
-function venueRequires(ctx, key) {
+function venueRequires(ctx, key, ruleId) {
+  if (ruleId) {
+    const explicit = ctx.config.option(ruleId, "required", undefined);
+    if (explicit !== undefined && explicit !== null) return !!explicit;
+  }
   return !!ctx.config.venueField("requires", key);
 }
 function venueAlreadyRequires(ctx, command) {
@@ -4021,7 +4258,7 @@ function venueAlreadyRequires(ctx, command) {
 rule({ id:"POL001", title:"No AI-use disclosure", cat:"policy", sev:SEV.warn,
   why:"ACM's authorship policy requires disclosing the use of generative AI in producing the work; most universities now require the same in a thesis.",
   fix:"Add a short statement saying which tools were used and for what — or that none were.",
-  run(ctx){ if (!venueRequires(ctx, "ai_disclosure")) return;
+  run(ctx){ if (!venueRequires(ctx, "ai_disclosure", "POL001")) return;
     if (AI_DISCLOSURE.test(ctx.project.prose)) return;
     ctx.add("POL001", "no statement about the use (or non-use) of generative AI", { file: ctx.project.main });
   }});
@@ -4036,7 +4273,7 @@ rule({ id:"POL002", title:"Study reported without an ethics statement", cat:"pol
 rule({ id:"POL003", title:"No data availability / open science statement", cat:"policy", sev:SEV.info,
   why:"Open science statements are expected across HCI now, and several venues have a dedicated field for one.",
   fix:"Say where the data, materials and analysis code are — or why they cannot be shared.",
-  run(ctx){ if (!venueRequires(ctx, "data_availability") && !hasStudy(ctx)) return;
+  run(ctx){ if (!venueRequires(ctx, "data_availability", "POL003") && !hasStudy(ctx)) return;
     if (DATA_AVAILABILITY.test(ctx.project.prose)) return;
     ctx.add("POL003", "no data availability or open science statement found", { file: ctx.project.main });
   }});
@@ -4074,9 +4311,10 @@ rule({ id:"POL007", title:"Significant result without an effect size", cat:"poli
   why:"A p value says whether an effect exists; only an effect size says whether it matters. Most HCI venues expect both.",
   fix:"Report an effect size next to the test (eta squared, Cohen's d, r).",
   run(ctx){ const prose = ctx.project.prose;
+    const win = Number(ctx.config.option("POL007", "window_chars", 320)) || 320;
     P_VALUE.lastIndex = 0;
     let m; while ((m = P_VALUE.exec(prose)) !== null) {
-      const window = prose.slice(Math.max(0, m.index - 320), m.index + m[0].length + 320);
+      const window = prose.slice(Math.max(0, m.index - win), m.index + m[0].length + win);
       if (EFFECT_SIZE.test(window)) continue;
       ctx.add("POL007", `'${m[0]}' is reported with no effect size nearby`, { at: m.index, context: ctx.project.excerpt(m.index) });
     }}});
@@ -4139,7 +4377,7 @@ const isThesis = ctx => !PAPER_CLASSES.has(ctx.project.documentclass().cls.toLow
 rule({ id:"THE001", title:"No declaration of originality", cat:"structure", sev:SEV.error,
   why:"Nearly every German examination regulation requires a signed declaration; a thesis submitted without one can be rejected on formal grounds alone.",
   fix:"Add the declaration your examination office prescribes, including the clause on permitted aids.",
-  run(ctx){ if (!isThesis(ctx)) return;
+  run(ctx){ if (!isThesis(ctx) || !ctx.config.option("THE001", "required", true)) return;
     if (DECLARATION.test(ctx.project.prose) || DECLARATION.test(ctx.project.text)) return;
     ctx.add("THE001", "no declaration of originality (Eigenständigkeitserklärung) found", { file: ctx.project.main });
   }});
@@ -4157,7 +4395,7 @@ rule({ id:"THE002", title:"Declaration does not mention permitted aids or AI", c
 rule({ id:"THE003", title:"Abstract in only one language", cat:"structure", sev:SEV.warn,
   why:"German CS programmes almost always require both a German Zusammenfassung and an English abstract.",
   fix:"Add the missing one.",
-  run(ctx){ if (!isThesis(ctx)) return;
+  run(ctx){ if (!isThesis(ctx) || !ctx.config.option("THE003", "required", true)) return;
     const text = ctx.project.text;
     const hasGerman = /\\(chapter|section)\*?\s*\{[^}]*(Zusammenfassung|Kurzfassung|Abstrakt)/i.test(text);
     const hasEnglish = ctx.project.environments("abstract").length > 0 ||
@@ -4171,7 +4409,7 @@ rule({ id:"THE004", title:"No list of figures or tables", cat:"structure", sev:S
   why:"Once a document has a dozen floats, examiners expect to be able to find them from the front matter.",
   fix:"Add \\listoffigures and \\listoftables after the table of contents.",
   run(ctx){ if (!isThesis(ctx)) return;
-    const floats = ctx.project.floats(), threshold = 8;
+    const floats = ctx.project.floats(), threshold = Number(ctx.config.option("THE004", "min_floats", 8)) || 8;
     if (floats.length < threshold) return;
     const text = ctx.project.text, missing = [];
     if (!/\\listoffigures/.test(text) && floats.filter(e => e.name.startsWith("figure")).length >= threshold) missing.push("\\listoffigures");
@@ -4191,12 +4429,13 @@ rule({ id:"THE006", title:"Chapter with no content of its own", cat:"structure",
   why:"A chapter that opens straight onto its first section gives the reader no idea what is coming.",
   fix:"Write two or three sentences under the chapter heading saying what the chapter does.",
   run(ctx){ if (!isThesis(ctx)) return;
+    const minWords = Number(ctx.config.option("THE006", "min_words", 25)) || 25;
     const chapters = ctx.project.commands("chapter", 1), sections = ctx.project.commands("section", 1);
     for (const ch of chapters) {
       const next = sections.find(s => s.start > ch.start);
       if (!next) continue;
       const n = wordsIn(ctx.project.prose.slice(ch.end, next.start));
-      if (n >= 25) continue;
+      if (n >= minWords) continue;
       ctx.add("THE006", `chapter "${ch.arg(0).slice(0, 40)}" goes straight into its first section`, { at: ch.start });
     }}});
 
@@ -4244,6 +4483,10 @@ rule({ id:"VEN002", title:"Document class options do not match the venue", cat:"
       if (present.includes(String(option).toLowerCase()))
         ctx.add("VEN002", `\\documentclass option \`${option}\` must not be used for ${stage}`,
           { ...loc, fix: `Remove \`${option}\`.` });
+    const allowed = asList(spec.one_of).map(o => String(o).toLowerCase());
+    if (allowed.length && !allowed.some(o => present.includes(o)))
+      ctx.add("VEN002", `expected one of these class options for ${stage}: ${allowed.join(", ")}`,
+        { ...loc, fix: `Add one of: ${allowed.join(", ")}.` });
   }});
 
 rule({ id:"VEN003", title:"Wrong bibliography style", cat:"policy", sev:SEV.error,
@@ -4270,12 +4513,15 @@ rule({ id:"VEN004", title:"Required command missing", cat:"policy", sev:SEV.erro
   why:"Venues and publishers require specific commands (CCS concepts, keywords, highlights); their absence stops the production pipeline.",
   fix:"Add the command the venue requires.",
   run(ctx){ for (const spec of asList(ctx.config.venue.required_commands)) {
-    const name = String((typeof spec === "string" ? spec : spec.command) || "").replace(/^\\/, "");
+    const rawName = typeof spec === "string" ? spec : (spec && (spec.command || spec.name));
+    const name = String(rawName || "").trim().replace(/^\\/, "");
     if (!name) continue;
     if (ctx.project.commands(name, 1).length || ctx.project.environments(name).length) continue;
-    const why = typeof spec === "object" && spec.why ? `: ${spec.why}` : "";
+    const why = typeof spec === "object" && spec && spec.why ? `: ${spec.why}` : "";
+    const sev = typeof spec === "object" && spec && spec.severity
+      ? parseSev(spec.severity, ctx.config.severityFor("VEN004")) : undefined;
     ctx.add("VEN004", `\\${name} is required by ${ctx.config.venue.name}${why}`,
-      { file: ctx.project.main, fix: `Add \\${name}{...}.` });
+      { file: ctx.project.main, severity: sev, fix: `Add \\${name}{...}.` });
   }}});
 
 rule({ id:"VEN005", title:"Required statement missing", cat:"policy", sev:SEV.warn,
@@ -4315,11 +4561,14 @@ rule({ id:"VEN007", title:"Package not on the venue's accepted list", cat:"polic
   fix:"Replace it, or check the current accepted-packages list.",
   run(ctx){ const forbidden = new Set(asList(ctx.config.venue.forbidden_packages).map(p => String(p).toLowerCase()));
     if (!forbidden.size) return;
+    const fixText = ctx.config.venue.forbidden_packages_fix || undefined;
     for (const name of ctx.project.packages().keys()) {
-      if (!forbidden.has(name.toLowerCase())) continue;
-      const cmds = ctx.project.commands("usepackage", 1).filter(c => c.arg(0).includes(name));
+      const low = name.toLowerCase();
+      if (!forbidden.has(low)) continue;
+      const cmds = ctx.project.commands("usepackage", 1)
+        .filter(c => c.arg(0).split(",").some(p => p.trim().toLowerCase() === low));
       ctx.add("VEN007", `package \`${name}\` is not accepted by ${ctx.config.venue.name}`,
-        cmds.length ? { at: cmds[0].start } : { file: ctx.project.main });
+        cmds.length ? { at: cmds[0].start, fix: fixText } : { file: ctx.project.main, fix: fixText });
     }}});
 
 rule({ id:"VEN008", title:"Venue pack has not been re-verified recently", cat:"policy", sev:SEV.info,
@@ -4328,8 +4577,9 @@ rule({ id:"VEN008", title:"Venue pack has not been re-verified recently", cat:"p
   run(ctx){ const pack = ctx.config.venue;
     if (!pack || !pack.name) return;
     if (!pack.verified) { ctx.add("VEN008", `venue pack \`${ctx.config.venueKey}\` has no verified date`, { file: ctx.project.main }); return; }
+    const maxMonths = Number(ctx.config.option("VEN008", "max_age_months", 9)) || 9;
     const months = (Date.now() - new Date(pack.verified).getTime()) / (1000 * 60 * 60 * 24 * 30.4);
-    if (months < 9) return;
+    if (months < maxMonths) return;
     ctx.add("VEN008", `venue pack \`${ctx.config.venueKey}\` was last verified ${pack.verified} (${months.toFixed(0)} months ago)`,
       { file: ctx.project.main, fix: `Re-read ${pack.source_url || "the current call for papers"} and update the pack.` });
   }});
@@ -4391,19 +4641,21 @@ rule({ id:"LOG005", title:"Text overflowing the margin", cat:"compile", sev:SEV.
   why:"An overfull hbox is text sticking out past the text block. A few are unavoidable; dozens mean nobody has looked at the printed page.",
   fix:"Rewrite the line, add a hyphenation hint, or resize the offending table or URL.",
   run(ctx){ if (!ctx.log) return;
+    const minPt = Number(ctx.config.option("LOG005", "min_points", 5)) || 5;
+    const maxReported = Number(ctx.config.option("LOG005", "max_reported", 15)) || 15;
     const bad = [];
     for (const m of ctx.log.matchAll(/^(Overfull|Underfull)\s+\\([hv])box\s+\((\d+(?:\.\d+)?)pt too (\w+)\)(?:.*?at lines? (\d+))?/gm)) {
       if (m[1] !== "Overfull" || m[2] !== "h") continue;
       const size = parseFloat(m[3]);
-      if (size < 5) continue;
+      if (size < minPt) continue;
       bad.push({ size, line: m[5] ? parseInt(m[5], 10) : null });
     }
     if (!bad.length) return;
     bad.sort((a, b) => b.size - a.size);
-    for (const b of bad.slice(0, 15))
+    for (const b of bad.slice(0, maxReported))
       ctx.add("LOG005", `text overflows the margin by ${b.size.toFixed(1)}pt`, { file: ctx.project.main, line: b.line });
-    if (bad.length > 15)
-      ctx.add("LOG005", `${bad.length - 15} further overfull boxes not listed`, { file: ctx.project.main, severity: SEV.info });
+    if (bad.length > maxReported)
+      ctx.add("LOG005", `${bad.length - maxReported} further overfull boxes not listed`, { file: ctx.project.main, severity: SEV.info });
   }});
 
 rule({ id:"LOG006", title:"Characters missing from the font", cat:"compile", sev:SEV.error, needsBuild:true,
@@ -4443,6 +4695,7 @@ const CLASS_WARNING = /^(?:Class|Package) ([\w@-]+) Warning: (.+?)(?: on input l
 const LOG_ALREADY_COVERED = [
   ["possible image without description", "ACC001"],
   ["images may lack descriptions", "ACC001"],
+  ["no \\description", "ACC001"],
 ];
 
 const LOG_IGNORED_SOURCES = new Set(["microtype", "rerunfilecheck", "hyperref", "caption",
@@ -4485,10 +4738,42 @@ const ABSOLUTE_PATH = /^(?:[A-Za-z]:[\\/]|\/|~[\\/]|\\\\[\w.])/;
 const isAbsolutePath = name => ABSOLUTE_PATH.test(name.trim().replace(/^"|"$/g, ""));
 
 function graphicsRoots(ctx) {
-  const roots = [""];
-  for (const c of ctx.project.commands("graphicspath", 1))
-    for (const m of c.arg(0).matchAll(/\{([^{}]+)\}/g)) roots.push(m[1].replace(/\/$/, "") + "/");
+  if (ctx.cache.graphicsRoots) return ctx.cache.graphicsRoots;
+  const mainDir = ctx.project.main.includes("/")
+    ? ctx.project.main.slice(0, ctx.project.main.lastIndexOf("/") + 1) : "";
+  const seen = new Set();
+  const roots = [];
+  const add = r => { if (!seen.has(r)) { seen.add(r); roots.push(r); } };
+  if (mainDir) add(mainDir);
+  add("");
+  for (const c of ctx.project.commands("graphicspath", 1)) {
+    for (const m of c.arg(0).matchAll(/\{([^{}]+)\}/g)) {
+      const sub = m[1].replace(/\/$/, "") + "/";
+      if (mainDir) add(normalisePath(mainDir + sub).replace(/\/?$/, "/"));
+      add(normalisePath(sub).replace(/\/?$/, "/"));
+    }
+  }
+  ctx.cache.graphicsRoots = roots;
   return roots;
+}
+
+function fileIndex(ctx) {
+  if (ctx.cache.fileIndex) return ctx.cache.fileIndex;
+  const exact = new Set(), byLower = new Map(), suffixes = new Set(), suffixByLower = new Map();
+  for (const k of ctx.allFiles.keys()) {
+    exact.add(k);
+    const kl = k.toLowerCase();
+    if (!byLower.has(kl)) byLower.set(kl, k);
+    let slash = k.indexOf("/");
+    while (slash !== -1) {
+      const sub = k.slice(slash + 1), subL = kl.slice(slash + 1);
+      suffixes.add(sub);
+      if (!suffixByLower.has(subL)) suffixByLower.set(subL, sub);
+      slash = k.indexOf("/", slash + 1);
+    }
+  }
+  ctx.cache.fileIndex = { exact, byLower, suffixes, suffixByLower };
+  return ctx.cache.fileIndex;
 }
 
 /* Where an \includegraphics argument points: {status, actual}. status is
@@ -4500,17 +4785,19 @@ function graphicsRoots(ctx) {
 function locateGraphic(ctx, name) {
   ctx.cache.graphics = ctx.cache.graphics || new Map();
   if (ctx.cache.graphics.has(name)) return ctx.cache.graphics.get(name);
-  const keys = [...ctx.allFiles.keys()];
+  const idx = fileIndex(ctx);
   const typed = normalisePath(name.trim().replace(/^"|"$/g, ""));
   let result = { status: "missing", actual: null };
   outer: for (const base of graphicsRoots(ctx)) {
     for (const ext of GRAPHICS_EXTS) {
       const wanted = normalisePath(base + typed + ext);
+      if (idx.exact.has(wanted) || idx.suffixes.has(wanted)) {
+        result = { status: "found", actual: wanted };
+        break outer;
+      }
       const lower = wanted.toLowerCase();
-      if (keys.some(k => k === wanted || k.endsWith("/" + wanted))) { result = { status: "found", actual: wanted }; break outer; }
-      const loose = keys.find(k => k.toLowerCase() === lower || k.toLowerCase().endsWith("/" + lower));
-      if (!loose) continue;
-      const actual = loose.slice(loose.length - wanted.length);
+      const actual = idx.byLower.get(lower) || idx.suffixByLower.get(lower);
+      if (!actual) continue;
       const stem = s => s.slice(0, s.length - ext.length);
       if (ext && stem(actual) === stem(wanted)) { result = { status: "found", actual }; break outer; }
       if (result.status === "missing") result = { status: "case", actual: base ? actual.slice(base.length) : actual };
@@ -4595,11 +4882,12 @@ rule({ id:"FIG013", title:"center environment inside a float", cat:"floats", sev
     ctx.add("FIG013", `\\begin{center} inside a ${env.name}`, { at, context: ctx.project.excerpt(at), fix: "Use \\centering instead." });
   }}});
 
+const FLOAT_POS_RE = /\b(?:the|this)\s+(?:following|above|below|next|preceding)\s+(?:figure|table|graph|plot|chart|diagram|screenshot|listing)s?\b|\b(?:figure|table|graph|plot|chart|diagram|screenshot|listing)s?\s+(?:above|below|on the (?:next|previous|following|preceding|opposite) page)\b/gi;
 rule({ id:"FIG014", title:"Float referred to by its position", cat:"floats", sev:SEV.warn,
   why:"Floats float: 'the figure below' is wherever LaTeX found room for it, which is frequently the next page or the previous one. Only a numbered reference stays true.",
   fix:"Name it: \\autoref{fig:x} or Figure~\\ref{fig:x}.",
-  run(ctx){ const re = /\b(?:the|this)\s+(?:following|above|below|next|preceding)\s+(?:figure|table|graph|plot|chart|diagram|screenshot|listing)s?\b|\b(?:figure|table|graph|plot|chart|diagram|screenshot|listing)s?\s+(?:above|below|on the (?:next|previous|following|preceding|opposite) page)\b/gi;
-    let m; while ((m = re.exec(ctx.project.prose)) !== null)
+  run(ctx){ FLOAT_POS_RE.lastIndex = 0;
+    let m; while ((m = FLOAT_POS_RE.exec(ctx.project.prose)) !== null)
       ctx.add("FIG014", `'${m[0]}' refers to a float by where it sits on the page`, { at: m.index, context: ctx.project.excerpt(m.index) });
   }});
 
@@ -4825,12 +5113,16 @@ rule({ id:"STR013", title:"\\input path that will not resolve on Overleaf", cat:
           continue;
         }
         const typed = normalisePath(target.trim().replace(/^"|"$/g, ""));
-        const wanted = /\.tex$/i.test(typed) ? [typed] : [typed, typed + ".tex"];
+        const base = p.main.includes("/") ? p.main.slice(0, p.main.lastIndexOf("/")) : "";
+        let wanted = /\.tex$/i.test(typed) ? [typed] : [typed, typed + ".tex"];
+        if (base) wanted = [...wanted.map(w => normalisePath(base + "/" + w)), ...wanted];
         const resolved = p._resolve(target);
         if (!resolved || wanted.includes(resolved)) continue;
-        ctx.add("STR013", `\`${target}\` is stored as \`${resolved}\`; Overleaf is case-sensitive and will not find it`,
+        const shown = (base && resolved.toLowerCase().startsWith(base.toLowerCase() + "/"))
+          ? resolved.slice(base.length + 1) : resolved;
+        ctx.add("STR013", `\`${target}\` is stored as \`${shown}\`; Overleaf is case-sensitive and will not find it`,
           { file: line.file, line: line.lineno, context: line.raw.trim().slice(0, 96),
-            fix: `Write the name as \`${resolved}\`, or rename the file to match.` });
+            fix: `Write the name as \`${shown}\`, or rename the file to match.` });
       }}}});
 
 /* -- BIB -- */
@@ -4975,10 +5267,22 @@ const normaliseTerm = s => String(s).trim().toLowerCase().replace(/[-\s]+/g, " "
 const termPattern = v =>
   v.trim().split(/[-\s]+/).filter(Boolean).map(escapeRe).join(TERM_GAP) + "(?:e?s)?";
 
+const TERM_RE_CACHE = new Map();
+const DEFAULT_VEH_KEY = DEFAULT_TERM_GROUPS[0].join("\u0000");
+
 function termRegex(variants) {
-  // Longest first: alternation is greedy in order, not by length.
-  const body = [...variants].sort((a, b) => b.length - a.length).map(termPattern).join("|");
-  return new RegExp("(?<![\\w-])(?:" + body + ")(?![\\w-])", "gi");
+  const key = variants.join("\u0000");
+  let re = TERM_RE_CACHE.get(key);
+  if (!re) {
+    // Longest first: alternation is greedy in order, not by length.
+    const body = key === DEFAULT_VEH_KEY
+      ? `(?:(?:automated|autonomous|self${TERM_GAP}driving|driverless)${TERM_GAP}(?:vehicle|car)|robot${TERM_GAP}car)(?:e?s)?`
+      : [...variants].sort((a, b) => b.length - a.length).map(termPattern).join("|");
+    re = new RegExp("(?<![\\w-])(?:" + body + ")(?![\\w-])", "gi");
+    TERM_RE_CACHE.set(key, re);
+  }
+  re.lastIndex = 0;
+  return re;
 }
 
 function configuredTermGroups(ctx) {
@@ -5224,11 +5528,16 @@ rule({ id:"TRM004", title:"One term, capitalised in some places and not others",
     for (const m of prose.matchAll(TERM_CAPITALISED)) {
       if (!eligible(m.index) || inCapitalisedRun(prose, m.index, m.index + m[1].length)) continue;
       const key = m[1].toLowerCase();
-      upper.set(key, (upper.get(key) || []).concat(m.index));
+      let arr = upper.get(key);
+      if (!arr) { arr = []; upper.set(key, arr); }
+      arr.push(m.index);
     }
+    if (!upper.size) return;
     for (const m of prose.matchAll(TERM_LOWERCASE)) {
-      if (!eligible(m.index)) continue;
-      lower.set(m[1], (lower.get(m[1]) || []).concat(m.index));
+      if (!upper.has(m[1]) || !eligible(m.index)) continue;
+      let arr = lower.get(m[1]);
+      if (!arr) { arr = []; lower.set(m[1], arr); }
+      arr.push(m.index);
     }
     const minimum = Number(ctx.config.option("TRM004", "min_occurrences", 2)) || 2;
     for (const word of [...upper.keys()].sort()) {
@@ -5249,19 +5558,20 @@ rule({ id:"TRM005", title:"Expansion still written out after the abbreviation wa
   why:"Introducing an abbreviation is a promise to use it. Writing 'Automated Driving System' out a dozen more times makes the reader carry both forms and leaves the definition looking pointless.",
   fix:"Use the abbreviation after the first definition, or drop the abbreviation and keep writing the term in full.",
   run(ctx){ if (abbManaged(ctx)) return;
+    const defs = abbDefinitions(ctx);
+    if (!defs.size) return;
+    const uses = abbUses(ctx);
     const prose = ctx.project.prose;
     const threshold = Number(ctx.config.option("TRM005", "min_repeats", 3)) || 3;
-    for (const [acronym, occ] of abbDefinitions(ctx)) {
+    for (const [acronym, occ] of defs) {
       const definedAt = Math.min(...occ.map(o => o.end));
       const expansion = occ[0].expansion;
       if (expansion.length < 10) continue;
       // An abbreviation nobody ever uses is ABB003's finding, not this one.
-      const used = new RegExp("(?<![\\w\\\\])" + escapeRe(acronym) + "(?:e?s)?(?![\\w])", "g");
-      let usedLater = false;
-      for (const u of prose.matchAll(used)) if (u.index > definedAt) { usedLater = true; break; }
-      if (!usedLater) continue;
+      const positions = uses.get(acronym);
+      if (!positions || !positions.some(p => p > definedAt)) continue;
       const repeats = [];
-      for (const m of prose.matchAll(new RegExp("(?<![\\w-])" + termPattern(expansion) + "(?![\\w-])", "gi"))) {
+      for (const m of prose.matchAll(termRegex([expansion]))) {
         if (m.index < definedAt) continue;
         // "Automated Driving System (ADS)" again is ABB001's territory.
         if (/^\s*\(/.test(prose.slice(m.index + m[0].length, m.index + m[0].length + 4))) continue;
@@ -5390,7 +5700,8 @@ rule({ id:"VEN011", title:"Required style package missing", cat:"policy", sev:SE
       if (!name || loaded.has(name.toLowerCase())) continue;
       ctx.add("VEN011", `\\usepackage{${name}} is required by ${pack.name || ctx.config.venueKey}`
               + (why ? `: ${why}` : ""),
-        { file: ctx.project.main, severity: spec && spec.severity ? SEV[spec.severity] : undefined,
+        { file: ctx.project.main,
+          severity: spec && spec.severity ? parseSev(spec.severity, ctx.config.severityFor("VEN011")) : undefined,
           fix: `Add \\usepackage{${name}} from the venue's author kit.` });
     }}});
 
@@ -5809,28 +6120,50 @@ function cacheSet(key, value) {
 async function getJson(url, key) {
   const cached = cacheGet(key);
   if (cached !== undefined) return cached;
-  if (netBlocked) return null;
+  if (netBlocked) return undefined;
   try {
     const res = await fetch(url, { headers: { "Accept": "application/json" } });
-    if (res.status === 404) { cacheSet(key, null); return null; }
-    if (!res.ok) return null;
+    if (res.status === 404 || res.status === 410) { cacheSet(key, null); return null; }
+    if (!res.ok) return undefined;
     const data = await res.json();
     cacheSet(key, data);
     return data;
   } catch (err) {
     // A blocked request looks exactly like an offline one; say so once and stop.
     netBlocked = true;
-    return null;
+    return undefined;
   }
 }
 
 /* The network layer is injectable. In the page it is the fetch above; in the
    Chrome extension it is a message to the service worker, which is the only
    place a Manifest V3 extension may make cross-origin requests. Same rules,
-   same results, different plumbing. */
-function makeFetchers(mailto, fetchJson) {
-  const get = fetchJson || getJson;
+   same results, different plumbing.
+   Convention:
+   - object -> HTTP 200 JSON (registry answered)
+   - null -> HTTP 404/410 (registry confirmed absent)
+   - undefined -> network/CORS/worker failure or 429/5xx (unanswered; never accuse) */
+function makeFetchers(mailto, fetchJson, onBlocked) {
+  const rawGet = fetchJson || getJson;
   const tail = mailto ? `&mailto=${encodeURIComponent(mailto)}` : "";
+  const inflight = new Map();
+  const absent = new Set();
+  const answered = new Set();
+  async function get(url, key) {
+    let p = inflight.get(key);
+    if (!p) {
+      p = Promise.resolve().then(() => rawGet(url, key)).finally(() => inflight.delete(key));
+      inflight.set(key, p);
+    }
+    const d = await p;
+    if (d === undefined) {
+      if (onBlocked) onBlocked();
+      return undefined;
+    }
+    answered.add(key);
+    if (d === null) absent.add(key);
+    return d;
+  }
   return {
     async crossrefByDoi(doi) {
       if (!doi) return null;
@@ -5839,15 +6172,24 @@ function makeFetchers(mailto, fetchJson) {
     },
     async crossrefSearch(title, author) {
       if (!title) return [];
+      const key = "crs:" + title.slice(0, 120) + "|" + (author || "");
       const url = `https://api.crossref.org/works?query.bibliographic=${encodeURIComponent(title)}`
         + (author ? `&query.author=${encodeURIComponent(author)}` : "")
         + `&rows=3&select=DOI,title,author,issued,container-title,type,score${tail}`;
-      const d = await get(url, "crs:" + title.slice(0, 120) + "|" + (author || ""));
+      const d = await get(url, key);
       return (d && d.message && d.message.items) || [];
     },
     async openAlexByDoi(doi) {
       if (!doi) return null;
-      return await get(`https://api.openalex.org/works/doi:${encodeURIComponent(doi)}?x=1${tail}`, "oa:" + doi);
+      const d = await get(`https://api.openalex.org/works/doi:${encodeURIComponent(doi)}?x=1${tail}`, "oa:" + doi);
+      return d || null;
+    },
+    async openAlexSearch(title) {
+      if (!title) return [];
+      const cleaned = title.replace(/[,:;()[\]{}]/g, " ").slice(0, 140);
+      const url = `https://api.openalex.org/works?filter=title.search:${encodeURIComponent(cleaned)}&per-page=3${tail}`;
+      const d = await get(url, "oas:" + title.slice(0, 120));
+      return (d && d.results) || [];
     },
     async dblpSearch(title) {
       if (!title) return [];
@@ -5856,10 +6198,22 @@ function makeFetchers(mailto, fetchJson) {
       const hits = (((d || {}).result || {}).hits || {}).hit || [];
       return hits.map(h => h.info || {});
     },
+    doiAbsent(doi) {
+      return !!doi && absent.has("cr:" + doi) && absent.has("oa:" + doi);
+    },
+    searchAnswered(title, author) {
+      if (!title) return false;
+      const head = title.slice(0, 120);
+      return answered.has("crs:" + head + "|" + (author || ""))
+        && answered.has("dblp:" + head)
+        && answered.has("oas:" + head);
+    },
   };
 }
 
 async function runChecks(files, options) {
+  if (options.verify) netBlocked = false;
+  let runNetBlocked = false;
   const sources = new Map();
   const allFiles = new Map();
   let log = null, pdfBytes = null, pdfName = null;
@@ -5931,7 +6285,7 @@ async function runChecks(files, options) {
     ignoreAcronyms: (options.ignoreAcronyms || [])
       .concat(asList(config.option("ABB001", "ignore", [])))
       .concat(asList(config.option("ABB004", "ignore", []))),
-    ...makeFetchers(options.mailto || config.file.mailto, options.fetchJson),
+    ...makeFetchers(options.mailto || config.file.mailto, options.fetchJson, () => { runNetBlocked = true; }),
     /* Build an edit from a span of project.text. Returns null when the span
        is not safely rewritable, so a rule can pass the result straight on. */
     editSpan(start, end, replacement, describe) {
@@ -6028,7 +6382,7 @@ async function runChecks(files, options) {
     stats: {
       files: project.files.length, words: wordCount(ctx), floats: project.floats().length,
       references: bib.length, pages: pageCount(ctx), hasLog: !!log, hasPdf: !!pdfBytes,
-      main: mainPath, mainGuessed, netBlocked,
+      main: mainPath, mainGuessed, netBlocked: netBlocked || runNetBlocked,
       configPath: projectConfig ? projectConfig.path : null,
     },
   };
@@ -6332,8 +6686,10 @@ function renderFixes(result) {
       } }));
     row.appendChild(el("button", { text: "Download", onclick: () => {
       const blob = new Blob([text], { type: "text/plain" });
-      const a = el("a", { href: URL.createObjectURL(blob), download: path.split("/").pop() });
+      const url = URL.createObjectURL(blob);
+      const a = el("a", { href: url, download: path.split("/").pop() });
       document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
     } }));
     wrap.appendChild(row);
   }
@@ -6360,7 +6716,7 @@ function toMarkdown(result) {
     `Main file \`${result.stats.main}\` · ${result.stats.words.toLocaleString()} words · `
     + `${plural(result.stats.references, "reference")} · ${plural(result.stats.floats, "float")}`, ""];
   const counts = { error: 0, warn: 0, info: 0 };
-  for (const f of result.findings) counts[severityName(f.severity)]++;
+  for (const f of allFindings(result)) counts[severityName(f.severity)]++;
   lines.push(`**${counts.error} errors, ${counts.warn} warnings, ${counts.info} notes**`, "");
   if (!result.findings.length) lines.push("Nothing mechanical left to fix.");
   else {
@@ -6369,6 +6725,11 @@ function toMarkdown(result) {
       const icon = { error: "❌", warn: "⚠️", info: "ℹ️" }[severityName(f.severity)];
       const where = f.file ? `\`${f.file}${f.line ? ":" + f.line : ""}\`` : "";
       lines.push(`| ${icon} | \`${f.rule}\` | ${where} | ${f.message.replace(/\|/g, "\\|")} | ${(f.fix || "").replace(/\|/g, "\\|")} |`);
+    }
+    const held = Object.entries(result.truncatedByRule || {}).sort();
+    if (held.length) {
+      lines.push("", `_Additional repeated findings held back (${result.truncated.length} total): `
+        + held.map(([r, n]) => `\`${r}\` +${n}`).join(", ") + "._");
     }
   }
   return lines.join("\n");
@@ -6382,8 +6743,10 @@ async function copyMarkdown(result) {
 
 function downloadReport(result) {
   const blob = new Blob([toMarkdown(result)], { type: "text/markdown" });
-  const a = el("a", { href: URL.createObjectURL(blob), download: "mechcheck-report.md" });
+  const url = URL.createObjectURL(blob);
+  const a = el("a", { href: url, download: "mechcheck-report.md" });
   document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function toast(message) {
@@ -6433,7 +6796,7 @@ async function rerun() {
       notes.push(`<b>Guessed the main file:</b> <span class="mono">${escapeText(result.stats.main)}</span>. `
         + String.raw`No file had both \documentclass and \begin{document}, so this is the largest .tex. `
         + "If that is wrong, the findings will be too.");
-    } else if (opts.verify && netBlocked) {
+    } else if (opts.verify && result.stats.netBlocked) {
       kind = "warnish";
       notes.push("<b>Reference verification could not reach the internet.</b> Everything else ran. "
         + "This page blocks outside requests when it is opened from a shared link — save the file and open it "

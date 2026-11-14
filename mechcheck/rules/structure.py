@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from collections import Counter
 
@@ -64,11 +65,15 @@ def _case_variant(ctx, target: str):
     """The on-disk spelling of an \\input target when it differs only in case."""
     from mechcheck.texsource import find_case_insensitive
 
-    for cand in _input_candidates(target):
-        actual = find_case_insensitive(ctx.root, cand)
-        if actual is None:
-            continue
-        return None if actual == cand else actual
+    dir_cache = ctx.cache.setdefault("dir_cache", {})
+    main_dir = os.path.dirname(ctx.project.main.replace("\\", "/"))
+    roots = [os.path.join(ctx.root, main_dir), ctx.root] if main_dir else [ctx.root]
+    for base in roots:
+        for cand in _input_candidates(target):
+            actual = find_case_insensitive(base, cand, dir_cache)
+            if actual is None:
+                continue
+            return None if actual == cand else actual
     return None
 
 
@@ -358,16 +363,18 @@ def missing_abstract(ctx):
     yield ctx.finding("STR008", "no abstract environment found", file=ctx.project.main)
 
 
+_VAGUE_REF_RE = re.compile(
+    r"\b(?:as (?:described|discussed|shown|explained) (?:above|below|earlier|previously)|"
+    r"in the (?:previous|next|following|preceding) (?:section|chapter|subsection))\b",
+    re.IGNORECASE)
+
+
 @rule("STR009", "Bare heading number in a cross-reference sentence", Category.STRUCTURE,
       Severity.INFO,
       rationale="'as described above' and 'in the previous chapter' break when sections move; a real cross-reference does not.",
       fix="Replace with \\Cref{sec:...}.")
 def vague_internal_reference(ctx):
-    pattern = re.compile(
-        r"\b(?:as (?:described|discussed|shown|explained) (?:above|below|earlier|previously)|"
-        r"in the (?:previous|next|following|preceding) (?:section|chapter|subsection))\b",
-        re.IGNORECASE)
-    for m in pattern.finditer(ctx.project.prose):
+    for m in _VAGUE_REF_RE.finditer(ctx.project.prose):
         f, line, col = ctx.project.locate(m.start())
         yield ctx.finding("STR009", f"vague internal reference: '{m.group(0)}'",
                           file=f, line=line, col=col, context=ctx.project.excerpt(m.start()))

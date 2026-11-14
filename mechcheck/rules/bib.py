@@ -113,10 +113,11 @@ def duplicates(ctx):
         reported.add(keys)
         first = group[0]
         for entry in group[1:]:
+            where = f"{ctx.project.rel(first.file)}:" if first.file != entry.file else ""
             yield ctx.finding("BIB003",
-                              f"`{entry.key}` duplicates `{first.key}` ({first.file and ''}line {first.line})",
+                              f"`{entry.key}` duplicates `{first.key}` ({where}line {first.line})",
                               context=entry.title[:70], **_loc(ctx, entry),
-                              fix=f"Delete one and point all citations at the survivor.",
+                              fix="Delete one and point all citations at the survivor.",
                               data={"key": entry.key, "duplicate_of": first.key})
 
 
@@ -138,6 +139,10 @@ def preprint_citation(ctx):
                           data={"key": entry.key})
 
 
+_PROPER_NOUN_RES = [(word, re.compile(rf"(?<![\w{{]){re.escape(word)}(?![\w}}])"))
+                    for word in PROPER_NOUNS]
+
+
 @rule("BIB005", "Unprotected proper noun in a title", Category.BIB, Severity.INFO,
       rationale="BibTeX lower-cases titles for most styles, so 'German' silently prints as 'german'.",
       fix="Brace the word: {German}.")
@@ -146,8 +151,8 @@ def unprotected_capitals(ctx):
         raw_title = entry.get("title")
         if not raw_title:
             continue
-        for word in PROPER_NOUNS:
-            for m in re.finditer(rf"(?<![\w{{]){re.escape(word)}(?![\w}}])", raw_title):
+        for word, rx in _PROPER_NOUN_RES:
+            for m in rx.finditer(raw_title):
                 # Already inside braces?
                 before = raw_title[:m.start()]
                 if before.count("{") > before.count("}"):
@@ -160,17 +165,22 @@ def unprotected_capitals(ctx):
                 break
 
 
+_ET_AL_RE = re.compile(r"\bet\.?\s*al\.?", re.IGNORECASE)
+
+
 @rule("BIB006", "'et al.' inside an author field", Category.BIB, Severity.ERROR,
       rationale="BibTeX reads 'et al.' as a person's name and prints it as an author; the abbreviation is the style's job, not yours.",
       fix="List every author, separated by ' and '. Use 'and others' if you truly must truncate.")
 def et_al_in_authors(ctx):
     for entry in entries(ctx):
-        raw = entry.get("author") or entry.get("editor")
+        field = "author" if entry.get("author") else "editor"
+        raw = entry.get(field)
         if not raw:
             continue
-        if re.search(r"\bet\.?\s*al\.?", raw, re.IGNORECASE):
-            yield ctx.finding("BIB006", f"`{entry.key}` has 'et al.' in the author field",
-                              context=raw[:70], **_loc(ctx, entry, "author"),
+        if _ET_AL_RE.search(raw):
+            yield ctx.finding("BIB006", f"`{entry.key}` has 'et al.' in the {field} field" if field == "author"
+                              else f"`{entry.key}` has 'et al.' in the author field",
+                              context=raw[:70], **_loc(ctx, entry, field),
                               fix="Replace with the full author list, or with 'and others'.",
                               data={"key": entry.key})
 

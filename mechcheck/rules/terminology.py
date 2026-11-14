@@ -33,6 +33,7 @@ vocabulary from a finished thesis rather than from memory.
 
 from __future__ import annotations
 
+import functools
 import re
 from collections import defaultdict
 
@@ -61,9 +62,12 @@ DEFAULT_GROUPS: tuple = (
 )
 
 
+_NORM_RE = re.compile(r"[-\s]+")
+
+
 def _normalise(text: str) -> str:
     """Lowercase, hyphens and line breaks as single spaces."""
-    return re.sub(r"[-\s]+", " ", text.strip().lower())
+    return _NORM_RE.sub(" ", text.strip().lower())
 
 
 #: What may separate two words of one phrase: a hyphen, a space or two, or a
@@ -79,17 +83,26 @@ def _variant_pattern(variant: str) -> str:
     ``self-driving car`` also matches ``self driving cars``: which of those
     the author wrote is `TRM003`'s business, not this rule's.
     """
-    words = [re.escape(w) for w in re.split(r"[-\s]+", variant.strip()) if w]
+    words = [re.escape(w) for w in _NORM_RE.split(variant.strip()) if w]
     return _GAP.join(words) + r"(?:e?s)?"
 
 
-def _compiled(variants) -> "re.Pattern":
+@functools.lru_cache(maxsize=64)
+def _compiled_cached(variants: tuple) -> "re.Pattern":
     # Longest first: "self-driving vehicle" must win over "self-driving car"
     # where both could start at the same place, and alternation is greedy in
     # order, not by length.
+    if variants == DEFAULT_GROUPS[0]:
+        body = (r"(?:(?:automated|autonomous|self" + _GAP + r"driving|driverless)"
+                + _GAP + r"(?:vehicle|car)|robot" + _GAP + r"car)(?:e?s)?")
+        return re.compile(r"(?<![\w-])(?:" + body + r")(?![\w-])", re.IGNORECASE)
     ordered = sorted(variants, key=len, reverse=True)
     body = "|".join(_variant_pattern(v) for v in ordered)
     return re.compile(r"(?<![\w-])(?:" + body + r")(?![\w-])", re.IGNORECASE)
+
+
+def _compiled(variants) -> "re.Pattern":
+    return _compiled_cached(tuple(variants))
 
 
 def _configured(ctx) -> list:
@@ -422,14 +435,18 @@ def mixed_capitalisation(ctx):
             return False
         return not sentence_starts_at(prose, start)
 
+    words = _words(ctx)
     upper: dict = defaultdict(list)
-    for m in _CAPITALISED.finditer(prose):
-        if eligible(m.start()) and not _in_capitalised_run(prose, m.start(), m.end()):
-            upper[m.group(1).lower()].append(m.start())
+    for start, end, text in words:
+        if len(text) >= 4 and text[0].isupper() and text[1:].islower():
+            if eligible(start) and not _in_capitalised_run(prose, start, end):
+                upper[text.lower()].append(start)
+    if not upper:
+        return
     lower: dict = defaultdict(list)
-    for m in _LOWERCASE.finditer(prose):
-        if eligible(m.start()):
-            lower[m.group(1)].append(m.start())
+    for start, _end, text in words:
+        if text in upper and eligible(start):
+            lower[text].append(start)
 
     for word in sorted(set(upper) & set(lower)):
         ups, lows = upper[word], lower[word]
@@ -453,15 +470,13 @@ def mixed_capitalisation(ctx):
       rationale="Introducing an abbreviation is a promise to use it. Writing 'Automated Driving System' out a dozen more times makes the reader carry both forms and leaves the definition looking pointless.",
       fix="Use the abbreviation after the first definition, or drop the abbreviation and keep writing the term in full.")
 def expansion_repeated(ctx):
-    from mechcheck.rules.abbrev import _ACRONYM_USE, _definitions, _managed_by_package
+    from mechcheck.rules.abbrev import _acronym_uses, _definitions, _managed_by_package
 
     if _managed_by_package(ctx):
         return
     prose = ctx.project.prose
     threshold = int(ctx.opt("TRM005", "min_repeats", 3) or 3)
-    acronym_uses: dict = defaultdict(list)
-    for m in _ACRONYM_USE.finditer(prose):
-        acronym_uses[m.group(1).upper()].append(m.start())
+    acronym_uses = _acronym_uses(ctx)
 
     for acronym, found in _definitions(ctx).items():
         defined_at = min(o[3] for o in found)       # end of the first definition

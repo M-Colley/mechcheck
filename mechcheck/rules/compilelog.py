@@ -168,7 +168,7 @@ _CLASS_WARNING = re.compile(
 _ALREADY_COVERED = (
     ("possible image without description", "ACC001"),
     ("images may lack descriptions", "ACC001"),
-    ("no \\Description", "ACC001"),
+    ("no \\description", "ACC001"),
 )
 
 

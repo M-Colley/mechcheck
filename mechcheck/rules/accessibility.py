@@ -99,13 +99,17 @@ def description_duplicates_caption(ctx):
     from mechcheck.bibtex import similarity
 
     text = ctx.project.text
-    for env in ctx.project.floats():
+    seen = set()
+    for env in sorted(list(ctx.project.floats()) + _figures(ctx), key=lambda e: e.start):
+        if env.start in seen:
+            continue
+        seen.add(env.start)
         body = env.body(text)
         caps = parse_commands(body, "caption", 1)
         descs = parse_commands(body, "Description", 1)
         if not caps or not descs:
             continue
-        score = similarity(caps[0].arg(0), descs[0].arg(0))
+        score = similarity(caps[0].arg(0), descs[0].arg(0), min_score=0.9)
         if score < 0.9:
             continue
         offset = env.body_start + descs[0].start

@@ -167,10 +167,10 @@ So you know where the gaps are rather than re-testing what is covered:
 
 | | Verified how |
 |---|---|
-| 158 rules, Python | 961 tests |
-| 158 rules, browser engine | 399 checks in Node, same fixtures |
+| 158 rules, Python | 976 tests |
+| 158 rules, browser engine | 420 checks in Node, same fixtures |
 | Both agree on this exact document | asserted in both suites, 37 findings |
-| Extension panel, zip reading, filters, editor markers, inline notes | 61 checks in a real browser |
+| Extension panel, zip reading, filters, editor markers, inline notes | 67 checks in a real browser |
 | `mechcheck.sty` | 14 checks against TeX Live 2026 |
 | p-value recomputation | both engines pinned to one table of reference values; the Python side checked against numerical integration; and run over 31 recomputable statistics in a real paper's results section without a single false positive |
 | **Extension in Chrome on live Overleaf** | verified once, on 2026-08-28 — re-run test 1 after updating |

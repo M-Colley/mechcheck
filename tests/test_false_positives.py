@@ -520,3 +520,84 @@ def test_an_ignored_file_is_not_taken_for_the_main_document(tmp_path):
     (tmp_path / "main.tex").rename(tmp_path / "paper.tex")
     assert find_main_document(str(tmp_path)) == "attic/main.tex"
     assert find_main_document(str(tmp_path), lambda rel: rel.startswith("attic/")) == "paper.tex"
+
+
+# --------------------------------------------------------------------------- #
+# Parity, inline verbatim masking, subfolder main.tex, and network outages
+# --------------------------------------------------------------------------- #
+
+def test_inline_verb_with_percent_or_braces_masks_cleanly(tmp_path):
+    body = ("Inline " + BS + "verb|a%b| and " + BS + "lstinline[language=C]{x_y} "
+            "and " + BS + "mintinline{python}{z = []} % TODO note")
+    # In submission stage, % TODO note after \verb|a%b| is still a real comment!
+    res = check(build(tmp_path, body), only=["STY001"], stage="submission")
+    assert "STY001" in fired(res)
+    # Meanwhile % inside \verb|100% ok| is verbatim, not a comment or STY014!
+    body2 = "Code prints " + BS + "verb|100% ok| in prose."
+    assert "STY014" not in fired(check(build(tmp_path, body2), only=["STY014"]))
+
+
+def test_fulfill_is_consistent_american_spelling(tmp_path):
+    body = "We fulfill the goal and color the bar; this fulfills every requirement."
+    assert "STY008" not in fired(check(build(tmp_path, body), only=["STY008"]))
+
+
+def test_subfolder_main_resolves_inputs_and_graphics(tmp_path):
+    sub = tmp_path / "paper"
+    (sub / "chapters").mkdir(parents=True)
+    (sub / "figs").mkdir(parents=True)
+    (sub / "figs" / "plot.png").write_bytes(b"\x89PNG\r\n")
+    (sub / "chapters" / "intro.tex").write_text("Hello world.\n", encoding="utf-8")
+    (sub / "main.tex").write_text(
+        BS + "documentclass{article}\n" + BS + "usepackage{graphicx}\n"
+        + BS + "begin{document}\n" + BS + "input{chapters/intro}\n"
+        + BS + "includegraphics{figs/plot}\n" + BS + "end{document}\n",
+        encoding="utf-8",
+    )
+    res = check(str(tmp_path), only=["STR001", "STR013", "FIG008", "FIG012"])
+    assert not res.findings
+
+
+def test_bio005_silent_when_network_outage_blocks_search(tmp_path, monkeypatch):
+    import json
+    from mechcheck.net import Fetcher
+
+    monkeypatch.setenv("MECHCHECK_CACHE", str(tmp_path / "cache"))
+    doc = (BS + "documentclass{article}\n" + BS + "begin{document}\n"
+           "See " + BS + "cite{ghost}.\n" + BS + "bibliography{refs}\n" + BS + "end{document}\n")
+    bib = ("@inproceedings{ghost,\n"
+           "  author = {Nobody, Alice},\n"
+           "  title = {A Totally Nonexistent Imaginary Work For Testing},\n"
+           "  booktitle = {Proceedings of Nowhere},\n"
+           "  year = {2021}\n}\n")
+    (tmp_path / "main.tex").write_text(doc, encoding="utf-8")
+    (tmp_path / "refs.bib").write_text(bib, encoding="utf-8")
+
+    cfg = Config.load(str(tmp_path), overrides={"verify_online": True, "profile": "all"})
+
+    # Simulate total network failure (_fetch returns None; Fetcher.answered stays empty)
+    monkeypatch.setattr(Fetcher, "_fetch", lambda self, url, headers, attempts=3: None)
+    res_offline = run(str(tmp_path), cfg, only=["BIO005"], offline=False, baseline=None)
+    assert "BIO005" not in fired(res_offline)
+
+    # Simulate healthy registries returning empty search results (_fetch returns HTTP 200 JSON)
+    def fake_healthy_fetch(self, url, headers, attempts=3):
+        if "crossref.org" in url:
+            return json.dumps({"message": {"items": []}})
+        if "dblp.org" in url:
+            return json.dumps({"result": {"hits": {"hit": []}}})
+        return json.dumps({"results": []})
+
+    monkeypatch.setattr(Fetcher, "_fetch", fake_healthy_fetch)
+    res_online = run(str(tmp_path), cfg, only=["BIO005"], offline=False, baseline=None)
+    assert "BIO005" in fired(res_online)
+
+
+def test_log009_skips_acmart_no_description_when_acc001_enabled(tmp_path):
+    build(tmp_path, "Hello.")
+    (tmp_path / "main.log").write_text(
+        "This is pdfTeX, Version 3.141592653\n"
+        "Class acmart Warning: Figure 1 has no \\Description on input line 42.\n",
+        encoding="utf-8",
+    )
+    assert "LOG009" not in fired(check(str(tmp_path), only=["ACC001", "LOG009"]))

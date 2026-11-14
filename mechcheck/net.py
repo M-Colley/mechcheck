@@ -45,6 +45,8 @@ class Fetcher:
         #: Full URLs the server answered 404/410 for: the only failures that
         #: may be reported as "does not exist".
         self.absent: set = set()
+        #: Full URLs that returned a valid JSON payload (cached or HTTP 200).
+        self.answered: set = set()
         self._host_failures: dict = {}
 
     # -- public ------------------------------------------------------------ #
@@ -59,6 +61,7 @@ class Fetcher:
         cached = self._read_cache(full)
         if cached is not None:
             self.stats["hit"] += 1
+            self.answered.add(full)
             return cached
         if self.offline:
             self.stats["skipped"] += 1
@@ -74,11 +77,17 @@ class Fetcher:
             return None
         self._write_cache(full, data)
         self.stats["miss"] += 1
+        self.answered.add(full)
         return data
 
     def is_absent(self, url: str, params: dict | None = None) -> bool:
         """True only if the server answered 404/410 for this request."""
         return _with_params(url, params) in self.absent
+
+    def has_answered(self, url: str, params: dict | None = None) -> bool:
+        """True only if the server returned a valid JSON payload (or 404/410)."""
+        full = _with_params(url, params)
+        return full in self.answered or full in self.absent
 
     def url_status(self, url: str):
         """What a bare URL answers: an HTTP status, ``"dns"``, or ``None``.
@@ -271,16 +280,32 @@ def doi_absent(fetcher: Fetcher, doi: str) -> bool:
             and fetcher.is_absent(*_openalex_doi_request(fetcher, doi)))
 
 
-def crossref_search(fetcher: Fetcher, title: str, author: str = "", rows: int = 3):
-    if not title:
-        return []
-    data = fetcher.get_json(CROSSREF_QUERY, {
+def _crossref_search_request(fetcher: Fetcher, title: str, author: str = "", rows: int = 3):
+    return CROSSREF_QUERY, {
         "query.bibliographic": title,
         "query.author": author or None,
         "rows": rows,
         "select": "DOI,title,author,issued,container-title,type,score,is-referenced-by-count",
         "mailto": fetcher.mailto or None,
-    })
+    }
+
+
+def _openalex_search_request(fetcher: Fetcher, title: str, rows: int = 3):
+    return OPENALEX_QUERY, {
+        "filter": f"title.search:{title[:200]}",
+        "per-page": rows,
+        "mailto": fetcher.mailto or None,
+    }
+
+
+def _dblp_search_request(title: str, rows: int = 3):
+    return DBLP_QUERY, {"q": title[:200], "format": "json", "h": rows}
+
+
+def crossref_search(fetcher: Fetcher, title: str, author: str = "", rows: int = 3):
+    if not title:
+        return []
+    data = fetcher.get_json(*_crossref_search_request(fetcher, title, author, rows))
     if not isinstance(data, dict):
         return []
     return ((data.get("message") or {}).get("items")) or []
@@ -296,11 +321,7 @@ def openalex_by_doi(fetcher: Fetcher, doi: str):
 def openalex_search(fetcher: Fetcher, title: str, rows: int = 3):
     if not title:
         return []
-    data = fetcher.get_json(OPENALEX_QUERY, {
-        "filter": f"title.search:{title[:200]}",
-        "per-page": rows,
-        "mailto": fetcher.mailto or None,
-    })
+    data = fetcher.get_json(*_openalex_search_request(fetcher, title, rows))
     if not isinstance(data, dict):
         return []
     return data.get("results") or []
@@ -309,8 +330,17 @@ def openalex_search(fetcher: Fetcher, title: str, rows: int = 3):
 def dblp_search(fetcher: Fetcher, title: str, rows: int = 3):
     if not title:
         return []
-    data = fetcher.get_json(DBLP_QUERY, {"q": title[:200], "format": "json", "h": rows})
+    data = fetcher.get_json(*_dblp_search_request(title, rows))
     if not isinstance(data, dict):
         return []
     hits = (((data.get("result") or {}).get("hits") or {}).get("hit")) or []
     return [h.get("info", {}) for h in hits if isinstance(h, dict)]
+
+
+def search_answered(fetcher: Fetcher, title: str, author: str = "", rows: int = 3) -> bool:
+    """All three bibliographic search APIs answered (not a timeout or 5xx)."""
+    if not title:
+        return False
+    return (fetcher.has_answered(*_crossref_search_request(fetcher, title, author, rows))
+            and fetcher.has_answered(*_dblp_search_request(title, rows))
+            and fetcher.has_answered(*_openalex_search_request(fetcher, title, rows)))

@@ -154,8 +154,17 @@ Chrome profiles.
 | Venue | CHI · ASSETS · AutomotiveUI · IMWUT · TRF · MobileHCI · UIST · CHI PLAY · NeurIPS · ICLR · CVPR · AAAI |
 | Verify refs | turns on the seven `BIO*` rules |
 | Check automatically | run as soon as a project opens |
+| On compile | automatically recheck whenever Overleaf finishes compiling (on by default once a check has run) |
 | Mark lines | dots in the editor gutter beside the lines with findings (on by default) |
 | Explain inline | the offending words underlined, and the message at the end of the line (on by default) |
+
+### Rechecking as you edit
+
+You can trigger a fresh, cache-bypassing recheck at any time without opening menus:
+
+- Click the **`↻`** button right on the floating **mechcheck** pill (even with the panel closed) or in the panel header.
+- Press **`Alt+Shift+M`** anywhere in the Overleaf tab (customisable at `chrome://extensions/shortcuts`).
+- Leave **on compile** ticked and every Overleaf recompile automatically refreshes the findings, the pill badge, and the inline editor markers against the newly compiled `.log` and `.pdf`.
 
 If the Overleaf project contains a `mechcheck.yaml`, it is read as well: rules
 it disables stay quiet, severities and per-rule options apply, the project's

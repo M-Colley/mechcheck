@@ -148,15 +148,20 @@ class TexFile:
 # --------------------------------------------------------------------------- #
 
 _MASK = " "
+_NON_NL = re.compile(r"[^\n]+")
 
 
 def _mask(s: str) -> str:
     """Replace every character with a space, preserving newlines and length."""
-    return "".join("\n" if c == "\n" else _MASK for c in s)
+    if "\n" not in s:
+        return _MASK * len(s)
+    return _NON_NL.sub(lambda m: _MASK * len(m.group(0)), s)
 
 
 def strip_comments_line(line: str) -> str:
     """Mask the comment part of a single line, keeping length identical."""
+    if "%" not in line:
+        return line
     out = []
     i = 0
     n = len(line)
@@ -174,22 +179,72 @@ def strip_comments_line(line: str) -> str:
     return "".join(out)
 
 
-_VERB_INLINE = re.compile(r"\\(?:verb\*?|lstinline|mintinline)\s*(\{[^}]*\})?(.)")
+_INLINE_VERB_HEAD = re.compile(r"\\(verb\*?|lstinline|mintinline)(?![A-Za-z@])")
 
 
 def _mask_inline_verb(line: str) -> str:
-    r"""Mask ``\verb|...|`` bodies so their % and braces do not confuse us."""
-    out = line
-    for m in list(_VERB_INLINE.finditer(line)):
-        delim = m.group(2)
-        if delim is None or delim.isalnum() or delim == "{":
+    r"""Mask ``\verb|...|``, ``\lstinline`` and ``\mintinline`` spans on ``line``."""
+    if "\\verb" not in line and "\\lstinline" not in line and "\\mintinline" not in line:
+        return line
+    out = list(line)
+    i = 0
+    n = len(line)
+    while i < n:
+        c = line[i]
+        if c == "%":
+            break
+        if c != "\\":
+            i += 1
             continue
-        close = out.find(delim, m.end())
-        if close == -1:
+        m = _INLINE_VERB_HEAD.match(line, i)
+        if not m:
+            i += 2
             continue
-        span = out[m.start():close + 1]
-        out = out[:m.start()] + _mask(span) + out[close + 1:]
-    return out
+        cmd = m.group(1)
+        pos = m.end()
+        while pos < n and line[pos] in " \t":
+            pos += 1
+        if cmd in ("lstinline", "mintinline") and pos < n and line[pos] == "[":
+            opt = read_group(line, pos, "[", "]")
+            if not opt:
+                i = m.end()
+                continue
+            pos = opt[1]
+            while pos < n and line[pos] in " \t":
+                pos += 1
+        if cmd == "mintinline":
+            if pos >= n or line[pos] != "{":
+                i = m.end()
+                continue
+            lang = read_group(line, pos, "{", "}")
+            if not lang:
+                i = m.end()
+                continue
+            pos = lang[1]
+            while pos < n and line[pos] in " \t":
+                pos += 1
+        if pos >= n:
+            break
+        delim = line[pos]
+        if delim == "{" and cmd in ("lstinline", "mintinline"):
+            grp = read_group(line, pos, "{", "}")
+            if not grp:
+                i = m.end()
+                continue
+            end = grp[1]
+        elif not delim.isalnum() and not delim.isspace() and delim not in "{}%":
+            close = line.find(delim, pos + 1)
+            if close == -1:
+                i = m.end()
+                continue
+            end = close + 1
+        else:
+            i = m.end()
+            continue
+        for k in range(i, end):
+            out[k] = _MASK
+        i = end
+    return "".join(out)
 
 
 _BEGIN_ENV = re.compile(r"\\begin\s*\{([^}]*)\}")
@@ -555,12 +610,19 @@ def _looks_like_variable(name: str) -> bool:
 # parsing primitives usable without a project (handy in tests)
 # --------------------------------------------------------------------------- #
 
+_CMD_RE_CACHE: dict = {}
+_ENV_RE_CACHE: dict = {}
+
+
 def parse_commands(text: str, name: str, max_args: int = 1) -> list:
     r"""Find ``\name`` invocations and their ``[opt]``/``{arg}`` arguments."""
     out = []
-    esc = re.escape(name)
-    # A trailing letter must not continue the control word (\ref must not match \reflect).
-    pattern = re.compile(r"\\" + esc + (r"(?![A-Za-z@])" if name[-1:].isalpha() else ""))
+    pattern = _CMD_RE_CACHE.get(name)
+    if pattern is None:
+        esc = re.escape(name)
+        # A trailing letter must not continue the control word (\ref must not match \reflect).
+        pattern = re.compile(r"\\" + esc + (r"(?![A-Za-z@])" if name[-1:].isalpha() else ""))
+        _CMD_RE_CACHE[name] = pattern
     for m in pattern.finditer(text):
         # An escaped backslash before it means this is not a control word.
         if _is_escaped(text, m.start()):
@@ -607,8 +669,13 @@ def _is_escaped(text: str, pos: int) -> bool:
 def parse_environments(text: str, name: str) -> list:
     r"""Find ``\begin{name} ... \end{name}`` blocks, respecting nesting."""
     out = []
-    begin_re = re.compile(r"\\begin\s*\{" + re.escape(name) + r"\}")
-    end_re = re.compile(r"\\end\s*\{" + re.escape(name) + r"\}")
+    pair = _ENV_RE_CACHE.get(name)
+    if pair is None:
+        esc = re.escape(name)
+        pair = (re.compile(r"\\begin\s*\{" + esc + r"\}"),
+                re.compile(r"\\end\s*\{" + esc + r"\}"))
+        _ENV_RE_CACHE[name] = pair
+    begin_re, end_re = pair
     starts = [m for m in begin_re.finditer(text) if not _is_escaped(text, m.start())]
     ends = [m for m in end_re.finditer(text) if not _is_escaped(text, m.start())]
     stack = []
@@ -637,47 +704,126 @@ def parse_environments(text: str, name: str) -> list:
     return out
 
 
+_NON_PROSE_BODY_ENVS = {"tabular", "tabular*", "tabularx", "longtable", "tikzpicture", "axis"}
+_DISPLAY_INLINE_MATH_RE = re.compile(r"\\\[.*?\\\]|\\\(.*?\\\)", re.DOTALL)
+_DOLLAR_MATH_RE = re.compile(r"(?<!\\)\$\$.*?(?<!\\)\$\$|(?<!\\)\$.*?(?<!\\)\$", re.DOTALL)
+_PROSE_ENV_RE = re.compile(
+    r"\\(begin|end)\s*\{("
+    + "|".join(sorted((re.escape(e) for e in (MATH_ENVS | _NON_PROSE_BODY_ENVS)), key=len, reverse=True))
+    + r")\}"
+)
+_NON_PROSE_CMD_RE = re.compile(
+    r"\\(?:" + "|".join(sorted((re.escape(n) for n in NON_PROSE_COMMANDS), key=len, reverse=True)) + r")(?![A-Za-z@])"
+)
+_BEGIN_END_DELIM_RE = re.compile(r"\\(?:begin|end)\s*\{[^}]*\}")
+_PROSE_PUNCT_TABLE = str.maketrans("{}&~^_", "      ")
+
+
 def build_prose_view(text: str) -> str:
     """Mask maths, non-prose commands and control words; keep readable text.
 
     Same length as ``text``, so offsets are interchangeable.
     """
-    buf = list(text)
+    if not text:
+        return ""
+    n = len(text)
+    spans = []
 
-    def blank(a: int, b: int) -> None:
-        for i in range(max(0, a), min(len(buf), b)):
-            if buf[i] != "\n":
-                buf[i] = " "
+    # 1. display and inline maths, plus tabular/graphics environments
+    for m in _DISPLAY_INLINE_MATH_RE.finditer(text):
+        spans.append((m.start(), m.end()))
+    for m in _DOLLAR_MATH_RE.finditer(text):
+        spans.append((m.start(), m.end()))
+    env_stacks: dict = {}
+    for m in _PROSE_ENV_RE.finditer(text):
+        if _is_escaped(text, m.start()):
+            continue
+        kind, env_name = m.group(1), m.group(2)
+        if kind == "begin":
+            env_stacks.setdefault(env_name, []).append(m)
+        else:
+            stk = env_stacks.get(env_name)
+            if stk:
+                b = stk.pop()
+                if env_name in MATH_ENVS:
+                    spans.append((b.start(), m.end()))
+                else:
+                    pos = b.end()
+                    while True:
+                        nxt = skip_space(text, pos)
+                        if nxt < n and text[nxt] == "[":
+                            grp = read_group(text, nxt, "[", "]")
+                            if not grp:
+                                break
+                            pos = grp[1]
+                            continue
+                        break
+                    if pos < m.start():
+                        spans.append((pos, m.start()))
 
-    # 1. display and inline maths
-    for m in re.finditer(r"\\\[.*?\\\]|\\\(.*?\\\)", text, re.DOTALL):
-        blank(m.start(), m.end())
-    for m in re.finditer(r"(?<!\\)\$\$.*?(?<!\\)\$\$|(?<!\\)\$.*?(?<!\\)\$", text, re.DOTALL):
-        blank(m.start(), m.end())
-    for env in MATH_ENVS:
-        for e in parse_environments(text, env):
-            blank(e.start, e.end)
-    for env in ("tabular", "tabular*", "tabularx", "longtable", "tikzpicture", "axis"):
-        for e in parse_environments(text, env):
-            blank(e.body_start, e.body_end)
-
-    # 2. commands that carry no prose at all
-    for name in NON_PROSE_COMMANDS:
-        for c in parse_commands(text, name, max_args=3):
-            blank(c.start, c.end)
+    # 2. commands that carry no prose at all (single pass over all names)
+    for m in _NON_PROSE_CMD_RE.finditer(text):
+        if _is_escaped(text, m.start()):
+            continue
+        pos = m.end()
+        if pos < n and text[pos] == "*":
+            pos += 1
+        args = 0
+        while args < 3:
+            nxt = skip_space(text, pos)
+            if nxt < n and text[nxt] == "[":
+                grp = read_group(text, nxt, "[", "]")
+                if not grp:
+                    break
+                pos = grp[1]
+                continue
+            if nxt < n and text[nxt] == "{":
+                grp = read_group(text, nxt, "{", "}")
+                if not grp:
+                    break
+                args += 1
+                pos = grp[1]
+                continue
+            break
+        spans.append((m.start(), pos))
 
     # 3. remaining control words and environment delimiters: keep their argument
     #    text but drop the markup itself.
-    for m in re.finditer(r"\\(?:begin|end)\s*\{[^}]*\}", text):
-        blank(m.start(), m.end())
+    for m in _BEGIN_END_DELIM_RE.finditer(text):
+        spans.append((m.start(), m.end()))
     for m in _CONTROL_WORD.finditer(text):
-        if _is_escaped(text, m.start()):
-            continue
-        blank(m.start(), m.end())
-    for i, ch in enumerate(buf):
-        if ch in "{}&~^_":
-            buf[i] = " "
-    return "".join(buf)
+        if not _is_escaped(text, m.start()):
+            spans.append((m.start(), m.end()))
+
+    if not spans:
+        return text.translate(_PROSE_PUNCT_TABLE)
+
+    spans.sort()
+    pieces = []
+    cur_a, cur_b = spans[0]
+    cur_a = max(0, cur_a)
+    cur_b = min(n, cur_b)
+    prev = 0
+    for a, b in spans[1:]:
+        a = max(0, a)
+        b = min(n, b)
+        if a <= cur_b:
+            if b > cur_b:
+                cur_b = b
+        else:
+            if prev < cur_a:
+                pieces.append(text[prev:cur_a])
+            if cur_a < cur_b:
+                pieces.append(_mask(text[cur_a:cur_b]))
+            prev = cur_b
+            cur_a, cur_b = a, b
+    if prev < cur_a:
+        pieces.append(text[prev:cur_a])
+    if cur_a < cur_b:
+        pieces.append(_mask(text[cur_a:cur_b]))
+    if cur_b < n:
+        pieces.append(text[cur_b:n])
+    return "".join(pieces).translate(_PROSE_PUNCT_TABLE)
 
 
 # --------------------------------------------------------------------------- #
@@ -752,7 +898,34 @@ def normalise_relpath(name: str) -> str:
     return "/".join(parts)
 
 
-def find_case_insensitive(base: str, relpath: str):
+def _scan_dir_cached(path: str, dir_cache: dict | None):
+    if dir_cache is not None and path in dir_cache:
+        return dir_cache[path]
+    try:
+        exact = set()
+        lower = {}
+        files = set()
+        with os.scandir(path) as it:
+            for entry in it:
+                name = entry.name
+                exact.add(name)
+                low = name.lower()
+                if low not in lower or name < lower[low]:
+                    lower[low] = name
+                try:
+                    if entry.is_file():
+                        files.add(name)
+                except OSError:
+                    pass
+        info = (exact, lower, files)
+    except OSError:
+        info = None
+    if dir_cache is not None:
+        dir_cache[path] = info
+    return info
+
+
+def find_case_insensitive(base: str, relpath: str, dir_cache: dict | None = None):
     """The on-disk spelling of ``relpath`` under ``base``, or ``None``.
 
     Each path component is matched exactly first and case-insensitively
@@ -764,27 +937,34 @@ def find_case_insensitive(base: str, relpath: str):
     """
     current = base
     spelled = []
+    last_info = None
     for part in normalise_relpath(relpath).split("/"):
         if not part:
             continue
         if part == "..":
             spelled.append(part)
             current = os.path.join(current, part)
+            last_info = None
             continue
-        try:
-            names = os.listdir(current)
-        except OSError:
+        info = _scan_dir_cached(current, dir_cache)
+        if info is None:
             return None
-        if part in names:
+        exact, lower, _files = info
+        if part in exact:
             chosen = part
         else:
-            matches = [n for n in names if n.lower() == part.lower()]
-            if not matches:
+            chosen = lower.get(part.lower())
+            if chosen is None:
                 return None
-            chosen = sorted(matches)[0]
         spelled.append(chosen)
+        last_info = info
         current = os.path.join(current, chosen)
-    if not spelled or not os.path.isfile(current):
+    if not spelled:
+        return None
+    if last_info is not None:
+        if spelled[-1] not in last_info[2]:
+            return None
+    elif not os.path.isfile(current):
         return None
     return "/".join(spelled)
 

@@ -109,29 +109,38 @@ class BibEntry:
         return ""
 
 
+_CLEAN_MACRO_RE = re.compile(r"\\[a-zA-Z]+\s*")
+_SPACES_RE = re.compile(r"\s+")
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_NON_ALNUM_RE = re.compile(r"[^a-z0-9 ]+")
+
+
 def clean_latex(text: str) -> str:
     """Best-effort plain text from a BibTeX field, for comparison purposes."""
     if not text:
         return ""
     out = text
-    for tex, ch in _LATEX_ACCENTS.items():
-        out = out.replace("{" + tex + "}", ch).replace(tex + " ", ch).replace(tex, ch)
-    out = re.sub(r"\\[a-zA-Z]+\s*", " ", out)
+    if "\\" in out:
+        for tex, ch in _LATEX_ACCENTS.items():
+            if tex in out:
+                out = out.replace("{" + tex + "}", ch).replace(tex + " ", ch).replace(tex, ch)
+        out = _CLEAN_MACRO_RE.sub(" ", out)
     out = out.replace("{", "").replace("}", "").replace("\\", "")
     out = out.replace("~", " ").replace("--", "-")
     out = unicodedata.normalize("NFKC", out)
-    return re.sub(r"\s+", " ", out).strip()
+    return _SPACES_RE.sub(" ", out).strip()
 
 
 def normalise_title(text: str) -> str:
     """Aggressively normalised title, for fuzzy comparison against an API result."""
     s = clean_latex(text).lower()
-    s = re.sub(r"<[^>]+>", " ", s)          # Crossref titles carry HTML/MathML
-    s = re.sub(r"[^a-z0-9 ]+", " ", s)
-    return re.sub(r"\s+", " ", s).strip()
+    if "<" in s:
+        s = _HTML_TAG_RE.sub(" ", s)          # Crossref titles carry HTML/MathML
+    s = _NON_ALNUM_RE.sub(" ", s)
+    return _SPACES_RE.sub(" ", s).strip()
 
 
-def similarity(a: str, b: str) -> float:
+def similarity(a: str, b: str, min_score: float = 0.0) -> float:
     """Token-level Jaccard blended with sequence ratio; 0..1, order-tolerant."""
     from difflib import SequenceMatcher
 
@@ -142,7 +151,13 @@ def similarity(a: str, b: str) -> float:
         return 1.0
     ta, tb = set(na.split()), set(nb.split())
     jac = len(ta & tb) / len(ta | tb) if (ta | tb) else 0.0
-    seq = SequenceMatcher(None, na, nb).ratio()
+    if min_score > 0.0 and (0.5 * jac + 0.5) < min_score:
+        return 0.0
+    sm = SequenceMatcher(None, na, nb)
+    if min_score > 0.0 and ((0.5 * jac + 0.5 * sm.real_quick_ratio()) < min_score
+                            or (0.5 * jac + 0.5 * sm.quick_ratio()) < min_score):
+        return 0.0
+    seq = sm.ratio()
     return round(0.5 * jac + 0.5 * seq, 4)
 
 

@@ -227,9 +227,11 @@ def forbidden_packages(ctx):
     if not forbidden:
         return
     for name in ctx.project.packages():
-        if name.lower() not in forbidden:
+        low = name.lower()
+        if low not in forbidden:
             continue
-        cmds = [c for c in ctx.project.commands("usepackage", 1) if name in c.arg(0)]
+        cmds = [c for c in ctx.project.commands("usepackage", 1)
+                if low in [p.strip().lower() for p in c.arg(0).split(",")]]
         offset = cmds[0].start if cmds else 0
         f, line, col = ctx.project.locate(offset)
         yield ctx.finding("VEN007", f"package `{name}` is not accepted by {pack.get('name', ctx.config.venue)}",

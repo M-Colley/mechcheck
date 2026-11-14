@@ -224,6 +224,10 @@ def unfindable_entry(ctx):
 
         if best >= SOFT_MISMATCH:
             continue
+        # An outage, a proxy or a 5xx is not an answer: only report "no record
+        # anywhere" when all three registries actually answered.
+        if not net.search_answered(fetcher, title, author, rows=3):
+            continue
         closest = f" Closest match: \"{best_title[:70]}\" ({best:.2f})." if best_title else ""
         yield ctx.finding("BIO005",
                           f"`{entry.key}` could not be found in Crossref, DBLP or OpenAlex.{closest}",
@@ -275,7 +279,7 @@ def preprint_superseded(ctx):
                                         (entry.author_surnames() or [""])[0], rows=3):
             if str(item.get("type", "")).lower() in ("posted-content", "preprint"):
                 continue
-            if bibtex.similarity(entry.title, _work_title(item)) < 0.9:
+            if bibtex.similarity(entry.title, _work_title(item), min_score=0.9) < 0.9:
                 continue
             container = (item.get("container-title") or [""])[0]
             yield ctx.finding("BIO007",

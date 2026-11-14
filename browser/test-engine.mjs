@@ -1290,6 +1290,61 @@ console.log("\nfalse positives, November 2026 (the same cases as tests/test_fals
           (await run(two({}))).stats.main === "attic/main.tex"
           && (await run(two({ "mechcheck.yaml": "ignore_paths:\n  - 'attic/'\n" }))).stats.main === "paper.tex");
   }
+
+  // Parity & network outage guards
+  {
+    // Inline verbatim with %, [opts], and {braces}
+    check("STY014 ignores % inside \\verb",
+          !(await rules(project({ "main.tex": doc("Code prints \\verb|100% ok| in prose.") }))).has("STY014"));
+    check("STY014 ignores % mechcheck: off after a digit",
+          !(await rules(project({ "main.tex": doc("Value is 42% mechcheck: off STY001 -- deliberate") }))).has("STY014"));
+    check("STY001 still sees comment after \\verb|a%b|",
+          (await rules(project({ "main.tex": doc("Inline \\verb|a%b| and \\lstinline[language=C]{x_y} % TODO fix") }),
+                       { stage: "submission" })).has("STY001"));
+
+    // US/UK fulfill vs fulfil
+    check("STY008 treats fulfill and fulfills as consistent US English",
+          !(await rules(project({ "main.tex": doc("We fulfill the goal and color the bar; this fulfills every requirement.") }))).has("STY008"));
+
+    // Subfolder main.tex resolves \input and \includegraphics without false STR013/FIG008/FIG012
+    const subProj = project({
+      "other.txt": "keep wrapper",
+      "paper/main.tex": "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\input{chapters/intro}\n\\includegraphics{figs/plot}\n\\end{document}\n",
+      "paper/chapters/intro.tex": "Hello world.\n",
+      "paper/figs/plot.png": "PNG",
+    });
+    const subRules = await rules(subProj);
+    check("STR013 & FIG008/FIG012 resolve relative to subfolder main.tex",
+          !subRules.has("STR001") && !subRules.has("STR013") && !subRules.has("FIG008") && !subRules.has("FIG012"),
+          [...subRules].join(","));
+
+    // camera-ready profile still respects explicit stage: "draft"
+    const crDraft = await run(project({ "main.tex": doc("TODO check") }), { profile: "camera-ready", stage: "draft" });
+    check("camera-ready profile respects explicit draft stage", crDraft.config.stage === "draft", crDraft.config.stage);
+
+    // REF008 sections: true option
+    const refSec = await run(project({
+      "main.tex": "\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n\\section{Intro}\\label{sec:i}\nSee Section~\\ref{sec:i}.\n\\end{document}\n",
+      "mechcheck.yaml": "rules:\n  REF008:\n    sections: true\n",
+    }));
+    check("REF008 honours sections: true option", refSec.findings.some(f => f.rule === "REF008"));
+
+    // BIO001 & BIO005 never accuse when network/worker returns undefined, only on confirmed 404 / empty 200
+    const ghostProj = project({
+      "main.tex": doc("See \\cite{badDoi,noDoi}.\n\\bibliography{refs}"),
+      "refs.bib": "@article{badDoi, author={Doe, Jane}, title={Missing DOI Work}, journal={J}, year={2021}, doi={10.5555/nonexistent}}\n"
+                + "@inproceedings{noDoi, author={Nobody, Alice}, title={A Totally Nonexistent Imaginary Work For Testing}, booktitle={Proc}, year={2021}}\n",
+    });
+    const blockedRes = await run(ghostProj, { verify: true, fetchJson: async () => undefined });
+    check("BIO001 & BIO005 stay silent when network is blocked/unavailable",
+          blockedRes.stats.netBlocked
+          && !blockedRes.findings.some(f => f.rule === "BIO001" || f.rule === "BIO005"));
+    const confirmedRes = await run(ghostProj, { verify: true, fetchJson: async url => (url.includes("/works/10.") || url.includes("works/doi:")) ? null : {} });
+    check("BIO001 & BIO005 fire when registries answer 404 / empty 200",
+          !confirmedRes.stats.netBlocked
+          && confirmedRes.findings.some(f => f.rule === "BIO001")
+          && confirmedRes.findings.some(f => f.rule === "BIO005"));
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -442,6 +442,30 @@ window.fetch = async (url) => {
     // error path
     C.renderError(new Error("Overleaf refused the download (HTTP 403)."));
     say("failure is explained, not silent", shadow.querySelector(".empty").textContent.includes("403"));
+
+    // 1-click recheck UI, Fix back/recheck navigation, truncated Markdown report, and blocked relayFetch guard
+    say("launcher pill exposes a dedicated 1-click recheck button", !!shadow.querySelector(".recheck"));
+    say("panel header exposes a dedicated recheck button", !!shadow.querySelector(".recheck-head"));
+    C.render(result, { profile: "paper-anonymous", verify: false });
+    C.showFixes(result);
+    say("Fix view offers Back to findings and Recheck now actions",
+        !!shadow.querySelector(".back-findings") && !!shadow.querySelector(".recheck-after-fix"));
+    shadow.querySelector(".back-findings").click();
+    await new Promise(r => setTimeout(r, 10));
+    say("Back to findings restores the findings list", shadow.querySelectorAll(".finding").length > 0);
+
+    const cappedResult = {
+      ...result,
+      findings: result.findings.slice(0, 1),
+      truncated: result.findings.slice(1, 4),
+      truncatedByRule: { STY001: 3 },
+    };
+    say("reportMarkdown counts held-back findings in totals",
+        C.reportMarkdown(cappedResult).includes("held back (3 total)"));
+
+    const seenBuild = C.handleOutputResource("/project/0123456789abcdef01234567/build/199a-new/output/output.pdf", false);
+    say("compile output watcher tracks new Overleaf build URLs",
+        seenBuild && C.discoverOutputUrls("0123456789abcdef01234567").get("output.pdf").includes("199a-new"));
   } catch (err) {
     log.push("FAIL  harness threw — " + (err && err.stack || err));
   }

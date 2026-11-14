@@ -3,9 +3,9 @@
    than duplicated here, so adding a venue stays a one-file change. */
 
 /* A paper being submitted to CHI, matching the command line and the page. */
-const DEFAULTS = { profile: "paper", stage: "submission", venue: "chi", verify: false, autorun: false };
+const DEFAULTS = { profile: "paper", stage: "submission", venue: "chi", verify: false, autorun: false, onCompile: true };
 const $ = id => document.getElementById(id);
-const FIELDS = ["profile", "stage", "venue", "verify", "autorun"];
+const FIELDS = ["profile", "stage", "venue", "verify", "autorun", "onCompile"];
 
 function populateVenues() {
   const venues = (globalThis.mechcheck && globalThis.mechcheck.VENUES) || {};
@@ -54,7 +54,7 @@ async function updateHint() {
   const button = $("check");
   if (tab) {
     button.disabled = false;
-    hint.innerHTML = "Findings appear in a panel at the bottom right of the project. "
+    hint.innerHTML = "Findings appear in a panel at the bottom right (press <b>↻</b> or <b>Alt+Shift+M</b> anytime to recheck). "
       + "Silence one with <b>% mechcheck: off RULE -- reason</b> in the source.";
   } else {
     button.disabled = true;

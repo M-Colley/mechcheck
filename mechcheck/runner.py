@@ -93,6 +93,8 @@ class RunResult:
 def collect_suppressions(project: TexProject) -> list:
     out = []
     for line in project.lines:
+        if "%" not in line.raw:
+            continue
         m = _SUPPRESS.search(line.raw)
         if not m:
             continue

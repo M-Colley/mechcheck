@@ -16,17 +16,19 @@
   const M = globalThis.mechcheck;
   if (!M) { console.error("mechcheck: engine did not load"); return; }
 
-  const PROJECT_ID = (location.pathname.match(/\/project\/([0-9a-fA-F]{16,32})/) || [])[1];
+  const getProjectId = () => (location.pathname.match(/\/project\/([0-9a-fA-F]{16,32})/) || [])[1] || null;
+  const PROJECT_ID = getProjectId();
 
-  let host = null, root = null, panel = null;
+  let host = null, root = null;
   let lastResult = null, running = false;
   let lastOutputAttempts = [];
   let lastAdopted = [], lastConfigPath = null;
+  let pendingCompileRecheck = false, compileTimer = null;
 
   /* A paper being submitted to CHI, as everywhere else. A thesis picks the
      thesis profile, and the project's own mechcheck.yaml overrides both. */
   const DEFAULTS = { profile: "paper", stage: "submission", venue: "chi",
-                     verify: false, autorun: false, markers: true, notes: true };
+                     verify: false, autorun: false, onCompile: true, markers: true, notes: true };
 
   async function getSettings() {
     try {
@@ -37,9 +39,11 @@
 
   /* ---------- getting the project ---------- */
 
-  async function fetchProjectZip(projectId = PROJECT_ID) {
+  async function fetchProjectZip(projectId = getProjectId()) {
+    if (!projectId) throw new Error("No Overleaf project is open in this tab.");
     const res = await fetch(`/project/${projectId}/download/zip`, {
       credentials: "same-origin",
+      cache: "no-store",
       headers: { "Accept": "application/zip" },
     });
     if (!res.ok) throw new Error(`Overleaf refused the download (HTTP ${res.status}). `
@@ -58,30 +62,108 @@
      parameter that routes to the machine holding that build. Neither is
      knowable from the outside.
 
-     But the editor has already downloaded both files to show you the PDF, so
-     the exact URLs -- build id, query string and all -- are sitting in this
-     page's resource timeline. Reusing them costs nothing, triggers no compile,
-     and stays correct when Overleaf changes the scheme again. */
+     The editor downloads both files to show you the PDF. Browsers cap
+     performance.getEntriesByType("resource") at ~250 entries, so a long
+     editing session loses new compiles unless we also listen via a
+     PerformanceObserver -- which simultaneously tells us the moment Overleaf
+     finishes a fresh compile so we can recheck automatically. */
   const OUTPUT_PATTERNS = [
-    /\/(?:download\/)?project\/[0-9a-fA-F]+\/build\/[0-9a-fA-F-]+\/output\/([\w.-]+)/,
-    /\/project\/[0-9a-fA-F]+\/output\/([\w.-]+)/,
+    /\/(?:download\/)?project\/([0-9a-fA-F]+)\/build\/([\w-]+)\/output\/([\w.-]+)/,
+    /\/project\/([0-9a-fA-F]+)\/output\/([\w.-]+)/,
   ];
+  const observedOutputs = new Map();
+  const selfFetchedUrls = new Set();
+  let lastCompiledBuildKey = null;
 
-  function discoverOutputUrls() {
+  function resolveUrl(url) {
+    try { return new URL(String(url), location.href).href; }
+    catch (err) { return String(url || ""); }
+  }
+
+  function matchOutputUrl(url, projectId = getProjectId()) {
+    const s = String(url || "");
+    let m = OUTPUT_PATTERNS[0].exec(s);
+    if (m) {
+      if (projectId && m[1].toLowerCase() !== projectId.toLowerCase()) return null;
+      return { projectId: m[1].toLowerCase(), buildId: m[2], name: m[3], url: s };
+    }
+    m = OUTPUT_PATTERNS[1].exec(s);
+    if (m) {
+      if (projectId && m[1].toLowerCase() !== projectId.toLowerCase()) return null;
+      return { projectId: m[1].toLowerCase(), buildId: null, name: m[2], url: s };
+    }
+    return null;
+  }
+
+  function scheduleCompileRecheck() {
+    if (compileTimer) clearTimeout(compileTimer);
+    compileTimer = setTimeout(async () => {
+      compileTimer = null;
+      const settings = await getSettings();
+      if (settings.onCompile !== false && (lastResult || settings.autorun)) {
+        if (running) { pendingCompileRecheck = true; return; }
+        run();
+      } else if (root && lastResult) {
+        const btn = root.querySelector(".recheck");
+        if (btn) btn.classList.add("stale");
+        setStatus("New compile ready — click ↻ to recheck");
+      }
+    }, 800);
+  }
+
+  function handleOutputResource(url, isLive = true) {
+    if (selfFetchedUrls.has(url) || selfFetchedUrls.has(resolveUrl(url))) return false;
+    const hit = matchOutputUrl(url, getProjectId());
+    if (!hit) return false;
+    const prevUrl = observedOutputs.get(hit.name);
+    observedOutputs.set(hit.name, hit.url);
+    if (!/\.(pdf|log)$/i.test(hit.name)) return false;
+    const buildKey = hit.buildId ? `${hit.projectId}:${hit.buildId}` : `${hit.projectId}:${hit.url}`;
+    if (!isLive) {
+      lastCompiledBuildKey = buildKey;
+      return true;
+    }
+    if (buildKey === lastCompiledBuildKey || hit.url === prevUrl) return false;
+    lastCompiledBuildKey = buildKey;
+    scheduleCompileRecheck();
+    return true;
+  }
+
+  function startWatchingResources() {
+    try {
+      for (const entry of performance.getEntriesByType("resource"))
+        handleOutputResource(entry.name, false);
+    } catch (err) { /* resource timing unavailable */ }
+    if (typeof PerformanceObserver !== "function") return;
+    try {
+      let bootstrapped = false;
+      const obs = new PerformanceObserver(list => {
+        const live = bootstrapped;
+        for (const entry of list.getEntries()) handleOutputResource(entry.name, live);
+        bootstrapped = true;
+      });
+      obs.observe({ type: "resource", buffered: true });
+      // If buffered entries do not fire synchronously, switch live mode on next tick.
+      setTimeout(() => { bootstrapped = true; }, 0);
+    } catch (err) { /* ignore unsupported observer options */ }
+  }
+
+  function discoverOutputUrls(projectId = getProjectId()) {
     const found = new Map();
     try {
       for (const entry of performance.getEntriesByType("resource")) {
-        for (const pattern of OUTPUT_PATTERNS) {
-          const m = pattern.exec(entry.name);
-          if (m) { found.set(m[1], entry.name); break; }   // later entries win
-        }
+        const hit = matchOutputUrl(entry.name, projectId);
+        if (hit) found.set(hit.name, hit.url);
       }
     } catch (err) { /* resource timing unavailable */ }
+    for (const [name, url] of observedOutputs) {
+      if (matchOutputUrl(url, projectId)) found.set(name, url);
+    }
     return found;
   }
 
-  async function fetchOutputs(files) {
-    const discovered = discoverOutputUrls();
+  async function fetchOutputs(files, projectId = getProjectId()) {
+    const discovered = discoverOutputUrls(projectId);
     const attempts = [];
 
     // Whatever the editor actually fetched, in the form it fetched it.
@@ -94,20 +176,31 @@
     if (pdfUrl && !discovered.has("output.log"))
       attempts.push(["output.log", pdfUrl.replace(/output\.pdf/, "output.log")]);
     // Last resort: the path older Overleaf versions served.
-    attempts.push(["output.log", `/project/${PROJECT_ID}/output/output.log`]);
-    attempts.push(["output.pdf", `/project/${PROJECT_ID}/output/output.pdf`]);
+    if (projectId) {
+      attempts.push(["output.log", `/project/${projectId}/output/output.log`]);
+      attempts.push(["output.pdf", `/project/${projectId}/output/output.pdf`]);
+    }
 
     const tried = [];
+    const fetchedHere = new Set();
     for (const [name, url] of attempts) {
-      if (files.has(name)) continue;               // already have this one
+      if (fetchedHere.has(name)) continue;
+      const absUrl = resolveUrl(url);
+      selfFetchedUrls.add(url);
+      selfFetchedUrls.add(absUrl);
       try {
-        const res = await fetch(url, { credentials: "same-origin" });
+        const res = await fetch(url, { credentials: "same-origin", cache: "no-store" });
         tried.push(`${url.split("?")[0]} -> ${res.status}`);
         if (!res.ok) continue;
         const buf = new Uint8Array(await res.arrayBuffer());
-        if (buf.byteLength > 100) files.set(name, buf);
+        if (buf.byteLength > 100) {
+          files.set(name, buf);
+          fetchedHere.add(name);
+        }
       } catch (err) {
         tried.push(`${url.split("?")[0]} -> ${err.message}`);
+      } finally {
+        setTimeout(() => { selfFetchedUrls.delete(url); selfFetchedUrls.delete(absUrl); }, 2000);
       }
     }
     lastOutputAttempts = tried;
@@ -119,9 +212,9 @@
   const relayFetch = async (url, key) => {
     try {
       const reply = await chrome.runtime.sendMessage({ type: "mechcheck:fetch", url, key });
-      return reply && reply.ok ? reply.data : null;
+      return reply && reply.ok ? reply.data : undefined;
     } catch (err) {
-      return null;   // extension reloaded mid-run, or the worker was evicted
+      return undefined;   // extension reloaded mid-run, or the worker was evicted
     }
   };
 
@@ -147,15 +240,38 @@
     }
   }
 
+  function setRunningState(busy) {
+    if (!root) return;
+    const checkBtn = root.querySelector(".check");
+    if (checkBtn) {
+      checkBtn.disabled = !!busy;
+      checkBtn.textContent = busy ? "Checking…" : (lastResult ? "Recheck" : "Check");
+    }
+    const recheckBtn = root.querySelector(".recheck");
+    if (recheckBtn) {
+      recheckBtn.disabled = !!busy;
+      recheckBtn.classList.toggle("running", !!busy);
+      if (busy) recheckBtn.classList.remove("stale");
+    }
+    const recheckHead = root.querySelector(".recheck-head");
+    if (recheckHead) {
+      recheckHead.disabled = !!busy;
+      recheckHead.textContent = busy ? "↻ Checking…" : "↻ Recheck";
+    }
+  }
+
   async function run() {
     if (running) return;
     running = true;
+    ensureUI();
+    setRunningState(true);
     const settings = await getSettings();
     setStatus("Asking Overleaf for the project…");
     try {
-      const files = await fetchProjectZip();
+      const pid = getProjectId();
+      const files = await fetchProjectZip(pid);
       setStatus("Reading the compiled output…");
-      await fetchOutputs(files);
+      await fetchOutputs(files, pid);
       adoptProjectConfig(files, settings);
       setStatus(`Checking ${files.size} file${files.size === 1 ? "" : "s"}…`);
 
@@ -170,7 +286,12 @@
       renderError(err);
     } finally {
       running = false;
+      setRunningState(false);
       setProgress(0);
+      if (pendingCompileRecheck) {
+        pendingCompileRecheck = false;
+        run();
+      }
     }
   }
 
@@ -186,18 +307,36 @@
   font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
   color-scheme: light dark;
 }
-.launcher {
-  display: flex; align-items: center; gap: 8px;
-  background: #3a4ea8; color: #fff; border: none; border-radius: 999px;
-  padding: 10px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+.launcher-bar {
+  display: inline-flex; align-items: stretch; margin-top: 6px;
+  background: #3a4ea8; color: #fff; border-radius: 999px; overflow: hidden;
   box-shadow: 0 2px 6px rgba(0,0,0,.2), 0 10px 30px -12px rgba(0,0,0,.5);
 }
-.launcher:hover { background: #33469a; }
+.launcher {
+  display: flex; align-items: center; gap: 8px;
+  background: transparent; color: #fff; border: none;
+  padding: 10px 14px 10px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.launcher:hover, .recheck:hover { background: rgba(0,0,0,.14); }
 .launcher .badge {
   background: rgba(255,255,255,.22); border-radius: 999px; padding: 1px 7px;
   font-variant-numeric: tabular-nums; font-size: 12px;
 }
 .launcher .badge.err { background: #b23026; }
+.recheck {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; color: #fff; border: none;
+  border-left: 1px solid rgba(255,255,255,.2);
+  padding: 0 13px; font-size: 15px; font-weight: 700; cursor: pointer;
+}
+.recheck:disabled { opacity: .65; cursor: wait; }
+.recheck.running span { display: inline-block; animation: mc-spin .85s linear infinite; }
+.recheck.stale::after {
+  content: ""; position: absolute; top: 7px; right: 7px; width: 6px; height: 6px;
+  border-radius: 999px; background: #f5b942;
+}
+@keyframes mc-spin { to { transform: rotate(360deg); } }
+.fix-actions { display: flex; gap: 6px; padding: 8px 12px; border-bottom: 1px solid #eef1f6; }
 .panel {
   width: min(440px, calc(100vw - 32px)); max-height: min(680px, calc(100vh - 90px));
   background: #fff; color: #171a21; border: 1px solid #d8dde6; border-radius: 10px;
@@ -271,6 +410,7 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
   <div class="panel hidden" part="panel">
     <div class="head">
       <span class="title">mechcheck</span>
+      <button class="btn recheck-head" title="Recheck project (Alt+Shift+M)">↻ Recheck</button>
       <button class="close" title="Close">×</button>
     </div>
     <div class="controls">
@@ -278,6 +418,7 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
       <select class="stage" title="Stage"></select>
       <select class="venue" title="Venue"></select>
       <label class="toggle"><input type="checkbox" class="verify"> verify refs</label>
+      <label class="toggle" title="Recheck automatically whenever Overleaf finishes compiling"><input type="checkbox" class="onCompile" checked> on compile</label>
       <label class="toggle"><input type="checkbox" class="markers" checked> mark lines</label>
       <label class="toggle"><input type="checkbox" class="notes" checked> explain inline</label>
       <button class="btn primary check">Check</button>
@@ -290,7 +431,10 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
     <div class="body"></div>
     <div class="foot"><span class="status">Ready</span><span class="copy btn">Copy report</span></div>
   </div>
-  <button class="launcher">mechcheck<span class="badge hidden"></span></button>
+  <div class="launcher-bar">
+    <button class="launcher">mechcheck<span class="badge hidden"></span></button>
+    <button class="recheck" title="Recheck project (Alt+Shift+M)" aria-label="Recheck project"><span>↻</span></button>
+  </div>
 </div>`;
     document.documentElement.appendChild(host);
 
@@ -300,6 +444,8 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
       p.classList.toggle("hidden");
       if (!p.classList.contains("hidden") && !lastResult && !running) run();
     });
+    q(".recheck").addEventListener("click", () => run());
+    q(".recheck-head").addEventListener("click", () => run());
     q(".close").addEventListener("click", () => q(".panel").classList.add("hidden"));
     q(".check").addEventListener("click", run);
     q(".fix").addEventListener("click", () => showFixes());
@@ -324,6 +470,14 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
         if (lastResult) run();
       });
     }
+    q(".onCompile").addEventListener("change", async () => {
+      const on = q(".onCompile").checked;
+      try {
+        const stored = await chrome.storage.sync.get("settings");
+        await chrome.storage.sync.set({ settings: { ...(stored.settings || {}), onCompile: on } });
+      } catch (err) { /* ignore */ }
+      setStatus(on ? "Will recheck automatically on Overleaf compile" : "Auto-recheck on compile is off");
+    });
     // Marks are a view of the last result, not part of the check, so this
     // toggle redraws rather than re-running anything.
     q(".markers").addEventListener("change", async () => {
@@ -353,6 +507,7 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
     getSettings().then(s => {
       q(".profile").value = s.profile; q(".stage").value = s.stage;
       q(".venue").value = s.venue; q(".verify").checked = !!s.verify;
+      q(".onCompile").checked = s.onCompile !== false;
       q(".markers").checked = s.markers !== false;
       markersEnabled = s.markers !== false;
       q(".notes").checked = s.notes !== false;
@@ -476,6 +631,10 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
     const fixButton = root.querySelector(".fix");
     fixButton.disabled = !fixable;
     fixButton.textContent = fixable ? `Fix ${fixable}` : "Fix";
+    const checkButton = root.querySelector(".check");
+    if (checkButton && !running) checkButton.textContent = "Recheck";
+    const recheckBtn = root.querySelector(".recheck");
+    if (recheckBtn) recheckBtn.classList.remove("stale");
 
     // Put the findings beside the lines they are about, in Overleaf's own
     // editor. Nothing is written into the project; see placeMarkers.
@@ -517,11 +676,24 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
       body.innerHTML = `<div class="empty">Nothing here can be fixed automatically.</div>`;
       return;
     }
+    const actions = document.createElement("div");
+    actions.className = "fix-actions";
+    const backBtn = document.createElement("button");
+    backBtn.className = "btn back-findings";
+    backBtn.textContent = "← Back to findings";
+    backBtn.addEventListener("click", async () => render(target, await getSettings()));
+    const recheckAfterBtn = document.createElement("button");
+    recheckAfterBtn.className = "btn primary recheck-after-fix";
+    recheckAfterBtn.textContent = "↻ Recheck now";
+    recheckAfterBtn.addEventListener("click", () => run());
+    actions.append(backBtn, recheckAfterBtn);
+    body.appendChild(actions);
+
     const intro = document.createElement("div");
     intro.className = "note";
     intro.textContent = `${fx.applied.length} fix(es) ready. Copy the corrected file, then in `
-      + "Overleaf open it, select all, and paste. Only rules with exactly one right answer "
-      + "are fixed; alt text and anything needing judgement are left alone.";
+      + "Overleaf open it, select all, and paste — then click Recheck now. Only rules with "
+      + "exactly one right answer are fixed; alt text and anything needing judgement are left alone.";
     body.appendChild(intro);
 
     for (const [path, text] of fx.files) {
@@ -561,12 +733,18 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
 
   function reportMarkdown(result) {
     const counts = { error: 0, warn: 0, info: 0 };
-    for (const f of result.findings) counts[M.SEV_NAME[f.severity]]++;
+    for (const f of result.findings.concat(result.truncated || []))
+      counts[M.SEV_NAME[f.severity]]++;
     const lines = [`# mechcheck — ${result.stats.main}`, "",
       `${counts.error} errors, ${counts.warn} warnings, ${counts.info} notes`, ""];
     for (const f of result.findings) {
       const icon = { error: "❌", warn: "⚠️", info: "ℹ️" }[M.SEV_NAME[f.severity]];
       lines.push(`- ${icon} \`${f.rule}\` ${f.file || ""}${f.line ? ":" + f.line : ""} — ${f.message}`);
+    }
+    const held = Object.entries(result.truncatedByRule || {}).sort();
+    if (held.length) {
+      lines.push("", `_Additional repeated findings held back (${(result.truncated || []).length} total): `
+        + held.map(([r, n]) => `\`${r}\` +${n}`).join(", ") + "._");
     }
     return lines.join("\n");
   }
@@ -635,42 +813,68 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
    *  that showed: the row renders its icons as Material Symbols ligatures, so
    *  the text of the row for main.tex is "descriptionmain.texmore_vertMenu".
    *  Ask for the name four ways, cheapest and most explicit first. */
-  function openFileName() {
+  function itemName(node) {
+    if (!node) return null;
+    const label = ((node.getAttribute && node.getAttribute("aria-label")) || "").trim();
+    if (label) return label;
+    for (const hint of [".item-name", '[class*="item-name"]']) {
+      const inner = node.querySelector && node.querySelector(hint);
+      const text = inner && (inner.textContent || "").trim();
+      if (text) return text.split("\n")[0].trim();
+    }
+    const clone = node.cloneNode(true);
+    for (const junk of clone.querySelectorAll(
+           '[aria-hidden="true"], .material-symbols, .visually-hidden, button, svg, ul, [role="group"]')) {
+      junk.remove();
+    }
+    const name = (clone.textContent || "").trim().split("\n")[0].trim();
+    return name || null;
+  }
+
+  function selectedTreeItem() {
     for (const selector of ['[role="tree"] [aria-selected="true"]',
                             '[role="tree"] li.selected',
                             ".file-tree li.selected", ".file-tree-item.selected"]) {
       let node = null;
       try { node = document.querySelector(selector); } catch (err) { continue; }
-      if (!node) continue;
-      // 1. The row labels itself for screen readers, and that label is the name.
-      const label = ((node.getAttribute && node.getAttribute("aria-label")) || "").trim();
-      if (label) return label;
-      // 2. Overleaf wraps the name in its own element.
-      for (const hint of [".item-name", '[class*="item-name"]']) {
-        const inner = node.querySelector(hint);
-        const text = inner && (inner.textContent || "").trim();
-        if (text) return text.split("\n")[0].trim();
-      }
-      // 3. Otherwise drop what is decorative and read what is left.
-      const clone = node.cloneNode(true);
-      for (const junk of clone.querySelectorAll(
-             '[aria-hidden="true"], .material-symbols, .visually-hidden, button, svg')) {
-        junk.remove();
-      }
-      const name = (clone.textContent || "").trim().split("\n")[0].trim();
-      if (name) return name;
+      if (node) return node;
     }
     return null;
+  }
+
+  function openFileName() {
+    const node = selectedTreeItem();
+    return node ? itemName(node) : null;
+  }
+
+  function openFilePath() {
+    const node = selectedTreeItem();
+    if (!node) return null;
+    const parts = [];
+    let cur = node;
+    while (cur && cur !== document.body) {
+      if ((cur.getAttribute && cur.getAttribute("role") === "treeitem") || cur === node) {
+        const n = itemName(cur);
+        if (n) parts.unshift(n);
+      }
+      if (cur.getAttribute && cur.getAttribute("role") === "tree") break;
+      cur = cur.parentElement;
+    }
+    return parts.length ? parts.join("/") : itemName(node);
   }
 
   /** Findings for the open file, grouped by the line they sit on. */
   function findingsByLine(result, fileName) {
     const byLine = new Map();
+    if (!fileName) return byLine;
+    const hasSlash = fileName.includes("/");
     for (const f of (result.findings || []).concat(result.truncated || [])) {
-      if (!f.line) continue;
-      // The tree shows a basename; a finding carries the project-relative path.
-      // Without a name every finding would be drawn on whatever file is open.
-      if (!fileName || !f.file || f.file.split("/").pop() !== fileName) continue;
+      if (!f.line || !f.file) continue;
+      // Match folder-qualified path when available; fall back to basename.
+      const match = hasSlash
+        ? (f.file === fileName || f.file.endsWith("/" + fileName))
+        : (f.file.split("/").pop() === fileName);
+      if (!match) continue;
       if (!byLine.has(f.line)) byLine.set(f.line, []);
       byLine.get(f.line).push(f);
     }
@@ -705,7 +909,7 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
     injectMarkerStyles();
     {
       clearMarkers();
-      const byLine = findingsByLine(target, openFileName());
+      const byLine = findingsByLine(target, openFilePath());
       let placed = 0;
       // Only the line-number gutter: the fold and lint gutters carry their own
       // .cm-gutterElement children, and a mark belongs beside a number.
@@ -732,10 +936,19 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
     }
   }
 
+  let treeObserver = null, resizeObserver = null;
+
   /** The editor renders only the lines you can see, so re-place on every change. */
   function startWatchingEditor() {
     const editor = editorRoot();
     if (!editor || typeof MutationObserver !== "function") return;
+    const scheduleRedraw = () => {
+      if (scrollQueued) return;
+      scrollQueued = true;
+      const pass = () => { scrollQueued = false; redrawDecorations(); };
+      if (typeof requestAnimationFrame === "function") requestAnimationFrame(pass);
+      else setTimeout(pass, 16);
+    };
     if (!markerObserver) {
       let queued = false;
       markerObserver = new MutationObserver(() => {
@@ -747,18 +960,23 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
       });
     }
     markerObserver.observe(editor, { childList: true, subtree: true });
+    // Switching files in Overleaf's file tree can reuse CodeMirror nodes; watch selection too.
+    const tree = document.querySelector('[role="tree"], .file-tree');
+    if (tree && !treeObserver) {
+      treeObserver = new MutationObserver(scheduleRedraw);
+      treeObserver.observe(tree, { attributes: true, attributeFilter: ["aria-selected", "class"], childList: true, subtree: true });
+    }
+    // Dragging the editor/PDF split divider shifts line widths and end-of-line positions.
+    if (typeof ResizeObserver === "function" && !resizeObserver) {
+      resizeObserver = new ResizeObserver(scheduleRedraw);
+      resizeObserver.observe(editor);
+    }
     // Scrolling inside already-rendered content moves the lines without
     // changing the DOM, so the observer alone would leave the overlay behind.
     const scroller = editor.querySelector(".cm-scroller");
     if (scroller && !scroller.dataset.mechcheckScroll) {
       scroller.dataset.mechcheckScroll = "1";
-      scroller.addEventListener("scroll", () => {
-        if (scrollQueued) return;
-        scrollQueued = true;
-        const pass = () => { scrollQueued = false; redrawDecorations(); };
-        if (typeof requestAnimationFrame === "function") requestAnimationFrame(pass);
-        else setTimeout(pass, 16);
-      }, { passive: true });
+      scroller.addEventListener("scroll", scheduleRedraw, { passive: true });
     }
   }
 
@@ -910,7 +1128,7 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
     injectMarkerStyles();
     const layer = annotationLayer(editor);
     layer.textContent = "";
-    const byLine = findingsByLine(target, openFileName());
+    const byLine = findingsByLine(target, openFilePath());
     if (!byLine.size) return 0;
     const lines = renderedLines(editor);
     const frame = editor.getBoundingClientRect();
@@ -971,26 +1189,40 @@ label.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 1
     return written;
   }
 
-  /* ---------- popup messages ---------- */
+  /* ---------- popup & keyboard shortcut ---------- */
   chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     if (!msg || msg.type !== "mechcheck:run") return false;
     ensureUI();
-    root.querySelector(".panel").classList.remove("hidden");
+    if (!msg.keepPanelState || !lastResult) root.querySelector(".panel").classList.remove("hidden");
     run().then(() => respond({ ok: true })).catch(e => respond({ ok: false, error: String(e) }));
     return true;
   });
 
+  window.addEventListener("keydown", e => {
+    if (!e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey) return;
+    if (e.code !== "KeyM" && String(e.key || "").toLowerCase() !== "m") return;
+    if (!getProjectId() && !host) return;
+    e.preventDefault();
+    ensureUI();
+    if (!lastResult) root.querySelector(".panel").classList.remove("hidden");
+    run();
+  });
+
+  startWatchingResources();
+
   /* Only mount on an actual project page; the same script also loads on the
      project list, where there is nothing to check. */
-  if (PROJECT_ID) ensureUI();
+  if (getProjectId()) ensureUI();
+  window.addEventListener("popstate", () => { if (getProjectId()) ensureUI(); });
 
   /* A seam for the test harness, which drives the panel with a stubbed
      chrome API and a mocked fetch. Costs nothing in production and means the
      rendering path is not shipped untested. */
-  globalThis.__mechcheckContent = { run, render, renderError, ensureUI, reportMarkdown,
-                                    fetchProjectZip, fetchOutputs, showFixes, PROJECT_ID,
+  globalThis.__mechcheckContent = { run, recheck: run, render, renderError, ensureUI, reportMarkdown,
+                                    fetchProjectZip, fetchOutputs, discoverOutputUrls, handleOutputResource,
+                                    showFixes, PROJECT_ID, getProjectId,
                                     placeMarkers, clearMarkers, setMarkersEnabled,
                                     placeAnnotations, clearAnnotations, setAnnotationsEnabled,
                                     spanFor, renderedLines, redrawDecorations,
-                                    openFileName, findingsByLine };
+                                    openFileName, openFilePath, findingsByLine };
 })();

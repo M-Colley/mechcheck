@@ -230,10 +230,16 @@ def missing_graphic(ctx):
 
 
 def _graphics_roots(ctx) -> list:
-    roots = [ctx.root]
+    if "graphics_roots" in ctx.cache:
+        return ctx.cache["graphics_roots"]
+    main_dir = os.path.dirname(ctx.project.main.replace("\\", "/"))
+    base_roots = [os.path.join(ctx.root, main_dir), ctx.root] if main_dir else [ctx.root]
+    roots = list(base_roots)
     for cmd in ctx.project.commands("graphicspath", 1):
         for m in re.finditer(r"\{([^{}]+)\}", cmd.arg(0)):
-            roots.append(os.path.join(ctx.root, m.group(1)))
+            for b in base_roots:
+                roots.append(os.path.join(b, m.group(1)))
+    ctx.cache["graphics_roots"] = roots
     return roots
 
 
@@ -255,12 +261,13 @@ def _locate_graphic(ctx, name: str):
     cached = ctx.cache.setdefault("graphic_locations", {})
     if name in cached:
         return cached[name]
+    dir_cache = ctx.cache.setdefault("dir_cache", {})
     typed = normalise_relpath(name)
     result = ("missing", None)
     for base in _graphics_roots(ctx):
         for ext in _GRAPHICS_EXTENSIONS:
             wanted = typed + ext
-            actual = find_case_insensitive(base, wanted)
+            actual = find_case_insensitive(base, wanted, dir_cache)
             if actual is None:
                 continue
             stem_ok = bool(ext) and actual[:-len(ext)] == typed and actual[-len(ext):].lower() == ext
